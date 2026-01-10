@@ -30,8 +30,17 @@ class ParsingResource:
         suffix_map = {
             "application/pdf": ".pdf",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/tiff": ".tiff",
+            "image/bmp": ".bmp",
+            "image/webp": ".webp",
             "text/html": ".html",
+            "application/xhtml+xml": ".xhtml",
             "text/markdown": ".md",
+            "text/csv": ".csv",
             "text/plain": ".txt",
         }
         suffix = suffix_map.get(mime_type, ".txt")

@@ -21,6 +21,20 @@ class LLMAdapterProtocol(Protocol):
         """
         ...
 
+    def generate_structured(
+        self,
+        messages: List[Dict[str, str]],
+        response_schema: Dict[str, Any],
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Generate structured JSON output.
+        
+        Args:
+            messages: Chat messages.
+            response_schema: JSON Schema or Pydantic model dict (implementation specific).
+        """
+        ...
+
 @runtime_checkable
 class EmbeddingAdapterProtocol(Protocol):
     """Protocol for embedding generation.
@@ -68,4 +82,25 @@ class GraphStoreProtocol(Protocol):
     
     def execute_query(self, query: str, parameters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Execute a Cypher/Gremlin query."""
+        ...
+
+    def upsert_node(
+        self,
+        project_id: str,
+        name: str,
+        type: str,
+        properties: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Upsert a node (Entity)."""
+        ...
+
+    def upsert_relation(
+        self,
+        project_id: str,
+        source: str,
+        target: str,
+        type: str,
+        properties: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Upsert a relation (Edge)."""
         ...
