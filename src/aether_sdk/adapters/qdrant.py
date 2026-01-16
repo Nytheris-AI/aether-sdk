@@ -19,13 +19,20 @@ class QdrantAdapter:
                 api_key=api_key or os.getenv("QDRANT_API_KEY")
             )
         self.collection_name = collection_name
-        self._ensure_collection()
+        self._initialized = False
+
+    def initialize(self):
+        """Build the collection if it doesn't exist."""
+        if not self._initialized:
+            self._ensure_collection()
+            self._initialized = True
 
     def _ensure_collection(self):
         if not self.client.collection_exists(self.collection_name):
+            # Production standard for OpenAI/OpenRouter embeddings is 1536
             self.client.create_collection(
                 collection_name=self.collection_name,
-                vectors_config=VectorParams(size=384, distance=Distance.COSINE) # Default size assumption
+                vectors_config=VectorParams(size=1536, distance=Distance.COSINE)
             )
 
     def upsert(self, id: str, vector: List[float], metadata: Dict[str, Any]) -> None:
@@ -45,13 +52,13 @@ class QdrantAdapter:
         top_k: int = 5,
     ) -> List[Tuple[str, float, Dict[str, Any]]]:
         
-        # Use query_points instead of search (which seems unavailable/deprecated)
-        search_result = self.client.query_points(
+        # Use standard .search()
+        search_result = self.client.search(
             collection_name=self.collection_name,
-            query=query_vector,
+            query_vector=query_vector,
             limit=top_k,
             with_payload=True
-        ).points
+        )
         
         return [
             (hit.id, hit.score, hit.payload) for hit in search_result

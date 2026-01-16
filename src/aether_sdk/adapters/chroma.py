@@ -12,7 +12,13 @@ class ChromaAdapter:
         self.persist_directory = persist_directory or os.getenv("CHROMA_PERSIST_DIRECTORY", "./chroma_db")
         self.client = chromadb.PersistentClient(path=self.persist_directory)
         self.collection_name = collection_name
-        self._ensure_collection()
+        self._initialized = False
+
+    def initialize(self):
+        """Create the collection if it doesn't exist."""
+        if not self._initialized:
+            self._ensure_collection()
+            self._initialized = True
 
     def _ensure_collection(self):
         self.client.get_or_create_collection(name=self.collection_name)

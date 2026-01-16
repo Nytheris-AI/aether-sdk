@@ -61,6 +61,10 @@ class VectorStoreProtocol(Protocol):
         """Store vector with metadata."""
         ...
     
+    def initialize(self) -> None:
+        """Initialize the vector store (e.g., create tables/collections)."""
+        ...
+    
     def search(
         self,
         query_vector: List[float],
@@ -103,4 +107,27 @@ class GraphStoreProtocol(Protocol):
         properties: Optional[Dict[str, Any]] = None
     ) -> None:
         """Upsert a relation (Edge)."""
+        ...
+@runtime_checkable
+class TemporalGraphProtocol(Protocol):
+    """Protocol for Temporal Knowledge Graph storage (e.g., Graphiti)."""
+    
+    async def initialize(self) -> None:
+        """Initialize the graph store (e.g., build indices)."""
+        ...
+        
+    async def close(self) -> None:
+        """Close the graph store connection."""
+        ...
+        
+    async def add_episode(self, content: str, source_id: str = "user") -> None:
+        """Add a temporal episode to the graph."""
+        ...
+        
+    async def add_triplet(self, source_node: Any, edge: Any, target_node: Any) -> None:
+        """Add a manual fact triple."""
+        ...
+        
+    async def search(self, query: str) -> List[Dict[str, Any]]:
+        """Perform a hybrid search on the graph."""
         ...

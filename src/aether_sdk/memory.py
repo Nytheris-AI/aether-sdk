@@ -1,5 +1,5 @@
 from typing import Optional, List, Dict, Any
-from aether_sdk.core.protocols import LLMAdapterProtocol, EmbeddingAdapterProtocol, VectorStoreProtocol, GraphStoreProtocol
+from aether_sdk.core.protocols import LLMAdapterProtocol, EmbeddingAdapterProtocol, VectorStoreProtocol, GraphStoreProtocol, TemporalGraphProtocol
 from aether_sdk.types.shared import Document, ContextResult
 from aether_sdk.resources.ingestion import IngestionResource
 from aether_sdk.resources.retrieval import RetrievalResource
@@ -7,6 +7,8 @@ from aether_sdk.resources.brain import BrainResource
 from aether_sdk.resources.distillation import DistillationResource
 from aether_sdk.resources.extraction import ExtractionResource
 from aether_sdk.resources.parsing import ParsingResource
+
+from aether_sdk.cortex.memory.orchestrator import AgentMemory
 
 class MemoryManager:
     # ... (init args same)
@@ -17,6 +19,7 @@ class MemoryManager:
         embedding_adapter: EmbeddingAdapterProtocol,
         vector_store: VectorStoreProtocol,
         graph_store: Optional[GraphStoreProtocol] = None,
+        graphiti_client: Optional[TemporalGraphProtocol] = None,
     ):
         self.project_id = project_id
         
@@ -25,6 +28,14 @@ class MemoryManager:
         self._embeddings = embedding_adapter
         self._vectors = vector_store
         self._graph = graph_store
+        
+        # Initialize Agent Memory System
+        self.agent_memory = AgentMemory(
+            project_id=project_id,
+            vector_store=vector_store,
+            embedding_adapter=embedding_adapter,
+            graph_store_client=graphiti_client
+        )
         
         # 2. Initialize Resources (The Logic Layer)
         
