@@ -74,4 +74,4 @@ You simply inject the **Infrastructure Adapters**, and the **MemoryManager** wir
 
 ## 🛡️ License
 
-MIT
+Apache 2.0
