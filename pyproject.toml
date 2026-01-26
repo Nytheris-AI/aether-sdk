@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Production-ready AI Context Engineering SDK"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 authors = [
     {name = "chogerlate", email = "siwaratlaopromger4444@gmail.com"}
 ]
@@ -17,7 +17,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
@@ -35,6 +35,10 @@ dependencies = [
     "openai>=1.30.0",
     "requests>=2.31.0",
     "docling>=2.0.0", # parser
+    "graphiti-core>=0.25.5",
+    "litellm>=1.80.16",
+    "sentence-transformers>=5.2.0",
+    "rich>=14.2.0",
 ]
 
 [dependency-groups]
