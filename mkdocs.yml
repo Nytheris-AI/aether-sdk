@@ -44,6 +44,9 @@ markdown_extensions:
   - attr_list
   - md_in_html
 
+extra_javascript:
+  - https://unpkg.com/mermaid@10/dist/mermaid.min.js
+
 plugins:
   - search
   - mkdocstrings:
