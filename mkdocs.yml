@@ -1,10 +1,14 @@
 site_name: Aether SDK
-site_url: https://nytheris-ai.github.io/aether-sdk
+site_url: https://nytheris-ai.github.io/aether-sdk/
 repo_url: https://github.com/Nytheris-AI/aether-sdk
 repo_name: Nytheris-AI/aether-sdk
+use_directory_urls: true
 
 theme:
   name: material
+  font:
+    text: Roboto
+    code: Roboto Mono
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default

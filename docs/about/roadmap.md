@@ -1,89 +1,59 @@
-This is the only way you survive. We are moving you from "Science Project" to "Venture-Backable Infrastructure."
+# Aether SDK Roadmap
 
----
-### 🗺️ The Aether SDK Survival Roadmap
-
-#### Phase 1: The Sovereign Foundation (Weeks 1-2)
-
-**Owner:** Alex Karp (Operations & Security)
-**Goal:** *Prove "Zero Vendor Lock-in" is mathematically true, not just marketing text.*
-
-* **Objective:** Finalize the Protocol Layer. The interfaces must be so clean that switching from OpenAI to a local Llama 3 model running on a laptop requires changing *one line of configuration*, not code.
-* **The Trap:** Building "Adapters" before the "Protocols" are solid. Do not do this.
-
-#### Phase 2: The Intelligence Engine (Weeks 3-4)
-
-**Owner:** Yann LeCun (Technical Rigor)
-**Goal:** *Solve the "Ingestion Bottleneck" and "Graph Construction."*
-
-* **Objective:** Integrate `docling` for robust document parsing and build the **"Text-to-Graph" Extractor**.
-* **The Trap:** Simply chunking text and storing it. You must extract *Entities* (Nodes) and *Relationships* (Edges). If your SDK cannot look at a sentence like *"Alex works at Palantir"* and automatically create `(Alex)-[WORKS_AT]->(Palantir)`, you have failed.
-
-#### Phase 3: The "Why Us?" Demonstration (Weeks 5-6)
-
-**Owner:** YC Partner (Market Fit)
-**Goal:** *The "Killer Feature" Demo.*
-
-* **Objective:** Build the **"Hybrid Retrieval"** mechanism. You need a demo that asks a question only a Graph can answer (multi-hop reasoning) and shows Vector search failing.
-* **The Trap:** Competing on "speed." You will lose to C++ vector DBs. Compete on "accuracy of context."
+The Aether SDK is evolving from a research prototype into a robust, production-ready infrastructure for AI context engineering. Our mission is to provide developers with a sovereign, high-performance memory layer that bridge the gap between simple text retrieval and human-like cognitive memory.
 
 ---
 
-### ✅ The Survival Checklist
+## 🗺️ Product Milestones
 
-Here is the literal list of tasks. Check these off, or we do not launch.
+### Phase 1: Core Foundation
+**Goal:** Establish a robust protocol-driven architecture for vendor-neutral integrations.
 
-#### 1. Protocol & Architecture (The Skeleton)
+*   **Finalize Protocol Layer:** Ensure clean, stable interfaces for LLMs, Vector Stores, and Knowledge Graphs.
+*   **Agnostic Adapters:** Implement reference adapters for OpenAI, Anthropic, Qdrant, Chroma, and Neo4j.
+*   **Sovereign Mode:** Enable strictly local execution using Ollama and local storage for air-gapped security.
 
-* [ ] **Finalize `LLMAdapterProtocol`:** (Done in previous step).
-* [ ] **Define `VectorStoreProtocol`:** Must support standard CRUD + `search(query_vector, top_k)`.
-* [ ] **Define `GraphStoreProtocol`:**
-* *Critical:* Must support `upsert_node`, `upsert_edge`, and `cypher_query` (or a generic traversal method).
-* *Constraint:* Must work with a local NetworkX graph (for testing) and Neo4j (for prod).
+### Phase 2: Knowledge Ingestion & Structuring
+**Goal:** Transform raw data into a structured knowledge base with high semantic density.
 
+*   **Advanced Parsing:** Integrate industry-standard parsers (e.g., `docling`) for complex document types (PDF, XLSX, etc.).
+*   **Autonomous Graph Extraction:** Implement automatic entity and relationship extraction to build a persistent Knowledge Graph.
+*   **Entity Resolution:** Build intelligent mechanisms to merge duplicate entities and maintain graph integrity.
 
-* [ ] **Implement `BaseMemoryManager`:** The orchestrator that holds these protocols.
+### Phase 3: Hybrid Retrieval & Context Optimization
+**Goal:** Deliver the most accurate context with minimal token overhead.
 
-#### 2. The Ingestion Pipeline (The Stomach)
-
-* [ ] **Integrate `docling`:** Create a `DocumentParser` class that takes a PDF/MD path and returns structured text.
-* [ ] **Build `GraphExtractor`:**
-* Use `LLMAdapterProtocol.structured_generate`.
-* Input: A text chunk.
-* Output: A list of `Node` and `Edge` objects.
-
-
-* [ ] **Implement Entity Resolution (Basic):**
-* *Logic:* If the graph already has "Alex Karp" and the new chunk says "Karp," the SDK must know to link them (or ask the LLM to verify), rather than creating two nodes.
-
-
-
-#### 3. The Retrieval Layer (The Brain)
-
-* [ ] **Vector Search Adapter:** Implement for `Qdrant` (Local/Docker friendly).
-* [ ] **Graph Search Adapter:** Implement for `NetworkX` (In-memory, perfect for demos).
-* [ ] **Hybrid Search Logic:**
-* Step 1: Vector search to find top-k relevant chunks.
-* Step 2: Graph traversal (2-hop) starting from entities found in those chunks.
-* Step 3: Combine context.
-
-
-
-#### 4. The "Sovereign" Distribution (The Package)
-
-* [ ] **Docker Compose Stack:** A `docker-compose.yml` that spins up Qdrant + Aether (Python) + A local LLM (Ollama/vLLM).
-* *Karp's Demand:* If a user cannot run this strictly offline on an air-gapped machine, you fail the "Sovereignty" test.
-
-
+*   **Hybrid Retrieval Engine:** Combine semantic vector search with graph traversal (inspired by HippoRAG) for multi-hop reasoning.
+*   **Context Distillation:** Implement active context window optimization to reduce token costs while preserving information density.
+*   **Recursive Consolidation:** Develop background "sleep cycles" to consolidate episodic memories into long-term structured knowledge.
 
 ---
 
-### ⚠️ The "Ignore List" (Distractions)
+## 🛠 Features & Capabilities
 
-**Do NOT work on these features yet. They are death traps.**
+### 1. Protocol & Architecture
+*   **LLM Integration:** Standardized interface for any completion provider.
+*   **Storage Abstraction:** Unified CRUD operations for both Vector and Graph databases.
+*   **Resource Orchestration:** High-level handlers for memory lifecycle management.
 
-* ❌ **Chat UI / Frontend:** You are an SDK. Let the user build the UI.
-* ❌ **Voice/Audio Support:** The protocol allows it, but do not implement the *handling* logic yet. Stick to text/images.
-* ❌ **hosted version:** Do not build a SaaS yet. Build the library.
+### 2. Intelligent Ingestion
+*   **Multi-Format Parsing:** Support for a wide range of data sources and document formats.
+*   **Semantic Atomization:** Converting narrative context into atomic, indexable facts.
+*   **Schema Evolution:** Handling changes in data structure without losing historical context.
+
+### 3. Advanced Memory Operations
+*   **Vector search (Episodic):** Local and cloud-scale vector retrieval.
+*   **Graph Traversal (Semantic):** Relational reasoning over extracted knowledge.
+*   **High-Throughput Buffer:** Asynchronous ingestion for high-scale applications.
 
 ---
+
+## ⚠️ Development Focus
+
+We are currently prioritizing:
+*   **Developer Experience (DX):** Simplifying the integration of persistent memory into existing agentic frameworks.
+*   **Performance:** Minimizing latency in hybrid retrieval pipelines.
+*   **Accuracy:** Reducing hallucinations by providing higher-quality, structured context.
+
+---
+*Last Updated: January 2026*
