@@ -34,29 +34,29 @@ The system follows a **Polyglot Microservices** pattern, utilizing Go for high-c
 ```mermaid
 graph TD
     %% --- External Interface ---
-    User([User / Agent]) -->|HTTPS/gRPC| Gateway[Golang BFF / API Gateway]
+    User(["User / Agent"]) --> Gateway["Golang BFF / API Gateway"]
     
-    subgraph "Layer 1: Perception (Ingestion & STM)"
+    subgraph Layer1["Layer 1: Perception"]
         Gateway --> Ingestor[Ingestion Service]
-        Ingestor --> EntropyFilter[Entropy & Deduplication Filter]
-        EntropyFilter -->|High Entropy| Atomizer[Semantic Atomizer]
-        EntropyFilter -->|Low Entropy| Discard[Transient Log]
+        Ingestor --> EntropyFilter["Entropy & Deduplication Filter"]
+        EntropyFilter -->|"High Entropy"| Atomizer[Semantic Atomizer]
+        EntropyFilter -->|"Low Entropy"| Discard[Transient Log]
     end
 
-    subgraph "Layer 2: The Hippocampus (Hybrid Storage)"
-        Atomizer -->|Dense Vectors| VectorDB[(Qdrant: Semantic Store)]
-        Atomizer -->|Sparse Triples| GraphDB[(Neo4j: Knowledge Graph)]
-        VectorDB <-->|Synonymy Links| GraphDB
+    subgraph Layer2["Layer 2: The Hippocampus"]
+        Atomizer -->|"Dense Vectors"| VectorDB[("Qdrant: Semantic Store")]
+        Atomizer -->|"Sparse Triples"| GraphDB[("Neo4j: Knowledge Graph")]
+        VectorDB <-->|"Synonymy Links"| GraphDB
     end
 
-    subgraph "Layer 3: The Cortex (Active Policy)"
+    subgraph Layer3["Layer 3: The Cortex"]
         PolicyEngine{AgeMem Policy Router}
         PolicyEngine -->|Maintenance| Consolidation[Recursive Consolidation Worker]
-        Consolidation -->|Merge Nodes| GraphDB
-        PolicyEngine -->|Tool: UPDATE/DELETE| GraphDB
+        Consolidation -->|"Merge Nodes"| GraphDB
+        PolicyEngine -->|"Tool: UPDATE/DELETE"| GraphDB
     end
 
-    subgraph "Layer 4: Ecphory (Retrieval)"
+    subgraph Layer4["Layer 4: Ecphory"]
         Gateway --> QueryPlanner[Query Complexity Estimator]
         QueryPlanner -->|Simple| VectorDB
         QueryPlanner -->|Complex| PPR[Personalized PageRank Algo]
@@ -64,7 +64,7 @@ graph TD
         VectorDB & GraphDB --> ContextSynthesizer[Context Distiller]
     end
 
-    ContextSynthesizer -->|Compressed Context| Gateway
+    ContextSynthesizer -->|"Compressed Context"| Gateway
 ```
 
 ---

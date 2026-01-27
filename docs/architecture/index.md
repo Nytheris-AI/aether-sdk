@@ -13,7 +13,7 @@ graph TD
         M[AgentMemory]
     end
 
-    subgraph "Functional Modules (Resources)"
+    subgraph "Functional Modules"
         I[IngestionResource]
         R[RetrievalResource]
         P[ParsingResource]
@@ -21,24 +21,24 @@ graph TD
         D[DistillationResource]
     end
 
-    subgraph "Core Interfaces (Protocols)"
+    subgraph "Core Interfaces"
         LP[LLMAdapterProtocol]
         EP[EmbeddingAdapterProtocol]
         VP[VectorStoreProtocol]
         GP[GraphStoreProtocol]
     end
 
-    subgraph "Integrations (Adapters)"
+    subgraph "Integrations"
         OA[OpenAI]
-        LL[LiteLLM / OpenRouter]
+        LL["LiteLLM / OpenRouter"]
         QD[Qdrant]
         CH[Chroma]
         NJ[Neo4j]
     end
 
-    Orchestration --> "Functional Modules (Resources)"
-    "Functional Modules (Resources)" --> "Core Interfaces (Protocols)"
-    "Core Interfaces (Protocols)" --> "Integrations (Adapters)"
+    Orchestration --> "Functional Modules"
+    "Functional Modules" --> "Core Interfaces"
+    "Core Interfaces" --> "Integrations"
 ```
 
 ## System Layers
