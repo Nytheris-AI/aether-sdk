@@ -9,6 +9,7 @@ aether-core = { path = "../aether-core" }
 aether-cortex = { path = "../aether-cortex" }
 aether-adapters = { path = "../aether-adapters" }
 async-trait.workspace = true
+chrono.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
