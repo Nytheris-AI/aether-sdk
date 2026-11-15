@@ -1,6 +1,7 @@
 //! Core domain contracts, DTOs, errors, and inbound/outbound traits for Aether SDK.
 
 use std::fmt;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -544,4 +545,95 @@ pub trait MemoryInbound: Send + Sync {
     async fn forget(&self, project_id: &ProjectId, memory_id: MemoryId) -> Result<()>;
     async fn flush(&self) -> Result<()>;
     async fn shutdown(&self) -> Result<()>;
+}
+
+#[async_trait]
+impl<T: OutboundConnector + ?Sized> OutboundConnector for Arc<T> {
+    fn name(&self) -> &'static str {
+        (**self).name()
+    }
+
+    fn capabilities(&self) -> ConnectorCapabilities {
+        (**self).capabilities()
+    }
+
+    async fn health_check(&self) -> Result<ConnectorHealth> {
+        (**self).health_check().await
+    }
+
+    async fn close(&self) -> Result<()> {
+        (**self).close().await
+    }
+}
+
+#[async_trait]
+impl<T: VectorStore + ?Sized> VectorStore for Arc<T> {
+    async fn initialize(
+        &self,
+        ns: &ProjectId,
+        dimensions: usize,
+        metric: DistanceMetric,
+    ) -> Result<()> {
+        (**self).initialize(ns, dimensions, metric).await
+    }
+
+    async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {
+        (**self).upsert_batch(ns, records).await
+    }
+
+    async fn delete(&self, ns: &ProjectId, ids: &[MemoryId]) -> Result<()> {
+        (**self).delete(ns, ids).await
+    }
+
+    async fn search(
+        &self,
+        ns: &ProjectId,
+        query_vector: &[f32],
+        top_k: usize,
+        filter: Option<&FilterExpr>,
+    ) -> Result<Vec<VectorMatch>> {
+        (**self).search(ns, query_vector, top_k, filter).await
+    }
+}
+
+#[async_trait]
+impl<T: GraphStore + ?Sized> GraphStore for Arc<T> {
+    async fn upsert_entities(&self, ns: &ProjectId, entities: &[Entity]) -> Result<()> {
+        (**self).upsert_entities(ns, entities).await
+    }
+
+    async fn upsert_relations(
+        &self,
+        ns: &ProjectId,
+        source_memory_id: MemoryId,
+        relations: &[Relation],
+    ) -> Result<()> {
+        (**self)
+            .upsert_relations(ns, source_memory_id, relations)
+            .await
+    }
+
+    async fn retract_memory_facts(
+        &self,
+        ns: &ProjectId,
+        source_memory_id: MemoryId,
+        invalidated_at: DateTime<Utc>,
+    ) -> Result<()> {
+        (**self)
+            .retract_memory_facts(ns, source_memory_id, invalidated_at)
+            .await
+    }
+
+    async fn neighborhood(
+        &self,
+        ns: &ProjectId,
+        seeds: &[EntityId],
+        hops: u8,
+        per_node_limit: usize,
+        temporal: &TemporalFilter,
+    ) -> Result<Subgraph> {
+        (**self)
+            .neighborhood(ns, seeds, hops, per_node_limit, temporal)
+            .await
+    }
 }
