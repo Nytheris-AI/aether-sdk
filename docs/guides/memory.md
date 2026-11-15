@@ -1,40 +1,25 @@
-# AgentMemory System
+# Memory Model & Consistency
 
-The `AgentMemory` system provides agents with a multi-layered memory architecture, inspired by human cognitive patterns.
+Aether organizes agent memory across **tiers**, **scopes**, and **three storage layers (L1 / L2 / L3)** so short-term working memory and long-term semantic/graph knowledge behave predictably in production.
 
-## Memory Layers
+## Memory Tiers (`MemoryTier`)
+- **`Episodic`**: Time-bound events and interaction history.
+- **`Semantic`** *(default)*: Durable facts and structured knowledge.
+- **`Procedural`**: Workflows, tool-use patterns, and learned instructions.
+- **`Profile`**: User or agent preferences and long-lived attributes.
 
-### 1. Working Memory (Short-Term)
-- **Implementation**: Volatile RAM (`List[MemoryItem]`).
-- **Use Case**: Holding immediate conversation context, temporary observations.
+## Memory Scopes (`MemoryScope`)
+- **`Project`** *(default)*: Shared within a `ProjectId` namespace.
+- **`User`**: Scoped to an end-user within a project.
+- **`Session`**: Short-term working memory stored in L2 `KvStore` with automatic TTL expiration.
+- **`Global`**: Cross-session shared knowledge within a project.
 
-### 2. Episodic Memory (Long-Term Semantic)
-- **Implementation**: Vector Database (`VectorStoreProtocol`).
-- **Use Case**: Retrieving relevant past experiences based on semantic similarity.
+## Durability & Consistency
 
-### 3. Semantic Memory (Long-Term Knowledge)
-- **Implementation**: Knowledge Graph (`GraphStoreProtocol` or integrations like **Graphiti**).
-- **Use Case**: Storing absolute facts and complex relationships that don't depend on specific episodes.
+### `WriteDurability`
+- **`Buffered`** *(default)*: Enqueues writes to `IngestionBuffer` after L2 `KvStore` + L1 `HotContextCache` persistence and returns `ReceiptState::Buffered` immediately.
+- **`WaitFlush`**: Awaits the flush barrier to L3 (`VectorStore` + `GraphStore`) and returns `ReceiptState::Persisted`.
 
-## Usage Example
-
-```python
-memory = AgentMemory(
-    project_id="agent-007",
-    vector_store=qdrant_adapter,
-    embedding_adapter=openai_embedder,
-    graph_store_client=graphiti_client # Integration with Graphiti
-)
-
-# Store an event
-await memory.add_episodic("User mentioned they like coffee.", metadata={"source": "chat"})
-
-# Store a fact
-await memory.add_semantic("User is allergic to peanuts.")
-
-# Retrieve context for a query
-past_memories = await memory.retrieve("What does the user like to drink?")
-```
-
-## Consolidation
-The `consolidate()` method (WIP) is designed to move important insights from working memory into long-term storage (Episodic or Semantic) based on significance and repetition.
+### `ConsistencyMode`
+- **`ReadYourWrites`** *(default)*: `QueryPlanner` merges un-flushed `IngestionBuffer` entries, L1 `HotContextCache`, and L2 `KvStore::recent` with L3 `VectorStore` / `GraphStore` results.
+- **`Eventual`**: Queries L3 outbound stores directly for lowest-overhead reads when immediate write visibility is not required.

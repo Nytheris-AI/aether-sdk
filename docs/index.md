@@ -1,21 +1,23 @@
 # Aether SDK Documentation
 
-Welcome to the technical documentation for the Aether SDK. This guide provides a deep dive into the architecture, design principles, and usage of the framework.
+**Aether SDK** is a high-performance Rust **AI Memory Gateway SDK** that enables applications to uniformly connect to AI memory storage and databases—such as **Redis/Valkey, SQLite, Turbopuffer, Neo4j, Qdrant, Chroma, and pgvector**—behind one canonical interface.
 
-## 📖 Technical Reference
+## Technical Reference
 
-- **[Architecture](architecture/index.md)**: High-level system design and data flow.
-- **[Core Protocols](architecture/protocols.md)**: The lifecycle-driven interfaces at the heart of Aether.
-- **[Built-in Adapters](guides/adapters.md)**: Integrations with OpenAI, LiteLLM, Qdrant, Neo4j, and more.
-- **[Functional Resources](guides/resources.md)**: Core modules for Ingestion, Retrieval, and Intelligence.
-- **[AgentMemory System](guides/memory.md)**: multi-layered memory architecture (Episodic, Semantic, Working).
-- **[Usage Guide](guides/usage.md)**: Code examples and common implementation patterns.
+- **[Architecture Overview](architecture/index.md)**: Layered 4-crate Rust workspace and L1/L2/L3 serving model.
+- **[Rust Migration Blueprint](architecture/rust-migration.md)**: Core domain contracts (`aether-core`), `aether-cortex`, and `aether-sdk`.
+- **[Connectors Architecture](architecture/connectors.md)**: Outbound `KvStore`, `VectorStore`, and `GraphStore` drivers with shared resilience middleware.
 
-## 🛠 Advanced
+## Guides
 
-- **[Development Guidelines](development/guidelines.md)**: Best practices for contributing.
-- **[Roadmap](about/roadmap.md)**: Upcoming features and future direction.
+- **[Usage Guide](guides/usage.md)**: Quickstart with `MemoryManager` (`remember`, `recall`, `update`, `forget`, `flush`, `shutdown`).
+- **[Memory Model](guides/memory.md)**: `MemoryTier`, `MemoryScope`, `WriteDurability`, `ConsistencyMode`, and temporal provenance.
+
+## Development & Roadmap
+
+- **[Development Guidelines](development/guidelines.md)**: Engineering standards, micro commits, and TDD conventions.
+- **[Roadmap](about/roadmap.md)**: Current milestones and upcoming storage/database drivers.
 
 ---
 
-*Built with ❤️ by Nytheris AI.*
+*Built by Nytheris AI.*

@@ -8,8 +8,6 @@ const sidebars: SidebarsConfig = {
       label: 'Architecture',
       items: [
         'architecture/index',
-        'architecture/cortex',
-        'architecture/protocols',
         'architecture/rust-migration',
         'architecture/connectors',
       ],
@@ -20,8 +18,6 @@ const sidebars: SidebarsConfig = {
       items: [
         'guides/usage',
         'guides/memory',
-        'guides/resources',
-        'guides/adapters',
       ],
     },
     {
