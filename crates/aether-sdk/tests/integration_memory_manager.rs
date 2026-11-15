@@ -15,7 +15,11 @@ async fn remember_recall_update_cas_and_forget_lifecycle() {
     let pid = ProjectId::new("proj-sdk").unwrap();
     backend.initialize(&pid, 3, DistanceMetric::Cosine).await.unwrap();
 
-    let manager: Arc<dyn MemoryInbound> = Arc::new(MemoryManager::new(backend.clone(), backend.clone()));
+    let manager: Arc<dyn MemoryInbound> = Arc::new(MemoryManager::new(
+        backend.clone(),
+        backend.clone(),
+        backend.clone(),
+    ));
 
     let mut input = MemoryInput::new(pid.clone(), "Alice uses Turbopuffer for vector recall.");
     input.embedding = Some(vec![1.0, 0.0, 0.0]);
