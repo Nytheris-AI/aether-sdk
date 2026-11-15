@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/aether-core",
+    "crates/aether-cortex",
+    "crates/aether-adapters",
+    "crates/aether-sdk",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/Nytheris-AI/aether-sdk"
+
+[workspace.dependencies]
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.40", features = ["full"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+petgraph = "0.6"
+tracing = "0.1"
