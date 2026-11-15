@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 
 use aether_core::{
-    AetherError, ConsistencyMode, EntityId, FilterExpr, FilterValue, GraphStore, MemoryId,
+    AetherError, ConsistencyMode, EntityId, FilterExpr, FilterValue, GraphStore, KvStore, MemoryId,
     MemoryInput, MemoryItem, MemoryReceipt, ProjectId, ReceiptState, RecallHit, RecallMode,
     RecallQuery, RecallResult, Result, Subgraph, VectorRecord, VectorStore, WriteDurability,
 };
@@ -335,8 +335,9 @@ impl PersonalizedPageRank {
     }
 }
 
-/// Plans and executes Vector, Graph, and Hybrid recall with Read-Your-Writes merging.
+/// Plans and executes Vector, Graph, and Hybrid recall with L1/L2 Read-Your-Writes merging.
 pub struct QueryPlanner {
+    kv_store: Arc<dyn KvStore>,
     vector_store: Arc<dyn VectorStore>,
     graph_store: Arc<dyn GraphStore>,
     hot_cache: Arc<HotContextCache>,
@@ -346,12 +347,14 @@ pub struct QueryPlanner {
 
 impl QueryPlanner {
     pub fn new(
+        kv_store: Arc<dyn KvStore>,
         vector_store: Arc<dyn VectorStore>,
         graph_store: Arc<dyn GraphStore>,
         hot_cache: Arc<HotContextCache>,
         buffer: Arc<IngestionBuffer>,
     ) -> Self {
         Self {
+            kv_store,
             vector_store,
             graph_store,
             hot_cache,
@@ -389,11 +392,19 @@ impl QueryPlanner {
             }
         }
 
-        // Read-Your-Writes: merge buffered / hot items not yet flushed to outbound stores.
+        // Read-Your-Writes: merge buffered, L1 hot-cache, and L2 KvStore items.
         if query.consistency == ConsistencyMode::ReadYourWrites {
             let pending = self.buffer.pending_snapshot(&query.project_id);
-            let recent = self.hot_cache.recent(&query.project_id, query.top_k);
-            for item in pending.into_iter().chain(recent.into_iter()) {
+            let hot_recent = self.hot_cache.recent(&query.project_id, query.top_k);
+            let kv_recent = self
+                .kv_store
+                .recent(&query.project_id, None, query.top_k)
+                .await?;
+            for item in pending
+                .into_iter()
+                .chain(hot_recent.into_iter())
+                .chain(kv_recent.into_iter())
+            {
                 if hits_by_id.contains_key(&item.id) {
                     continue;
                 }

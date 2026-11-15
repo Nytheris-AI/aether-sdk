@@ -165,7 +165,13 @@ async fn ingestion_buffer_and_query_planner_support_read_your_writes_and_flush()
     assert_eq!(receipt.state, ReceiptState::Buffered);
 
     // Before flush(), ReadYourWrites recall still finds the buffered memory!
-    let planner = QueryPlanner::new(backend.clone(), backend.clone(), cache.clone(), buffer.clone());
+    let planner = QueryPlanner::new(
+        backend.clone(),
+        backend.clone(),
+        backend.clone(),
+        cache.clone(),
+        buffer.clone(),
+    );
     let mut query = RecallQuery::new(pid.clone(), "What does Alice use?");
     query.query_vector = Some(vec![1.0, 0.0, 0.0]);
     query.mode = RecallMode::Hybrid;
