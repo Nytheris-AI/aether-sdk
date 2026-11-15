@@ -1,187 +1,152 @@
 # Rust Migration Architecture & Design Blueprint
 
-This document compiles the complete architecture, domain models, traits, and component inventory of **Aether SDK** (`src/aether_sdk/`) as the reference blueprint for rewriting the project in Rust.
+This document defines the target architecture and `aether-core` contracts for rewriting **Aether SDK** in Rust as a high-performance **AI Agent Memory Gateway**.
 
 ---
 
-## 1. Proposed Rust Workspace Layout
+## 1. Product Scope & Core Design Decisions
 
-A Cargo workspace cleanly decouples core abstractions from heavy infrastructure drivers using feature flags:
+1. **Unified Memory Storage SDK (`aether-sdk`)**: Aether is a unified AI memory gateway SDK that lets applications connect to any AI memory storage or database—such as **Turbopuffer, Neo4j, Qdrant, Chroma, and pgvector**—through one canonical inbound interface, with built-in routing, tenant isolation, hot caching, write-behind buffering, and resilient outbound connectors.
+2. **No Document Parsing or Model Inference in Core**: Document-parsing pipelines (`docling`, `ParsingResource`, `IngestionResource`, `BrainResource`) and LLM/embedding model adapters (`LlmAdapter`, `EmbeddingAdapter`) are **excluded** from the core SDK. Aether does not own LLM prompts, token billing, or model SDKs.
+3. **Strict Inbound Boundary (Caller-Constructed Input)**: Callers construct and submit Aether's canonical structured memory types (`MemoryInput`, `Entity`, `Relation`, `RecallQuery`, optional pre-computed `embedding`) through a validated inbound interface.
+4. **Heavily Engineered Outbound Storage Layer**: The primary engineering investment is in the unified outbound connector layer (`VectorStore` for Turbopuffer, Qdrant, Chroma, pgvector; `GraphStore` for Neo4j) behind a shared resilience, batching, and observability stack.
+
+---
+
+## 2. Three-Pillar Gateway Architecture
+
+```mermaid
+graph LR
+    subgraph "1. Inbound (Strict Interface)"
+        IN[Agent / SDK / HTTP / MCP]
+        DTO["Validated DTOs: MemoryInput, RecallQuery, Update, Forget"]
+    end
+
+    subgraph "2. Gateway Core (aether-cortex)"
+        POL["PolicyRouter (Deterministic Rules & Routing)"]
+        CACHE[HotContextCache]
+        BUF[IngestionBuffer]
+        WP[WorkerPool]
+        QP["QueryPlanner (Seed Resolution & Fusion)"]
+        PPR["PersonalizedPageRank (petgraph)"]
+    end
+
+    subgraph "3. Outbound (Unified Storage & DB Connectors)"
+        VEC["VectorStore (Turbopuffer, Qdrant, Chroma, pgvector)"]
+        GRP["GraphStore (Neo4j — provenance & temporal)"]
+    end
+
+    IN --> DTO
+    DTO --> POL & QP
+    POL --> CACHE & BUF
+    BUF --> WP --> VEC & GRP
+    QP --> CACHE & BUF & VEC & PPR
+    PPR --> GRP
+```
+
+Key data-flow guarantees:
+- **Write-Behind Durability**: `IngestionBuffer → WorkerPool → Outbound Backends` handles durable async persistence. Callers choose `WriteDurability::Buffered` or `WriteDurability::Sync`, and `MemoryManager::flush()` / `shutdown()` drain in-flight writes cleanly.
+- **Read-Your-Writes**: `QueryPlanner` merges un-flushed entries from `HotContextCache` / `IngestionBuffer` (or awaits a flush barrier when `ConsistencyMode::ReadYourWrites` is requested).
+- **Zero-LLM Hot Path**: `PolicyRouter` is strictly deterministic (schema validation, embedding-dimension checks, content-hash deduplication, routing rules).
+
+---
+
+## 3. Rust Workspace Layout
 
 ```text
 aether/
 ├── Cargo.toml                  # Workspace manifest
 └── crates/
-    ├── aether-core/            # Domain types, error types, async traits (Protocols)
-    ├── aether-cortex/          # Neuro-symbolic engine (entropy, atomizer, PPR, buffer, cache)
-    ├── aether-resources/       # Pipeline logic (parsing, extraction, ingestion, retrieval, distillation)
-    ├── aether-adapters/        # Feature-gated drivers (openai, qdrant, neo4j, chroma, etc.)
-    └── aether-sdk/             # Public facade (MemoryManager, AetherBrain) & optional PyO3 bindings
+    ├── aether-core/            # Newtypes, inbound DTOs, FilterExpr, TemporalFilter, AetherError, object-safe traits
+    ├── aether-cortex/          # Gateway core (PolicyRouter, Buffer, WorkerPool, HotCache, QueryPlanner, PPR)
+    ├── aether-adapters/        # Feature-gated outbound backends & middleware (Traced, Resilient, Timeout, Batcher)
+    └── aether-sdk/             # Public facade (MemoryInbound / MemoryManager) & optional PyO3/server bindings
 ```
 
 ---
 
-## 2. Architecture Overview
+## 4. Inbound Interface & Domain Types (`aether-core`)
 
-```mermaid
-graph TD
-    subgraph "aether-sdk (Orchestration)"
-        MM[MemoryManager]
-        AB[AetherBrain]
-        AM[AgentMemory]
-    end
+All I/O and tenant boundaries use strongly typed newtypes and portable ASTs:
 
-    subgraph "aether-resources (Pipelines)"
-        PR[ParsingResource]
-        ER[ExtractionResource]
-        IR[IngestionResource]
-        RR[RetrievalResource]
-        DR[DistillationResource]
-        BR[BrainResource]
-    end
+```rust
+pub struct ProjectId(pub String);
+pub struct MemoryId(pub Uuid);
+pub struct EntityId(pub String); // Canonical deterministic slug or caller ID
+```
 
-    subgraph "aether-cortex (Neuro-Symbolic)"
-        EF[EntropyFilter]
-        SA[SemanticAtomizer]
-        IB[IngestionBuffer / WorkerPool / HotCache]
-        QP[QueryPlanner]
-        PPR[PersonalizedPageRank]
-        POL[PolicyRouter / Consolidation]
-    end
+### Canonical DTOs
+- **`MemoryType`**: `Working` | `Episodic` | `Semantic`
+- **`MemoryAction`**: `Add` | `Update` | `Delete` | `Ignore`
+- **`WriteDurability`**: `Buffered` | `Sync`
+- **`ConsistencyMode`**: `Eventual` | `ReadYourWrites`
+- **`MemoryReceipt`**: `{ id: MemoryId, status: ReceiptStatus /* Buffered | Persisted */, version: u64 }`
+- **`Entity`**: `{ id: EntityId, name: String, entity_type: String, description: Option<String> }`
+- **`Relation`**: `{ source: EntityId, target: EntityId, relation_type: String, valid_at: Option<DateTime<Utc>>, invalid_at: Option<DateTime<Utc>>, description: Option<String> }`
+- **`MemoryItem`**:
+  - `id: MemoryId`, `project_id: ProjectId`, `version: u64` (optimistic CAS)
+  - `content: String`, `idempotency_key: String`, `memory_type: MemoryType`
+  - `entities: Vec<Entity>`, `relations: Vec<Relation>`
+  - `significance: f32`, `created_at: DateTime<Utc>`, `updated_at: DateTime<Utc>`
+  - `metadata: Value`, `embedding: Option<Vec<f32>>` (validated against configured `dimensions` when present)
+- **`FilterExpr`**:
+  ```rust
+  pub enum FilterExpr {
+      Eq { field: String, value: FilterValue },
+      In { field: String, values: Vec<FilterValue> },
+      Range { field: String, gte: Option<f64>, lte: Option<f64> },
+      And(Vec<FilterExpr>),
+      Or(Vec<FilterExpr>),
+  }
+  ```
+- **`TemporalFilter`**: `{ as_of: Option<DateTime<Utc>>, active_only: bool }`
+- **`RecallQuery`**:
+  - `project_id: ProjectId`, `query: String`, `query_vector: Option<Vec<f32>>`, `top_k: usize`
+  - `mode: RetrievalMode` (`Hybrid` | `Vector` | `Graph`)
+  - `seed_entities: Vec<EntityId>` (caller-supplied PPR seeds, supplemented by `EntityId`s from top-k vector hits)
+  - `temporal: TemporalFilter`, `filters: Option<FilterExpr>`, `consistency: ConsistencyMode`
 
-    subgraph "aether-core (Traits)"
-        LLM[LlmAdapter]
-        EMB[EmbeddingAdapter]
-        VEC[VectorStore]
-        GRP[GraphStore]
-        TGP[TemporalGraph]
-    end
+### Inbound Operations (`MemoryInbound` Trait)
+All transports (Rust SDK, `PyO3`, HTTP/gRPC server, MCP server) delegate to an object-safe `MemoryInbound` trait so validation, `ProjectId` scoping, and `tracing` spans are implemented **once**:
 
-    subgraph "aether-adapters (Feature-Gated)"
-        OA[OpenAI / OpenAI-Compatible]
-        QD[Qdrant]
-        CH[Chroma]
-        NJ[Neo4j]
-        GR[Graphiti]
-    end
-
-    MM --> IR & RR & BR & AM
-    AB --> EF & AM
-    IR --> PR & ER & VEC & GRP
-    RR --> VEC & GRP
-    BR --> RR & DR
-    AM --> IB & VEC & TGP
-    LLM & EMB & VEC & GRP & TGP -.-> OA & QD & CH & NJ & GR
+```rust
+#[async_trait::async_trait]
+pub trait MemoryInbound: Send + Sync {
+    async fn remember(&self, input: MemoryInput, durability: WriteDurability) -> Result<MemoryReceipt>;
+    async fn remember_batch(&self, inputs: Vec<MemoryInput>, durability: WriteDurability) -> Result<Vec<MemoryReceipt>>;
+    async fn recall(&self, query: RecallQuery) -> Result<ContextResult>;
+    async fn update(&self, ns: &ProjectId, id: MemoryId, expected_version: u64, patch: MemoryPatch) -> Result<MemoryReceipt>;
+    async fn forget(&self, ns: &ProjectId, id: MemoryId) -> Result<()>;
+    async fn flush(&self) -> Result<()>;
+    async fn shutdown(&self) -> Result<()>;
+}
 ```
 
 ---
 
-## 3. Core Domain Types (`types/shared.py` → `aether-core`)
+## 5. Outbound Connections (`aether-core` traits + `aether-adapters`)
 
-All Python Pydantic models and enums map directly to `serde`-serializable Rust structs and enums:
+See [Connectors Architecture](./connectors.md) for the full middleware stack (`Traced<Resilient<Timeout<T>>>`), storage driver layout, error classification, and contract test harness.
 
-| Python Symbol | File | Rust Target | Notes |
-| --- | --- | --- | --- |
-| `EntityType` | `types/shared.py` | `enum EntityType` | `Person`, `Project`, `Goal`, `Date`, `Organization`, `Unknown`, `Incident`, `Code`, `Risk` |
-| `RelationType` | `types/shared.py` | `enum RelationType` | `WORKS_ON`, `DEADLINE_AT`, `PARTNER_WITH`, `MENTIONED_IN`, `RELATED_TO`, `CALLS`, `CAUSES`, `MODIFIED`, `HAPPENED_AT`, `RISK_OF` |
-| `IngestionStatus` | `types/shared.py` | `enum IngestionStatus` | `Pending`, `Processing`, `Completed`, `Failed` |
-| `Document` | `types/shared.py` | `struct Document` | `id: Uuid`, `project_id: String`, `filename: String`, `content_type: String`, `content: String`, `status: IngestionStatus`, `created_at: DateTime<Utc>`, `metadata: Value` |
-| `ExtractedEntity` | `types/shared.py` | `struct ExtractedEntity` | `name: String`, `entity_type: String`, `description: Option<String>` |
-| `ExtractedRelation` | `types/shared.py` | `struct ExtractedRelation` | `source: String`, `target: String`, `relation_type: String`, `description: Option<String>` |
-| `KnowledgeGraph` | `types/shared.py` | `struct KnowledgeGraph` | `entities: Vec<ExtractedEntity>`, `relations: Vec<ExtractedRelation>` |
-| `ContextResult` | `types/shared.py` | `struct ContextResult` | `distilled_context: String`, `source_references: Vec<String>`, `mode: RetrievalMode` (`Hybrid`, `Vector`, `Graph`) |
-| `MemoryType` | `cortex/memory/orchestrator.py` | `enum MemoryType` | `Episodic`, `Semantic`, `Working` |
-| `MemoryItem` | `cortex/memory/orchestrator.py` | `struct MemoryItem` | `id: Uuid`, `content: String`, `memory_type: MemoryType`, `created_at: DateTime<Utc>`, `significance: f32`, `metadata: Value`, `embedding: Option<Vec<f32>>` |
-| `MemoryAction` | `cortex/executive/policy.py` | `enum MemoryAction` | `Add`, `Update`, `Delete`, `Ignore` |
-| `QueryComplexity` | `cortex/ecphory/planner.py` | `enum QueryComplexity` | `Simple`, `Complex` |
+All outbound traits inherit `OutboundConnector` (`name`, `capabilities`, `health_check`, `close`) and enforce `ProjectId` isolation at the trait boundary:
+
+- **`VectorStore: OutboundConnector`**: Unified vector storage contract for **Turbopuffer, Qdrant, Chroma, pgvector**, etc. (`initialize(ns, dimensions, metric)`, `upsert_batch(ns, records)`, `delete(ns, ids)`, `search(ns, query_vector, top_k, filter)`).
+- **`GraphStore: OutboundConnector`**: Unified graph storage contract for **Neo4j**, etc. (`upsert_entities(ns, entities)`, `upsert_relations(ns, source_memory_id, relations)`, `retract_memory_facts(ns, source_memory_id, invalidated_at)`, `neighborhood(ns, seeds, hops, per_node_limit, temporal)`). *(Raw `execute_query` is excluded to prevent tenant bypasses.)*
+- **`InMemoryBackend`** *(test/dev only)*: Lightweight in-memory `VectorStore` + `petgraph` `GraphStore` for `cargo test` and local dry-runs without Docker.
 
 ---
 
-## 4. Core Traits (`core/protocols.py` → `aether-core`)
+## 6. TDD & Phased Migration Roadmap
 
-Every external dependency is inverted behind traits (`Send + Sync`, async via `async_trait` or RPITIT):
+All implementation follows **Red → Green → Refactor** (see `AGENTS.md`):
 
-### `LlmAdapter` (from `LLMAdapterProtocol`)
-- `generate_completion(messages: &[Message], options: &CompletionOptions) -> Result<String>`
-- `generate_structured<T: DeserializeOwned>(messages: &[Message], schema: &Value, options: &CompletionOptions) -> Result<T>`
-
-### `EmbeddingAdapter` (from `EmbeddingAdapterProtocol`)
-- `embed_text(text: &str) -> Result<Vec<f32>>`
-- `embed_batch(texts: &[&str]) -> Result<Vec<Vec<f32>>>`
-
-### `VectorStore` (from `VectorStoreProtocol`)
-- `initialize() -> Result<()>`
-- `upsert(id: &str, vector: &[f32], metadata: &Value) -> Result<()>`
-- `search(query_vector: &[f32], top_k: usize) -> Result<Vec<VectorSearchHit>>` (`id`, `score`, `metadata`)
-
-### `GraphStore` (from `GraphStoreProtocol`)
-- `execute_query(query: &str, params: Option<&Value>) -> Result<Vec<Value>>`
-- `upsert_node(project_id: &str, name: &str, node_type: &str, properties: Option<&Value>) -> Result<()>`
-- `upsert_relation(project_id: &str, source: &str, target: &str, rel_type: &str, properties: Option<&Value>) -> Result<()>`
-
-### `TemporalGraph` (from `TemporalGraphProtocol`)
-- `initialize() -> Result<()>`
-- `close() -> Result<()>`
-- `add_episode(content: &str, source_id: &str) -> Result<()>`
-- `add_triplet(source: &Node, edge: &Edge, target: &Node) -> Result<()>`
-- `search(query: &str) -> Result<Vec<Value>>`
-
----
-
-## 5. Component Inventory
-
-### Orchestration Layer (`aether-sdk`)
-- **`MemoryManager`** (`memory.py`): Wires adapters into `AgentMemory` and all `Resources`; exposes `ingest_text()` and `ask()`.
-- **`AetherBrain`** (`brain.py`): Zero-shot agent loop (`Recall → Reason → Act`, max 5 turns) that parses `<think>...</think>` and `<tool_call>...</tool_call>` blocks, runs `SimpleEntropyFilter`, and emits `BrainEvent`s to `BrainMonitor` observers.
-
-### Resource Layer (`aether-resources`)
-- **`ParsingResource`** (`resources/parsing.py`): Document parsing into clean text.
-- **`ExtractionResource`** (`resources/extraction.py`): LLM-driven entity and relation extraction into `KnowledgeGraph`.
-- **`IngestionResource`** (`resources/ingestion.py`): Orchestrates parsing, chunking, embedding, vector upsert, and optional graph extraction/upsert.
-- **`RetrievalResource`** (`resources/retrieval.py`): Hybrid retrieval combining `VectorStore` similarity search and `GraphStore` traversal.
-- **`DistillationResource`** (`resources/distillation.py`): Synthesizes retrieved context into concise answers via `LlmAdapter`.
-- **`BrainResource`** (`resources/brain.py`): Coordinates `RetrievalResource` + `DistillationResource` for Q&A.
-- **`HippoRAGResource`** (`resources/hipporag_resource.py`) & `integrations/hipporag.py`: Integration bridge for HippoRAG-style graph retrieval.
-
-### Cortex Layer (`aether-cortex`)
-- **Perception**:
-  - `SimpleEntropyFilter` (`cortex/perception/entropy.py`): Filters low-information inputs before storage.
-  - `SemanticAtomizer` (`cortex/perception/atomizer.py`): De-linearizes conversational text into self-contained atomic facts.
-- **Memory**:
-  - `AgentMemory` (`cortex/memory/orchestrator.py`): Coordinates Episodic (`VectorStore`), Semantic (`TemporalGraph`), and Working memory.
-  - `IngestionBuffer` (`buffer.py`), `WorkerPool` (`worker.py`), `HotContextCache` (`cache.py`), `EpisodicMemory` (`episodic.py`), `SemanticMemory` (`semantic.py`), `LazyMemory` (`lazy.py`).
-- **Ecphory (Retrieval Planning & Graph Activation)**:
-  - `QueryPlanner` (`cortex/ecphory/planner.py`): Classifies query complexity (`Simple` vs `Complex`) and builds retrieval plans.
-  - `PersonalizedPageRank` (`cortex/ecphory/ppr.py`): Spreading activation over knowledge graph neighborhoods.
-- **Executive**:
-  - `PolicyRouter` (`cortex/executive/policy.py`): Evaluates candidate memories (`Add`, `Update`, `Delete`, `Ignore`).
-  - `Consolidation` (`cortex/executive/consolidation.py`): Background consolidation of buffered memories.
-
-### Adapters Layer (`aether-adapters`)
-- `OpenAIAdapter` (`adapters/openai.py`)
-- `LiteLLMAdapter` (`adapters/litellm.py`) — in Rust, replace with an OpenAI-compatible HTTP client (`reqwest`) + provider presets.
-- `QdrantAdapter` (`adapters/qdrant.py`) — `qdrant-client` crate.
-- `ChromaAdapter` (`adapters/chroma.py`)
-- `Neo4jAdapter` (`adapters/neo4j.py`) — `neo4rs` crate.
-- `GraphitiAdapter` (`adapters/graphiti/adapter.py`)
-
----
-
-## 6. Known Python Prototype Gaps to Fix in Rust
-
-1. **Unify sync/async trait methods**: `LLMAdapterProtocol` defines `generate_completion`, while `AetherBrain` calls `await self.llm.chat_completion(...)`. Standardize all I/O traits in `aether-core` as `async fn` from day one.
-2. **Replace MVP stubs with real implementations**:
-   - `PersonalizedPageRank` currently returns mock scores; implement real in-memory PPR using `petgraph`.
-   - `QueryPlanner` uses a keyword/length heuristic; support both deterministic heuristics and optional LLM-backed planning.
-   - `MemoryManager.create_conversation` is a stub; design an explicit `Conversation` session state struct.
-3. **Feature-gate heavy dependencies**: Keep `aether-core` and `aether-cortex` pure Rust with zero database/ML runtime dependencies. Gate Qdrant, Neo4j, HTTP LLM clients, and local embeddings behind Cargo features.
-4. **Structured error handling**: Replace silent fallbacks/empty returns (e.g., missing Neo4j driver returning `[]`) with typed `thiserror` enums.
-
----
-
-## 7. Phased Migration Roadmap
-
-1. **Phase 1 — `aether-core`**: Implement all domain structs/enums (`serde`), `AetherError`, and async traits (`LlmAdapter`, `EmbeddingAdapter`, `VectorStore`, `GraphStore`, `TemporalGraph`) with in-memory mock implementations for unit testing.
-2. **Phase 2 — `aether-cortex`**: Port `IngestionBuffer` (using `tokio::sync::mpsc`), `HotContextCache`, `SimpleEntropyFilter`, `PolicyRouter`, and `PersonalizedPageRank` (`petgraph`).
-3. **Phase 3 — `aether-resources`**: Implement `ParsingResource`, `ExtractionResource`, `IngestionResource`, `RetrievalResource`, `DistillationResource`, and `BrainResource` against `aether-core` traits.
-4. **Phase 4 — `aether-adapters` & `aether-sdk`**: Implement feature-gated `openai`, `qdrant`, and `neo4j` adapters, expose `MemoryManager` and `AetherBrain`, and optionally add `PyO3` bindings if Python consumers remain supported.
+1. **Phase 1 — `aether-core` (Contracts & Validation)**:
+   - Implement newtypes, inbound DTOs, `FilterExpr`, `TemporalFilter`, `AetherError` (`Transient` vs `Permanent`), and object-safe `MemoryInbound` / `OutboundConnector` traits with unit tests.
+2. **Phase 1.5 — `InMemoryBackend` & Contract Suite**:
+   - Implement the in-memory test backend (`VectorStore` + `petgraph` `GraphStore`) and the shared contract test suite before building `aether-cortex`.
+3. **Phase 2 — `aether-cortex` (Gateway Core)**:
+   - Implement `PolicyRouter`, `HotContextCache`, `IngestionBuffer` + `WorkerPool`, `QueryPlanner` (seed resolution + read-your-writes merge), and `PersonalizedPageRank` (`petgraph`).
+4. **Phase 3 — `aether-adapters` (Production Storage & DB Connectors)**:
+   - Implement the shared `middleware/` stack (`Resilient`, `Timeout`, `Batcher`, `Traced`) and feature-gated `turbopuffer`, `qdrant`, `neo4j`, `chroma`, and `pgvector` connectors.
+5. **Phase 4 — `aether-sdk` (Facade, Lifecycle & Heavy E2E)**:
+   - Implement `MemoryManager` (`flush`, `shutdown`), heavy concurrency/read-your-writes E2E tests, and optional `PyO3` / HTTP gateway bindings.

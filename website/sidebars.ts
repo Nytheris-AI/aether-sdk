@@ -11,6 +11,7 @@ const sidebars: SidebarsConfig = {
         'architecture/cortex',
         'architecture/protocols',
         'architecture/rust-migration',
+        'architecture/connectors',
       ],
     },
     {
