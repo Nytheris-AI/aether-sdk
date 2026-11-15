@@ -332,7 +332,7 @@ memory = MemoryManager(
 
 5. **Production-Grade Memory**
    - Persistent, fault-tolerant storage
-   - Efficient memory retrieval (<100ms)
+   - Efficient memory retrieval (`<100ms`)
    - Scalable to millions of interactions
    - Backward compatibility guarantees
 
