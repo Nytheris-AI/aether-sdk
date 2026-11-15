@@ -32,15 +32,16 @@ graph LR
     end
 
     subgraph "3. Outbound (Unified Storage & DB Connectors)"
+        KV["KvStore (Redis/Valkey, SQLite — L2 cache, idempotency, CAS)"]
         VEC["VectorStore (Turbopuffer, Qdrant, Chroma, pgvector)"]
         GRP["GraphStore (Neo4j — provenance & temporal)"]
     end
 
     IN --> DTO
     DTO --> POL & QP
-    POL --> CACHE & BUF
+    POL --> CACHE & KV & BUF
     BUF --> WP --> VEC & GRP
-    QP --> CACHE & BUF & VEC & PPR
+    QP --> CACHE & KV & BUF & VEC & PPR
     PPR --> GRP
 ```
 
@@ -130,9 +131,10 @@ See [Connectors Architecture](./connectors.md) for the full middleware stack (`T
 
 All outbound traits inherit `OutboundConnector` (`name`, `capabilities`, `health_check`, `close`) and enforce `ProjectId` isolation at the trait boundary:
 
+- **`KvStore: OutboundConnector`**: Unified L2 working-memory / key-value contract for **Redis/Valkey** and **SQLite** (`get`, `put` with TTL, `put_if_absent` for atomic idempotency, `cas_update` for distributed optimistic concurrency, `recent`, `delete`).
 - **`VectorStore: OutboundConnector`**: Unified vector storage contract for **Turbopuffer, Qdrant, Chroma, pgvector**, etc. (`initialize(ns, dimensions, metric)`, `upsert_batch(ns, records)`, `delete(ns, ids)`, `search(ns, query_vector, top_k, filter)`).
 - **`GraphStore: OutboundConnector`**: Unified graph storage contract for **Neo4j**, etc. (`upsert_entities(ns, entities)`, `upsert_relations(ns, source_memory_id, relations)`, `retract_memory_facts(ns, source_memory_id, invalidated_at)`, `neighborhood(ns, seeds, hops, per_node_limit, temporal)`). *(Raw `execute_query` is excluded to prevent tenant bypasses.)*
-- **`InMemoryBackend`** *(test/dev only)*: Lightweight in-memory `VectorStore` + `petgraph` `GraphStore` for `cargo test` and local dry-runs without Docker.
+- **`InMemoryBackend`** *(test/dev only)*: Lightweight in-memory `KvStore` + `VectorStore` + `petgraph` `GraphStore` for `cargo test` and local dry-runs without Docker.
 
 ---
 

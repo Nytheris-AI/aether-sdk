@@ -4,13 +4,16 @@ At the core of `aether-sdk` is its unified outbound connector layer (`aether-ada
 
 ---
 
-## 1. Storage & Database Connector Traits
+## 1. Multi-Tier Storage & Database Connector Traits
 
-Every downstream driver inherits the `OutboundConnector` supertrait and implements the specialized storage contract for its data model:
+Aether separates fast working-memory state from durable semantic/graph storage using an **L1 → L2 → L3** serving model:
 
-1. **`VectorStore: OutboundConnector`** — Unified vector + metadata storage for **Turbopuffer, Qdrant, Chroma, pgvector**, etc.
-2. **`GraphStore: OutboundConnector`** — Unified knowledge-graph storage for **Neo4j** (with `source_memory_id` provenance and `valid_at`/`invalid_at` temporal edges).
-3. **`WalStore` *(optional)*** — Disk-backed write-ahead log (`redb` / SQLite) for crash-safe `IngestionBuffer` durability.
+- **L1 (`HotContextCache` in `aether-cortex`)**: Process-local bounded cache (`moka` / ring buffer) shielding L2/L3 from hot-key bursts.
+- **L2 (`KvStore: OutboundConnector`)**: Short-term / session memory, TTL expiration, atomic idempotency (`put_if_absent`), distributed CAS (`cas_update`), and cross-replica Read-Your-Writes backed by **Redis/Valkey** (multiplexed async TCP) or **SQLite** (WAL mode file DB).
+- **L3 (`VectorStore` & `GraphStore: OutboundConnector`)**:
+  1. **`VectorStore: OutboundConnector`** — Unified vector + metadata storage for **Turbopuffer, Qdrant, Chroma, pgvector**, etc.
+  2. **`GraphStore: OutboundConnector`** — Unified knowledge-graph storage for **Neo4j** (with `source_memory_id` provenance and `valid_at`/`invalid_at` temporal edges).
+  3. **`WalStore` *(optional)*** — Disk-backed write-ahead log (`redb` / SQLite) for crash-safe `IngestionBuffer` durability.
 
 ---
 
@@ -18,7 +21,7 @@ Every downstream driver inherits the `OutboundConnector` supertrait and implemen
 
 ```text
 crates/aether-adapters/
-├── Cargo.toml                  # Feature flags: turbopuffer, qdrant, neo4j, chroma, pgvector, wal-redb
+├── Cargo.toml                  # Feature flags: redis, sqlite, turbopuffer, qdrant, neo4j, chroma, pgvector
 └── src/
     ├── lib.rs
     ├── config.rs               # ConnectorConfig (endpoint, SecretString, pool_size, timeouts, RetryPolicy)
@@ -28,7 +31,8 @@ crates/aether-adapters/
     │   ├── timeout.rs          # Per-operation tokio::time::timeout
     │   ├── batcher.rs          # Auto-chunks upsert_batch using capabilities().max_batch_size
     │   └── traced.rs           # tracing spans (connector, project_id, op) + latency/error metrics
-    ├── memory_test.rs          # InMemoryBackend (VectorStore + petgraph GraphStore for cargo test / dry-runs)
+    ├── memory_test.rs          # InMemoryBackend (KvStore + VectorStore + petgraph GraphStore for cargo test)
+    ├── kv/                     # redis.rs, sqlite.rs
     └── storage/                # turbopuffer.rs, qdrant.rs, neo4j.rs, chroma.rs, pgvector.rs
 ```
 
