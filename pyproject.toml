@@ -18,8 +18,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -55,26 +53,16 @@ dev = [
     "ipython>=8.20.0",
 ]
 
-# Documentation
-docs = [
-    "mkdocs>=1.5.0",
-    "mkdocs-material>=9.5.0",
-    "mkdocstrings[python]>=0.24.0",
-]
-
 # All extras combined
 all = [
-    "aether-sdk[dev,docs]",
+    "aether-sdk[dev]",
 ]
 
 [project.urls]
 Homepage = "https://github.com/Nytheris-AI/aether-sdk"
-Documentation = "https://aether-sdk.readthedocs.io"
+Documentation = "https://nytheris-ai.github.io/aether-sdk/"
 Repository = "https://github.com/Nytheris-AI/aether-sdk"
 Issues = "https://github.com/Nytheris-AI/aether-sdk/issues"
-
-[project.scripts]
-aether-sdk = "aether_sdk.cli:main"
 
 
 [tool.uv]
@@ -92,7 +80,7 @@ cache-dir = ".uv-cache"
 # Ruff configuration (linter + formatter)
 [tool.ruff]
 line-length = 100
-target-version = "py38"
+target-version = "py310"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
@@ -119,7 +107,7 @@ indent-style = "space"
 
 # MyPy configuration
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

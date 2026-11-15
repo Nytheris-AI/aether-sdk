@@ -209,3 +209,8 @@ __marimo__/
 # UV Package Manager Artifacts
 .uv-cache
 uv.lock
+
+# Docusaurus
+website/node_modules/
+website/build/
+website/.docusaurus/
