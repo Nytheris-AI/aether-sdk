@@ -225,6 +225,7 @@ impl GraphStore for InMemoryBackend {
         };
 
         let mut visited_nodes: HashSet<NodeIndex> = HashSet::new();
+        let mut visited_edges: HashSet<petgraph::graph::EdgeIndex> = HashSet::new();
         let mut queue: VecDeque<(NodeIndex, u8)> = VecDeque::new();
 
         for seed in seeds {
@@ -247,7 +248,7 @@ impl GraphStore for InMemoryBackend {
                         break;
                     }
                     let edge = edge_ref.weight();
-                    if !matches_temporal(edge, temporal) {
+                    if !matches_temporal(edge, temporal) || !visited_edges.insert(edge_ref.id()) {
                         continue;
                     }
                     collected_edges.push(edge.clone());
