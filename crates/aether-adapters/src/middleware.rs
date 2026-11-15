@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
-    FilterExpr, GraphStore, MemoryId, OutboundConnector, ProjectId, Relation, Result, Subgraph,
-    TemporalFilter, VectorMatch, VectorRecord, VectorStore,
+    FilterExpr, GraphStore, KvStore, MemoryId, MemoryItem, MemoryReceipt, MemoryScope,
+    OutboundConnector, ProjectId, Relation, Result, Subgraph, TemporalFilter, VectorMatch,
+    VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -73,6 +74,57 @@ impl<T: OutboundConnector> OutboundConnector for Resilient<T> {
     }
     async fn close(&self) -> Result<()> {
         self.inner.close().await
+    }
+}
+
+#[async_trait]
+impl<T: KvStore> KvStore for Resilient<T> {
+    async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
+        retry_transient(self.policy, || self.inner.get(ns, id)).await
+    }
+
+    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
+        retry_transient(self.policy, || self.inner.put(ns, item, ttl)).await
+    }
+
+    async fn put_if_absent(
+        &self,
+        ns: &ProjectId,
+        idempotency_key: &str,
+        receipt: &MemoryReceipt,
+        ttl: Option<Duration>,
+    ) -> Result<Option<MemoryReceipt>> {
+        retry_transient(self.policy, || {
+            self.inner
+                .put_if_absent(ns, idempotency_key, receipt, ttl)
+        })
+        .await
+    }
+
+    async fn cas_update(
+        &self,
+        ns: &ProjectId,
+        id: MemoryId,
+        expected_version: Option<u64>,
+        new_item: &MemoryItem,
+    ) -> Result<()> {
+        retry_transient(self.policy, || {
+            self.inner.cas_update(ns, id, expected_version, new_item)
+        })
+        .await
+    }
+
+    async fn recent(
+        &self,
+        ns: &ProjectId,
+        scope: Option<MemoryScope>,
+        limit: usize,
+    ) -> Result<Vec<MemoryItem>> {
+        retry_transient(self.policy, || self.inner.recent(ns, scope, limit)).await
+    }
+
+    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
+        retry_transient(self.policy, || self.inner.delete(ns, id)).await
     }
 }
 
@@ -195,6 +247,62 @@ impl<T: OutboundConnector> OutboundConnector for Timeout<T> {
     }
     async fn close(&self) -> Result<()> {
         self.inner.close().await
+    }
+}
+
+#[async_trait]
+impl<T: KvStore> KvStore for Timeout<T> {
+    async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
+        self.run(self.inner.name(), self.inner.get(ns, id)).await
+    }
+
+    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
+        self.run(self.inner.name(), self.inner.put(ns, item, ttl))
+            .await
+    }
+
+    async fn put_if_absent(
+        &self,
+        ns: &ProjectId,
+        idempotency_key: &str,
+        receipt: &MemoryReceipt,
+        ttl: Option<Duration>,
+    ) -> Result<Option<MemoryReceipt>> {
+        self.run(
+            self.inner.name(),
+            self.inner
+                .put_if_absent(ns, idempotency_key, receipt, ttl),
+        )
+        .await
+    }
+
+    async fn cas_update(
+        &self,
+        ns: &ProjectId,
+        id: MemoryId,
+        expected_version: Option<u64>,
+        new_item: &MemoryItem,
+    ) -> Result<()> {
+        self.run(
+            self.inner.name(),
+            self.inner.cas_update(ns, id, expected_version, new_item),
+        )
+        .await
+    }
+
+    async fn recent(
+        &self,
+        ns: &ProjectId,
+        scope: Option<MemoryScope>,
+        limit: usize,
+    ) -> Result<Vec<MemoryItem>> {
+        self.run(self.inner.name(), self.inner.recent(ns, scope, limit))
+            .await
+    }
+
+    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
+        self.run(self.inner.name(), self.inner.delete(ns, id))
+            .await
     }
 }
 
@@ -372,6 +480,62 @@ impl<T: OutboundConnector> OutboundConnector for Traced<T> {
     async fn close(&self) -> Result<()> {
         let span = tracing::info_span!("connector_op", connector = self.inner.name(), op = "close");
         self.inner.close().instrument(span).await
+    }
+}
+
+#[async_trait]
+impl<T: KvStore> KvStore for Traced<T> {
+    async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
+        let span = tracing::info_span!("connector_op", connector = self.inner.name(), project_id = %ns, op = "kv_get");
+        self.inner.get(ns, id).instrument(span).await
+    }
+
+    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
+        let span = tracing::info_span!("connector_op", connector = self.inner.name(), project_id = %ns, op = "kv_put");
+        self.inner.put(ns, item, ttl).instrument(span).await
+    }
+
+    async fn put_if_absent(
+        &self,
+        ns: &ProjectId,
+        idempotency_key: &str,
+        receipt: &MemoryReceipt,
+        ttl: Option<Duration>,
+    ) -> Result<Option<MemoryReceipt>> {
+        let span = tracing::info_span!("connector_op", connector = self.inner.name(), project_id = %ns, op = "kv_put_if_absent");
+        self.inner
+            .put_if_absent(ns, idempotency_key, receipt, ttl)
+            .instrument(span)
+            .await
+    }
+
+    async fn cas_update(
+        &self,
+        ns: &ProjectId,
+        id: MemoryId,
+        expected_version: Option<u64>,
+        new_item: &MemoryItem,
+    ) -> Result<()> {
+        let span = tracing::info_span!("connector_op", connector = self.inner.name(), project_id = %ns, op = "kv_cas_update");
+        self.inner
+            .cas_update(ns, id, expected_version, new_item)
+            .instrument(span)
+            .await
+    }
+
+    async fn recent(
+        &self,
+        ns: &ProjectId,
+        scope: Option<MemoryScope>,
+        limit: usize,
+    ) -> Result<Vec<MemoryItem>> {
+        let span = tracing::info_span!("connector_op", connector = self.inner.name(), project_id = %ns, op = "kv_recent", limit);
+        self.inner.recent(ns, scope, limit).instrument(span).await
+    }
+
+    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
+        let span = tracing::info_span!("connector_op", connector = self.inner.name(), project_id = %ns, op = "kv_delete");
+        self.inner.delete(ns, id).instrument(span).await
     }
 }
 

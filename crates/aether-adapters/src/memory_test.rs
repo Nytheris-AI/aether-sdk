@@ -2,11 +2,13 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::RwLock;
+use std::time::{Duration, Instant};
 
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
-    FilterExpr, FilterValue, GraphEdge, GraphStore, MemoryId, OutboundConnector, ProjectId,
-    Relation, Result, Subgraph, TemporalFilter, VectorMatch, VectorRecord, VectorStore,
+    FilterExpr, FilterValue, GraphEdge, GraphStore, KvStore, MemoryId, MemoryItem, MemoryReceipt,
+    MemoryScope, OutboundConnector, ProjectId, Relation, Result, Subgraph, TemporalFilter,
+    VectorMatch, VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -28,9 +30,28 @@ struct GraphNamespace {
     node_index: HashMap<EntityId, NodeIndex>,
 }
 
-/// Zero-infra, thread-safe in-memory backend implementing both `VectorStore` and `GraphStore`.
+struct KvEntry {
+    item: MemoryItem,
+    expires_at: Option<Instant>,
+    seq: u64,
+}
+
+struct IdemEntry {
+    receipt: MemoryReceipt,
+    expires_at: Option<Instant>,
+}
+
+#[derive(Default)]
+struct KvNamespace {
+    items: HashMap<MemoryId, KvEntry>,
+    idempotency: HashMap<String, IdemEntry>,
+    next_seq: u64,
+}
+
+/// Zero-infra, thread-safe in-memory backend implementing `KvStore`, `VectorStore`, and `GraphStore`.
 #[derive(Default)]
 pub struct InMemoryBackend {
+    kv: RwLock<HashMap<ProjectId, KvNamespace>>,
     vectors: RwLock<HashMap<ProjectId, VectorNamespace>>,
     graphs: RwLock<HashMap<ProjectId, GraphNamespace>>,
 }
@@ -60,6 +81,141 @@ impl OutboundConnector for InMemoryBackend {
     }
 
     async fn close(&self) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl KvStore for InMemoryBackend {
+    async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
+        let now = Instant::now();
+        let guard = self.kv.read().unwrap();
+        let Some(entry) = guard.get(ns) else {
+            return Ok(None);
+        };
+        Ok(entry.items.get(&id).and_then(|e| {
+            if e.expires_at.map_or(false, |exp| now >= exp) {
+                None
+            } else {
+                Some(e.item.clone())
+            }
+        }))
+    }
+
+    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
+        let now = Instant::now();
+        let mut guard = self.kv.write().unwrap();
+        let entry = guard.entry(ns.clone()).or_default();
+        entry.next_seq += 1;
+        let seq = entry.next_seq;
+        entry.items.insert(
+            item.id,
+            KvEntry {
+                item: item.clone(),
+                expires_at: ttl.map(|d| now + d),
+                seq,
+            },
+        );
+        Ok(())
+    }
+
+    async fn put_if_absent(
+        &self,
+        ns: &ProjectId,
+        idempotency_key: &str,
+        receipt: &MemoryReceipt,
+        ttl: Option<Duration>,
+    ) -> Result<Option<MemoryReceipt>> {
+        let now = Instant::now();
+        let mut guard = self.kv.write().unwrap();
+        let entry = guard.entry(ns.clone()).or_default();
+        if let Some(existing) = entry.idempotency.get(idempotency_key) {
+            if !existing.expires_at.map_or(false, |exp| now >= exp) {
+                return Ok(Some(existing.receipt.clone()));
+            }
+        }
+        entry.idempotency.insert(
+            idempotency_key.to_string(),
+            IdemEntry {
+                receipt: receipt.clone(),
+                expires_at: ttl.map(|d| now + d),
+            },
+        );
+        Ok(None)
+    }
+
+    async fn cas_update(
+        &self,
+        ns: &ProjectId,
+        id: MemoryId,
+        expected_version: Option<u64>,
+        new_item: &MemoryItem,
+    ) -> Result<()> {
+        let now = Instant::now();
+        let mut guard = self.kv.write().unwrap();
+        let entry = guard
+            .get_mut(ns)
+            .ok_or_else(|| AetherError::NotFound(format!("memory {id}")))?;
+        let current = entry
+            .items
+            .get(&id)
+            .filter(|e| !e.expires_at.map_or(false, |exp| now >= exp))
+            .ok_or_else(|| AetherError::NotFound(format!("memory {id}")))?;
+
+        if let Some(expected) = expected_version {
+            if current.item.version != expected {
+                return Err(AetherError::Conflict {
+                    memory_id: id,
+                    expected_version: expected,
+                    actual_version: current.item.version,
+                });
+            }
+        }
+
+        let expires_at = current.expires_at;
+        entry.next_seq += 1;
+        let seq = entry.next_seq;
+        entry.items.insert(
+            id,
+            KvEntry {
+                item: new_item.clone(),
+                expires_at,
+                seq,
+            },
+        );
+        Ok(())
+    }
+
+    async fn recent(
+        &self,
+        ns: &ProjectId,
+        scope: Option<MemoryScope>,
+        limit: usize,
+    ) -> Result<Vec<MemoryItem>> {
+        let now = Instant::now();
+        let guard = self.kv.read().unwrap();
+        let Some(entry) = guard.get(ns) else {
+            return Ok(Vec::new());
+        };
+        let mut items: Vec<&KvEntry> = entry
+            .items
+            .values()
+            .filter(|e| !e.expires_at.map_or(false, |exp| now >= exp))
+            .filter(|e| scope.map_or(true, |s| e.item.scope == s))
+            .collect();
+        items.sort_by(|a, b| b.seq.cmp(&a.seq));
+        Ok(items
+            .into_iter()
+            .take(limit)
+            .map(|e| e.item.clone())
+            .collect())
+    }
+
+    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
+        let mut guard = self.kv.write().unwrap();
+        if let Some(entry) = guard.get_mut(ns) {
+            entry.items.remove(&id);
+        }
         Ok(())
     }
 }
