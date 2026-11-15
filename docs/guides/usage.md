@@ -1,69 +1,79 @@
-# SDK Usage Guide
+# Usage Guide
 
-This guide shows how to set up and use the Aether SDK for common use cases.
+This guide demonstrates how to initialize `MemoryManager` and perform the full memory lifecycle (`remember`, `recall`, `update`, `forget`, `flush`, `shutdown`) using the zero-infra `InMemoryBackend`.
 
-## Basic Setup (LiteLLM + Qdrant)
+## Quickstart (Rust)
 
-```python
-import asyncio
-from aether_sdk.adapters.litellm import LiteLLMAdapter
-from aether_sdk.adapters.qdrant import QdrantAdapter
-from aether_sdk.resources.brain import BrainResource
-from aether_sdk.resources.ingestion import IngestionResource
-from aether_sdk.resources.retrieval import RetrievalResource
-from aether_sdk.resources.distillation import DistillationResource
-from aether_sdk.types.shared import Document
+```rust
+use std::sync::Arc;
+use aether_adapters::InMemoryBackend;
+use aether_core::{
+    DistanceMetric, Entity, EntityId, MemoryInbound, MemoryInput, MemoryUpdate,
+    ProjectId, RecallMode, RecallQuery, Relation, VectorStore, WriteDurability,
+};
+use aether_sdk::MemoryManager;
+use chrono::Utc;
 
-async def main():
-    # 1. Initialize Adapters
-    llm = LiteLLMAdapter(model="gpt-4", api_key="sk-...")
-    vector_db = QdrantAdapter(location=":memory:") # Local in-memory Qdrant
-    
-    # 2. Build Ingestion Pipeline
-    ingestion = IngestionResource(
-        project_id="demo",
-        vector_store=vector_db,
-        embedding_adapter=llm # LiteLLM can act as embedder if configured
-    )
-    
-    # 3. Ingest Data
-    doc = Document(id="doc1", content="The Aether SDK is built by Nytheris.", filename="info.txt")
-    await ingestion.ingest_document(doc)
-    
-    # 4. Setup Retrieval and Brain
-    retriever = RetrievalResource(project_id="demo", vector_store=vector_db, embedding_adapter=llm)
-    distiller = DistillationResource(llm_adapter=llm)
-    brain = BrainResource(retrieval_resource=retriever, distillation_resource=distiller)
-    
-    # 5. Query the Brain
-    answer = await brain.generate_answer("Who built the Aether SDK?")
-    print(f"Answer: {answer}")
+#[tokio::main]
+async fn main() -> aether_core::Result<()> {
+    let backend = Arc::new(InMemoryBackend::new());
+    let project_id = ProjectId::new("proj-alpha")?;
 
-asyncio.run(main())
-```
+    // Initialize vector index dimensions & distance metric
+    backend.initialize(&project_id, 3, DistanceMetric::Cosine).await?;
 
-## Using OpenRouter
+    // Construct the unified L1/L2/L3 MemoryManager facade
+    let manager: Arc<dyn MemoryInbound> = Arc::new(MemoryManager::new(
+        backend.clone(), // L2 KvStore
+        backend.clone(), // L3 VectorStore
+        backend.clone(), // L3 GraphStore
+    ));
 
-```python
-llm = LiteLLMAdapter(
-    model="openrouter/anthropic/claude-3-opus",
-    api_key="sk-or-...",
-    site_url="https://your-app.com",
-    app_name="Demo App"
-)
-```
+    // 1. Remember (with optional pre-computed embedding, entities, and relations)
+    let mut input = MemoryInput::new(project_id.clone(), "Alice uses Turbopuffer for vector recall.");
+    input.embedding = Some(vec![1.0, 0.0, 0.0]);
+    input.durability = WriteDurability::WaitFlush;
+    input.entities = vec![Entity {
+        id: EntityId::new("person:alice")?,
+        name: "Alice".into(),
+        entity_type: "Person".into(),
+    }];
+    input.relations = vec![Relation {
+        source: EntityId::new("person:alice")?,
+        target: EntityId::new("db:turbopuffer")?,
+        relation_type: "USES".into(),
+        valid_at: Utc::now(),
+        invalid_at: None,
+    }];
 
-## Adding Memory to an Agent
+    let receipt = manager.remember(input).await?;
 
-```python
-from aether_sdk.memory_system import AgentMemory
+    // 2. Hybrid Recall (Vector + Graph neighborhood + ReadYourWrites)
+    let mut query = RecallQuery::new(project_id.clone(), "Alice vector database");
+    query.query_vector = Some(vec![1.0, 0.0, 0.0]);
+    query.seed_entities = vec![EntityId::new("person:alice")?];
+    query.mode = RecallMode::Hybrid;
 
-memory = AgentMemory(
-    project_id="demo-agent",
-    vector_store=vector_db,
-    embedding_adapter=llm
-)
+    let result = manager.recall(query).await?;
+    println!("Hits: {}, Graph edges: {}", result.hits.len(), result.subgraph.edges.len());
 
-await memory.add_episodic("The user prefers dark mode.")
-relevant = await memory.retrieve("What are the user preferences?")
+    // 3. Optimistic Concurrency (CAS) Update
+    manager.update(
+        &project_id,
+        receipt.memory_id,
+        MemoryUpdate {
+            content: Some("Alice uses Turbopuffer and Neo4j.".into()),
+            embedding: None,
+            metadata: None,
+            expected_version: Some(receipt.version),
+        },
+    ).await?;
+
+    // 4. Forget (deletes vector + retracts graph provenance edges)
+    manager.forget(&project_id, receipt.memory_id).await?;
+
+    // 5. Graceful shutdown
+    manager.shutdown().await?;
+    Ok(())
+}
 ```

@@ -296,9 +296,8 @@ memory = MemoryManager(
 3. [Integration Strategy](#integration-strategy)
 4. [Code Style Guidelines](#code-style-guidelines)
 5. [Dependency Injection Pattern](#dependency-injection-pattern)
-6. [Modularity & Plugin System](#modularity-plugin-system)
-7. [API Design Principles](#api-design-principles)
-8. [Error Handling](#consistent-error-handling)
+6. [API Design Principles](#api-design-principles)
+7. [Error Handling](#consistent-error-handling)
 
 ---
 

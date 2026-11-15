@@ -1,79 +1,39 @@
 # Aether SDK Architecture
 
-Aether SDK is a modular, protocol-driven framework for building intelligent agents with persistent memory and knowledge graph capabilities.
+Aether SDK is a hexagonal, protocol-driven **AI Memory Gateway** in Rust. It decouples agent memory orchestration from specific storage and database engines so you can swap or combine **Redis/Valkey, SQLite, Turbopuffer, Neo4j, Qdrant, Chroma, and pgvector** without changing application logic.
 
 ## High-Level Architecture
 
-The system is designed with a layered approach, ensuring that core logic is decoupled from specific provider implementations.
-
 ```mermaid
 graph TD
-    subgraph Orchestration
-        B[BrainResource]
-        M[AgentMemory]
+    subgraph Inbound ["1. Inbound (aether-sdk)"]
+        MM[MemoryManager / MemoryInbound]
     end
 
-    subgraph FunctionalModules ["Functional Modules"]
-        I[IngestionResource]
-        R[RetrievalResource]
-        P[ParsingResource]
-        E[ExtractionResource]
-        D[DistillationResource]
+    subgraph Core ["2. Gateway Core (aether-cortex)"]
+        PR[PolicyRouter]
+        HC["L1: HotContextCache"]
+        IB["IngestionBuffer (Write-Behind)"]
+        QP["QueryPlanner + PPR (petgraph)"]
     end
 
-    subgraph CoreInterfaces ["Core Interfaces"]
-        LP[LLMAdapterProtocol]
-        EP[EmbeddingAdapterProtocol]
-        VP[VectorStoreProtocol]
-        GP[GraphStoreProtocol]
+    subgraph Outbound ["3. Outbound (aether-adapters)"]
+        MW["Middleware: Traced<Resilient<Timeout<Batcher>>>"]
+        KV["L2 KvStore (Redis/Valkey, SQLite)"]
+        VEC["L3 VectorStore (Turbopuffer, Qdrant, Chroma, pgvector)"]
+        GRP["L3 GraphStore (Neo4j — provenance & temporal)"]
     end
 
-    subgraph Integrations ["Integrations"]
-        OA[OpenAI]
-        LL["LiteLLM / OpenRouter"]
-        QD[Qdrant]
-        CH[Chroma]
-        NJ[Neo4j]
-    end
-
-    Orchestration --> FunctionalModules
-    FunctionalModules --> CoreInterfaces
-    CoreInterfaces --> Integrations
+    MM --> PR & QP
+    PR --> HC & KV & IB
+    IB --> MW
+    QP --> HC & KV & IB & MW
+    MW --> KV & VEC & GRP
 ```
 
-## System Layers
+## Workspace Crates
 
-### 1. Orchestration Layer
-- **BrainResource**: The high-level interface for Question Answering. It orchestrates context retrieval and answer distillation.
-- **AgentMemory**: Manages different memory types—Working (volatile), Episodic (semantic vector-based), and Semantic (graph-based).
-
-### 2. Resource Layer
-Functional modules that handle specific tasks:
-- **Ingestion**: Manages the pipeline of parsing, chunking, and storing documents.
-- **Retrieval**: Performs hybrid search across vector and graph stores.
-- **Parsing**: Converts various file types into clean text.
-- **Extraction**: Uses LLMs to extract entities and relations for the Knowledge Graph.
-- **Distillation**: Refines retrieved context into a final answer.
-
-### 3. Protocol Layer
-Pure interface definitions that allow for plug-and-play integrations. Every component interacts with external services (LLMs, Databases) only via these protocols.
-
-### 4. Adapter Layer
-Concrete implementations of protocols for specific services (e.g., `OpenAIAdapter`, `QdrantAdapter`).
-
-## Data Flow
-
-### Ingestion Flow
-1. **Document** is received.
-2. **Parser** extracts text.
-3. **Chunker** splits text into manageable pieces.
-4. **Embedder** generates vectors for chunks.
-5. **Vector Store** saves vectors and metadata.
-6. **Extractor** pulls entities/relations (optional).
-7. **Graph Store** saves the knowledge structure (optional).
-
-### Query Flow
-1. **User Query** is received.
-2. **Embedder** vectorizes the query.
-3. **Retriever** performs a vector search + optional graph traversal.
-4. **Distiller** (LLM) generates an answer using the retrieved context.
+1. **`aether-core`**: Pure domain contracts (`ProjectId`, `MemoryId`, `EntityId`, `FilterExpr`, `TemporalFilter`, `MemoryInbound`, `OutboundConnector`, `KvStore`, `VectorStore`, `GraphStore`).
+2. **`aether-cortex`**: Orchestration core (`PolicyRouter`, `HotContextCache`, `IngestionBuffer`, `PersonalizedPageRank`, `QueryPlanner`).
+3. **`aether-adapters`**: Shared outbound middleware (`Traced`, `Resilient`, `Timeout`, `Batcher`), `InMemoryBackend` for tests/dry-runs, and feature-gated production storage drivers.
+4. **`aether-sdk`**: Public non-generic `MemoryManager` facade with CAS updates, `ReadYourWrites` consistency, and graceful `flush()` / `shutdown()`.
