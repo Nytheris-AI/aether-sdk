@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, ConsistencyMode, DistanceMetric, Entity,
-    EntityId, FilterExpr, FilterValue, GraphStore, MemoryId, MemoryInbound, MemoryInput,
+    EntityId, FilterExpr, FilterValue, GraphStore, KvStore, MemoryId, MemoryInbound, MemoryInput,
     MemoryItem, MemoryReceipt, MemoryScope, MemoryTier, OutboundConnector, ProjectId, RecallMode,
     RecallQuery, ReceiptState, Relation, TemporalFilter, VectorRecord, VectorStore, WriteDurability,
 };
@@ -163,6 +163,7 @@ fn recall_query_and_connector_types_roundtrip_and_traits_are_object_safe() {
     fn _assert_object_safe(
         _inbound: Arc<dyn MemoryInbound>,
         _conn: Arc<dyn OutboundConnector>,
+        _kv: Arc<dyn KvStore>,
         _vec: Arc<dyn VectorStore>,
         _grp: Arc<dyn GraphStore>,
     ) {

@@ -2,6 +2,7 @@
 
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -479,6 +480,39 @@ pub trait OutboundConnector: Send + Sync {
     async fn close(&self) -> Result<()>;
 }
 
+/// Unified L2 working-memory / key-value store contract (Redis/Valkey, SQLite, etc.).
+#[async_trait]
+pub trait KvStore: OutboundConnector {
+    async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>>;
+
+    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()>;
+
+    async fn put_if_absent(
+        &self,
+        ns: &ProjectId,
+        idempotency_key: &str,
+        receipt: &MemoryReceipt,
+        ttl: Option<Duration>,
+    ) -> Result<Option<MemoryReceipt>>;
+
+    async fn cas_update(
+        &self,
+        ns: &ProjectId,
+        id: MemoryId,
+        expected_version: Option<u64>,
+        new_item: &MemoryItem,
+    ) -> Result<()>;
+
+    async fn recent(
+        &self,
+        ns: &ProjectId,
+        scope: Option<MemoryScope>,
+        limit: usize,
+    ) -> Result<Vec<MemoryItem>>;
+
+    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()>;
+}
+
 /// Unified vector storage contract (Turbopuffer, Qdrant, Chroma, pgvector, etc.).
 #[async_trait]
 pub trait VectorStore: OutboundConnector {
@@ -563,6 +597,54 @@ impl<T: OutboundConnector + ?Sized> OutboundConnector for Arc<T> {
 
     async fn close(&self) -> Result<()> {
         (**self).close().await
+    }
+}
+
+#[async_trait]
+impl<T: KvStore + ?Sized> KvStore for Arc<T> {
+    async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
+        (**self).get(ns, id).await
+    }
+
+    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
+        (**self).put(ns, item, ttl).await
+    }
+
+    async fn put_if_absent(
+        &self,
+        ns: &ProjectId,
+        idempotency_key: &str,
+        receipt: &MemoryReceipt,
+        ttl: Option<Duration>,
+    ) -> Result<Option<MemoryReceipt>> {
+        (**self)
+            .put_if_absent(ns, idempotency_key, receipt, ttl)
+            .await
+    }
+
+    async fn cas_update(
+        &self,
+        ns: &ProjectId,
+        id: MemoryId,
+        expected_version: Option<u64>,
+        new_item: &MemoryItem,
+    ) -> Result<()> {
+        (**self)
+            .cas_update(ns, id, expected_version, new_item)
+            .await
+    }
+
+    async fn recent(
+        &self,
+        ns: &ProjectId,
+        scope: Option<MemoryScope>,
+        limit: usize,
+    ) -> Result<Vec<MemoryItem>> {
+        (**self).recent(ns, scope, limit).await
+    }
+
+    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
+        (**self).delete(ns, id).await
     }
 }
 
