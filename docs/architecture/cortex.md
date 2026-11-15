@@ -76,8 +76,8 @@ graph TD
 
 *   **Component: Entropy Filter (SimpleMem)**
     *   **Logic:** Calculates the information density ($H(W_t)$) of incoming text relative to the session history.
-    *   **Formula:** $H(W_t) = \alpha \cdot \frac{|E_{new}|}{|W_t|} + (1-\alpha) \cdot (1 - \cos(E(W_t), E(H_{prev})))$.
-    *   **Action:** If $H(W_t) < \tau$ (threshold), the input is discarded or flagged as "Transient".
+    *   **Formula:** `$H(W_t) = \alpha \cdot \frac{|E_{new}|}{|W_t|} + (1-\alpha) \cdot (1 - \cos(E(W_t), E(H_{prev})))$`.
+    *   **Action:** If `$H(W_t) < \tau$` (threshold), the input is discarded or flagged as "Transient".
 *   **Component: Semantic Atomizer (De-linearization)**
     *   **Logic:** Converts conversational flow (which is messy) into "Atomic Facts."
     *   **Process:**
