@@ -12,6 +12,7 @@
 
 - **[Usage Guide](guides/usage.md)**: Quickstart with `MemoryManager` (`remember`, `recall`, `update`, `forget`, `flush`, `shutdown`).
 - **[Memory Model](guides/memory.md)**: `MemoryTier`, `MemoryScope`, `WriteDurability`, `ConsistencyMode`, and temporal provenance.
+- **[Observability & OpenTelemetry](guides/observability.md)**: Zero-boilerplate `tracing` span hierarchy and the one-line `otel` preset.
 
 ## Development & Roadmap
 
