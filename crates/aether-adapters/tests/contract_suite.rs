@@ -6,9 +6,9 @@ use aether_adapters::memory_test::InMemoryBackend;
 use aether_adapters::middleware::{Batcher, Resilient, RetryPolicy, Timeout, Traced};
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
-    FilterExpr, FilterValue, GraphStore, KvStore, MemoryId, MemoryInput, MemoryItem, MemoryReceipt,
-    MemoryScope, OutboundConnector, ProjectId, ReceiptState, Relation, Result, Subgraph,
-    TemporalFilter, VectorMatch, VectorRecord, VectorStore,
+    FilterExpr, FilterValue, GraphStore, MemoryId, MemoryInput, MemoryItem, MemoryReceipt,
+    MemoryScope, OutboundConnector, ProjectId, ReceiptState, RecordStore, Relation, Result,
+    Subgraph, TemporalFilter, VectorMatch, VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
 use chrono::{Duration as ChronoDuration, Utc};
@@ -447,29 +447,30 @@ async fn contract_resilient_retries_transient_only_and_batcher_chunks() {
 }
 
 #[tokio::test]
-async fn contract_kv_store_ttl_idempotency_cas_and_recent() {
+async fn contract_record_store_ttl_idempotency_cas_and_recent() {
     let backend = Arc::new(InMemoryBackend::new());
-    let kv: Arc<dyn KvStore> = Arc::new(Traced::new(Resilient::new(
+    let store: Arc<dyn RecordStore> = Arc::new(Traced::new(Resilient::new(
         Timeout::new(backend, Duration::from_secs(2)),
         RetryPolicy::default(),
     )));
 
-    let ns_a = ProjectId::new("kv-a").unwrap();
-    let ns_b = ProjectId::new("kv-b").unwrap();
+    let ns_a = ProjectId::new("rec-a").unwrap();
+    let ns_b = ProjectId::new("rec-b").unwrap();
 
     let mut input1 = MemoryInput::new(ns_a.clone(), "Session turn 1");
     input1.scope = MemoryScope::Session;
     let item1 = MemoryItem::from_input(input1, 1);
 
     // 1. Put with TTL and verify expiration.
-    kv.put(&ns_a, &item1, Some(Duration::from_millis(25)))
+    store
+        .put(&ns_a, &item1, Some(Duration::from_millis(25)))
         .await
         .unwrap();
-    assert!(kv.get(&ns_a, item1.id).await.unwrap().is_some());
-    assert!(kv.get(&ns_b, item1.id).await.unwrap().is_none());
+    assert!(store.get(&ns_a, item1.id).await.unwrap().is_some());
+    assert!(store.get(&ns_b, item1.id).await.unwrap().is_none());
 
     tokio::time::sleep(Duration::from_millis(40)).await;
-    assert!(kv.get(&ns_a, item1.id).await.unwrap().is_none());
+    assert!(store.get(&ns_a, item1.id).await.unwrap().is_none());
 
     // 2. Atomic idempotency claim (put_if_absent).
     let receipt = MemoryReceipt {
@@ -477,17 +478,17 @@ async fn contract_kv_store_ttl_idempotency_cas_and_recent() {
         state: ReceiptState::Buffered,
         version: 1,
     };
-    assert!(kv
+    assert!(store
         .put_if_absent(&ns_a, "idem-1", &receipt, None)
         .await
         .unwrap()
         .is_none());
-    let dup = kv
+    let dup = store
         .put_if_absent(&ns_a, "idem-1", &receipt, None)
         .await
         .unwrap();
     assert_eq!(dup, Some(receipt));
-    assert!(kv
+    assert!(store
         .put_if_absent(
             &ns_b,
             "idem-1",
@@ -503,33 +504,36 @@ async fn contract_kv_store_ttl_idempotency_cas_and_recent() {
         .is_none());
 
     // 3. CAS update + Conflict on stale expected_version.
-    kv.put(&ns_a, &item1, None).await.unwrap();
+    store.put(&ns_a, &item1, None).await.unwrap();
     let mut v2 = item1.clone();
     v2.content = "Session turn 1 updated".into();
     v2.version = 2;
-    kv.cas_update(&ns_a, item1.id, Some(1), &v2).await.unwrap();
+    store
+        .cas_update(&ns_a, item1.id, Some(1), &v2)
+        .await
+        .unwrap();
 
     let mut stale = item1.clone();
     stale.version = 2;
-    let conflict = kv.cas_update(&ns_a, item1.id, Some(1), &stale).await;
+    let conflict = store.cas_update(&ns_a, item1.id, Some(1), &stale).await;
     assert!(matches!(conflict, Err(AetherError::Conflict { .. })));
 
     // 4. Recent sliding window & scope filter.
     let mut proj_input = MemoryInput::new(ns_a.clone(), "Project fact");
     proj_input.scope = MemoryScope::Project;
     let proj_item = MemoryItem::from_input(proj_input, 1);
-    kv.put(&ns_a, &proj_item, None).await.unwrap();
+    store.put(&ns_a, &proj_item, None).await.unwrap();
 
-    let session_recent = kv
+    let session_recent = store
         .recent(&ns_a, Some(MemoryScope::Session), 10)
         .await
         .unwrap();
     assert_eq!(session_recent.len(), 1);
     assert_eq!(session_recent[0].id, item1.id);
 
-    let all_recent = kv.recent(&ns_a, None, 10).await.unwrap();
+    let all_recent = store.recent(&ns_a, None, 10).await.unwrap();
     assert_eq!(all_recent.len(), 2);
 
-    kv.delete(&ns_a, item1.id).await.unwrap();
-    assert!(kv.get(&ns_a, item1.id).await.unwrap().is_none());
+    store.delete(&ns_a, item1.id).await.unwrap();
+    assert!(store.get(&ns_a, item1.id).await.unwrap().is_none());
 }

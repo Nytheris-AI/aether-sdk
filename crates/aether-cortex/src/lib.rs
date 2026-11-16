@@ -5,9 +5,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 
 use aether_core::{
-    AetherError, ConsistencyMode, DistanceMetric, EntityId, GraphStore, KvStore, MemoryId,
-    MemoryInput, MemoryItem, MemoryReceipt, ProjectId, RecallHit, RecallMode, RecallQuery,
-    RecallResult, ReceiptState, Result, Subgraph, VectorRecord, VectorStore, WriteDurability,
+    AetherError, ConsistencyMode, DistanceMetric, EntityId, GraphStore, MemoryId, MemoryInput,
+    MemoryItem, MemoryReceipt, ProjectId, RecallHit, RecallMode, RecallQuery, RecallResult,
+    ReceiptState, RecordStore, Result, Subgraph, VectorRecord, VectorStore, WriteDurability,
 };
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
@@ -363,7 +363,7 @@ impl PersonalizedPageRank {
 
 /// Plans and executes Vector, Graph, and Hybrid recall with L1/L2 Read-Your-Writes merging.
 pub struct QueryPlanner {
-    kv_store: Arc<dyn KvStore>,
+    record_store: Arc<dyn RecordStore>,
     vector_store: Arc<dyn VectorStore>,
     graph_store: Arc<dyn GraphStore>,
     hot_cache: Arc<HotContextCache>,
@@ -373,14 +373,14 @@ pub struct QueryPlanner {
 
 impl QueryPlanner {
     pub fn new(
-        kv_store: Arc<dyn KvStore>,
+        record_store: Arc<dyn RecordStore>,
         vector_store: Arc<dyn VectorStore>,
         graph_store: Arc<dyn GraphStore>,
         hot_cache: Arc<HotContextCache>,
         buffer: Arc<IngestionBuffer>,
     ) -> Self {
         Self {
-            kv_store,
+            record_store,
             vector_store,
             graph_store,
             hot_cache,
@@ -429,15 +429,15 @@ impl QueryPlanner {
             }
         }
 
-        // Read-Your-Writes: merge buffered, L1 hot-cache, and L2 KvStore items.
+        // Read-Your-Writes: merge buffered, L1 hot-cache, and L2 RecordStore items.
         if query.consistency == ConsistencyMode::ReadYourWrites {
             let pending = self.buffer.pending_snapshot(&query.project_id);
             let hot_recent = self.hot_cache.recent(&query.project_id, query.top_k);
-            let kv_recent = self
-                .kv_store
+            let record_recent = self
+                .record_store
                 .recent(&query.project_id, None, query.top_k)
                 .await?;
-            for item in pending.into_iter().chain(hot_recent).chain(kv_recent) {
+            for item in pending.into_iter().chain(hot_recent).chain(record_recent) {
                 if hits_by_id.contains_key(&item.id) {
                     continue;
                 }

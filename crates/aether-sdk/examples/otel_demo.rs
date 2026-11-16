@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let manager = MemoryManager::new(backend.clone(), backend.clone(), backend.clone());
 
-    // 3. Remember (WaitFlush -> exercises KvStore + IngestionBuffer + VectorStore + GraphStore)
+    // 3. Remember (WaitFlush -> exercises RecordStore + IngestionBuffer + VectorStore + GraphStore)
     let mut input = MemoryInput::new(pid.clone(), "Alice uses Aether SDK with OpenTelemetry.");
     input.embedding = Some(vec![1.0, 0.0, 0.0]);
     input.durability = WriteDurability::WaitFlush;

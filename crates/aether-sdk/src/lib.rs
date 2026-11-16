@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aether_core::{
-    AetherError, GraphStore, KvStore, MemoryId, MemoryInbound, MemoryInput, MemoryReceipt,
-    MemoryScope, MemoryUpdate, ProjectId, RecallQuery, RecallResult, ReceiptState, Result,
+    AetherError, GraphStore, MemoryId, MemoryInbound, MemoryInput, MemoryReceipt, MemoryScope,
+    MemoryUpdate, ProjectId, RecallQuery, RecallResult, ReceiptState, RecordStore, Result,
     VectorStore, WriteDurability,
 };
 use aether_cortex::{HotContextCache, IngestionBuffer, PolicyDecision, PolicyRouter, QueryPlanner};
@@ -21,7 +21,7 @@ pub mod telemetry;
 
 /// Builder for [`MemoryManager`] with sensible production defaults (connector tracing enabled).
 pub struct MemoryManagerBuilder {
-    kv_store: Arc<dyn KvStore>,
+    record_store: Arc<dyn RecordStore>,
     vector_store: Arc<dyn VectorStore>,
     graph_store: Arc<dyn GraphStore>,
     connector_tracing: bool,
@@ -42,18 +42,18 @@ impl MemoryManagerBuilder {
     }
 
     pub fn build(self) -> MemoryManager {
-        let (kv_store, vector_store, graph_store): (
-            Arc<dyn KvStore>,
+        let (record_store, vector_store, graph_store): (
+            Arc<dyn RecordStore>,
             Arc<dyn VectorStore>,
             Arc<dyn GraphStore>,
         ) = if self.connector_tracing {
             (
-                Arc::new(aether_adapters::Traced::new(self.kv_store)),
+                Arc::new(aether_adapters::Traced::new(self.record_store)),
                 Arc::new(aether_adapters::Traced::new(self.vector_store)),
                 Arc::new(aether_adapters::Traced::new(self.graph_store)),
             )
         } else {
-            (self.kv_store, self.vector_store, self.graph_store)
+            (self.record_store, self.vector_store, self.graph_store)
         };
 
         let hot_cache = Arc::new(HotContextCache::new(256));
@@ -62,14 +62,14 @@ impl MemoryManagerBuilder {
             graph_store.clone(),
         ));
         let planner = QueryPlanner::new(
-            kv_store.clone(),
+            record_store.clone(),
             vector_store.clone(),
             graph_store.clone(),
             hot_cache.clone(),
             buffer.clone(),
         );
         MemoryManager {
-            kv_store,
+            record_store,
             vector_store,
             graph_store,
             policy: PolicyRouter::new(),
@@ -83,7 +83,7 @@ impl MemoryManagerBuilder {
 
 /// Primary non-generic SDK facade implementing `MemoryInbound` across L1/L2/L3 stores.
 pub struct MemoryManager {
-    kv_store: Arc<dyn KvStore>,
+    record_store: Arc<dyn RecordStore>,
     vector_store: Arc<dyn VectorStore>,
     graph_store: Arc<dyn GraphStore>,
     policy: PolicyRouter,
@@ -95,12 +95,12 @@ pub struct MemoryManager {
 
 impl MemoryManager {
     pub fn builder(
-        kv_store: Arc<dyn KvStore>,
+        record_store: Arc<dyn RecordStore>,
         vector_store: Arc<dyn VectorStore>,
         graph_store: Arc<dyn GraphStore>,
     ) -> MemoryManagerBuilder {
         MemoryManagerBuilder {
-            kv_store,
+            record_store,
             vector_store,
             graph_store,
             connector_tracing: true,
@@ -109,11 +109,11 @@ impl MemoryManager {
     }
 
     pub fn new(
-        kv_store: Arc<dyn KvStore>,
+        record_store: Arc<dyn RecordStore>,
         vector_store: Arc<dyn VectorStore>,
         graph_store: Arc<dyn GraphStore>,
     ) -> Self {
-        Self::builder(kv_store, vector_store, graph_store).build()
+        Self::builder(record_store, vector_store, graph_store).build()
     }
 
     fn ttl_for(&self, scope: MemoryScope) -> Option<Duration> {
@@ -160,7 +160,7 @@ impl MemoryInbound for MemoryManager {
                 PolicyDecision::Accept(item) => item,
             };
 
-            // Distributed atomic idempotency check via L2 KvStore.
+            // Distributed atomic idempotency check via L2 RecordStore.
             if let Some(key) = &item.idempotency_key {
                 let candidate = MemoryReceipt {
                     memory_id: item.id,
@@ -168,7 +168,7 @@ impl MemoryInbound for MemoryManager {
                     version: item.version,
                 };
                 if let Some(existing) = self
-                    .kv_store
+                    .record_store
                     .put_if_absent(&item.project_id, key, &candidate, self.ttl_for(item.scope))
                     .await?
                 {
@@ -176,7 +176,7 @@ impl MemoryInbound for MemoryManager {
                 }
             }
 
-            self.kv_store
+            self.record_store
                 .put(&item.project_id, &item, self.ttl_for(item.scope))
                 .await?;
             self.hot_cache.insert(item.clone());
@@ -211,7 +211,7 @@ impl MemoryInbound for MemoryManager {
         );
         run_spanned(span, async {
             let mut current = self
-                .kv_store
+                .record_store
                 .get(project_id, memory_id)
                 .await?
                 .ok_or_else(|| AetherError::NotFound(format!("memory {memory_id}")))?;
@@ -243,7 +243,7 @@ impl MemoryInbound for MemoryManager {
             current.version += 1;
             current.updated_at = Utc::now();
 
-            self.kv_store
+            self.record_store
                 .cas_update(project_id, memory_id, patch.expected_version, &current)
                 .await?;
             self.hot_cache.insert(current.clone());
@@ -262,7 +262,7 @@ impl MemoryInbound for MemoryManager {
             otel.status_code = tracing::field::Empty,
         );
         run_spanned(span, async {
-            self.kv_store.delete(project_id, memory_id).await?;
+            self.record_store.delete(project_id, memory_id).await?;
             self.hot_cache.remove(project_id, memory_id);
             self.buffer.remove_pending(project_id, memory_id);
 
@@ -285,7 +285,7 @@ impl MemoryInbound for MemoryManager {
             tracing::info_span!("aether.shutdown", otel.status_code = tracing::field::Empty,);
         run_spanned(span, async {
             self.buffer.shutdown().await?;
-            self.kv_store.close().await?;
+            self.record_store.close().await?;
             Ok(())
         })
         .await

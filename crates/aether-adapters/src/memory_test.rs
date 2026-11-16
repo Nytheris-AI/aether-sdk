@@ -6,9 +6,9 @@ use std::time::{Duration, Instant};
 
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
-    FilterExpr, GraphEdge, GraphStore, KvStore, MemoryId, MemoryItem, MemoryReceipt, MemoryScope,
-    OutboundConnector, ProjectId, Relation, Result, Subgraph, TemporalFilter, VectorMatch,
-    VectorRecord, VectorStore,
+    FilterExpr, GraphEdge, GraphStore, MemoryId, MemoryItem, MemoryReceipt, MemoryScope,
+    OutboundConnector, ProjectId, RecordStore, Relation, Result, Subgraph, TemporalFilter,
+    VectorMatch, VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -29,7 +29,7 @@ struct GraphNamespace {
     node_index: HashMap<EntityId, NodeIndex>,
 }
 
-struct KvEntry {
+struct RecordEntry {
     item: MemoryItem,
     expires_at: Option<Instant>,
     seq: u64,
@@ -41,16 +41,16 @@ struct IdemEntry {
 }
 
 #[derive(Default)]
-struct KvNamespace {
-    items: HashMap<MemoryId, KvEntry>,
+struct RecordNamespace {
+    items: HashMap<MemoryId, RecordEntry>,
     idempotency: HashMap<String, IdemEntry>,
     next_seq: u64,
 }
 
-/// Zero-infra, thread-safe in-memory backend implementing `KvStore`, `VectorStore`, and `GraphStore`.
+/// Zero-infra, thread-safe in-memory backend implementing `RecordStore`, `VectorStore`, and `GraphStore`.
 #[derive(Default)]
 pub struct InMemoryBackend {
-    kv: RwLock<HashMap<ProjectId, KvNamespace>>,
+    records: RwLock<HashMap<ProjectId, RecordNamespace>>,
     vectors: RwLock<HashMap<ProjectId, VectorNamespace>>,
     graphs: RwLock<HashMap<ProjectId, GraphNamespace>>,
 }
@@ -85,10 +85,10 @@ impl OutboundConnector for InMemoryBackend {
 }
 
 #[async_trait]
-impl KvStore for InMemoryBackend {
+impl RecordStore for InMemoryBackend {
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
         let now = Instant::now();
-        let guard = self.kv.read().unwrap();
+        let guard = self.records.read().unwrap();
         let Some(entry) = guard.get(ns) else {
             return Ok(None);
         };
@@ -103,13 +103,13 @@ impl KvStore for InMemoryBackend {
 
     async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
         let now = Instant::now();
-        let mut guard = self.kv.write().unwrap();
+        let mut guard = self.records.write().unwrap();
         let entry = guard.entry(ns.clone()).or_default();
         entry.next_seq += 1;
         let seq = entry.next_seq;
         entry.items.insert(
             item.id,
-            KvEntry {
+            RecordEntry {
                 item: item.clone(),
                 expires_at: ttl.map(|d| now + d),
                 seq,
@@ -126,7 +126,7 @@ impl KvStore for InMemoryBackend {
         ttl: Option<Duration>,
     ) -> Result<Option<MemoryReceipt>> {
         let now = Instant::now();
-        let mut guard = self.kv.write().unwrap();
+        let mut guard = self.records.write().unwrap();
         let entry = guard.entry(ns.clone()).or_default();
         if let Some(existing) = entry.idempotency.get(idempotency_key) {
             if existing.expires_at.is_none_or(|exp| now < exp) {
@@ -151,7 +151,7 @@ impl KvStore for InMemoryBackend {
         new_item: &MemoryItem,
     ) -> Result<()> {
         let now = Instant::now();
-        let mut guard = self.kv.write().unwrap();
+        let mut guard = self.records.write().unwrap();
         let entry = guard
             .get_mut(ns)
             .ok_or_else(|| AetherError::NotFound(format!("memory {id}")))?;
@@ -176,7 +176,7 @@ impl KvStore for InMemoryBackend {
         let seq = entry.next_seq;
         entry.items.insert(
             id,
-            KvEntry {
+            RecordEntry {
                 item: new_item.clone(),
                 expires_at,
                 seq,
@@ -192,11 +192,11 @@ impl KvStore for InMemoryBackend {
         limit: usize,
     ) -> Result<Vec<MemoryItem>> {
         let now = Instant::now();
-        let guard = self.kv.read().unwrap();
+        let guard = self.records.read().unwrap();
         let Some(entry) = guard.get(ns) else {
             return Ok(Vec::new());
         };
-        let mut items: Vec<&KvEntry> = entry
+        let mut items: Vec<&RecordEntry> = entry
             .items
             .values()
             .filter(|e| e.expires_at.is_none_or(|exp| now < exp))
@@ -211,7 +211,7 @@ impl KvStore for InMemoryBackend {
     }
 
     async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
-        let mut guard = self.kv.write().unwrap();
+        let mut guard = self.records.write().unwrap();
         if let Some(entry) = guard.get_mut(ns) {
             entry.items.remove(&id);
         }

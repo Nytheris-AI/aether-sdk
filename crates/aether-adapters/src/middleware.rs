@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
-    FilterExpr, GraphStore, KvStore, MemoryId, MemoryItem, MemoryReceipt, MemoryScope,
-    OutboundConnector, ProjectId, Relation, Result, Subgraph, TemporalFilter, VectorMatch,
-    VectorRecord, VectorStore,
+    FilterExpr, GraphStore, MemoryId, MemoryItem, MemoryReceipt, MemoryScope, OutboundConnector,
+    ProjectId, RecordStore, Relation, Result, Subgraph, TemporalFilter, VectorMatch, VectorRecord,
+    VectorStore,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -85,7 +85,7 @@ impl<T: OutboundConnector> OutboundConnector for Resilient<T> {
 }
 
 #[async_trait]
-impl<T: KvStore> KvStore for Resilient<T> {
+impl<T: RecordStore> RecordStore for Resilient<T> {
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
         retry_transient(self.policy, || self.inner.get(ns, id)).await
     }
@@ -267,7 +267,7 @@ impl<T: OutboundConnector> OutboundConnector for Timeout<T> {
 }
 
 #[async_trait]
-impl<T: KvStore> KvStore for Timeout<T> {
+impl<T: RecordStore> RecordStore for Timeout<T> {
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
         self.run(self.inner.name(), self.inner.get(ns, id)).await
     }
@@ -535,7 +535,7 @@ impl<T: OutboundConnector> OutboundConnector for Traced<T> {
 }
 
 #[async_trait]
-impl<T: KvStore> KvStore for Traced<T> {
+impl<T: RecordStore> RecordStore for Traced<T> {
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
         let span = tracing::info_span!(
             "connector_op",
@@ -543,7 +543,7 @@ impl<T: KvStore> KvStore for Traced<T> {
             db.system = self.inner.name(),
             connector = self.inner.name(),
             project_id = %ns,
-            op = "kv_get",
+            op = "record_get",
             otel.status_code = tracing::field::Empty,
         );
         run_connector_span(span, self.inner.get(ns, id)).await
@@ -556,7 +556,7 @@ impl<T: KvStore> KvStore for Traced<T> {
             db.system = self.inner.name(),
             connector = self.inner.name(),
             project_id = %ns,
-            op = "kv_put",
+            op = "record_put",
             otel.status_code = tracing::field::Empty,
         );
         run_connector_span(span, self.inner.put(ns, item, ttl)).await
@@ -575,7 +575,7 @@ impl<T: KvStore> KvStore for Traced<T> {
             db.system = self.inner.name(),
             connector = self.inner.name(),
             project_id = %ns,
-            op = "kv_put_if_absent",
+            op = "record_put_if_absent",
             otel.status_code = tracing::field::Empty,
         );
         run_connector_span(
@@ -598,7 +598,7 @@ impl<T: KvStore> KvStore for Traced<T> {
             db.system = self.inner.name(),
             connector = self.inner.name(),
             project_id = %ns,
-            op = "kv_cas_update",
+            op = "record_cas_update",
             otel.status_code = tracing::field::Empty,
         );
         run_connector_span(
@@ -620,7 +620,7 @@ impl<T: KvStore> KvStore for Traced<T> {
             db.system = self.inner.name(),
             connector = self.inner.name(),
             project_id = %ns,
-            op = "kv_recent",
+            op = "record_recent",
             limit,
             otel.status_code = tracing::field::Empty,
         );
@@ -634,7 +634,7 @@ impl<T: KvStore> KvStore for Traced<T> {
             db.system = self.inner.name(),
             connector = self.inner.name(),
             project_id = %ns,
-            op = "kv_delete",
+            op = "record_delete",
             otel.status_code = tracing::field::Empty,
         );
         run_connector_span(span, self.inner.delete(ns, id)).await

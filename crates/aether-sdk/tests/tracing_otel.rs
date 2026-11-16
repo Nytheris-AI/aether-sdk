@@ -250,7 +250,7 @@ fn zero_boilerplate_memory_manager_emits_otel_client_spans() {
         input.durability = WriteDurability::WaitFlush;
         let receipt = manager.remember(input).await.unwrap();
 
-        // Trigger a CAS conflict at the KvStore level so connector_op itself fails
+        // Trigger a CAS conflict at the RecordStore level so connector_op itself fails
         let _ = manager
             .update(
                 &pid,
@@ -276,8 +276,8 @@ fn zero_boilerplate_memory_manager_emits_otel_client_spans() {
 
     let put_span = connector_spans
         .iter()
-        .find(|s| s.fields.get("op").map(String::as_str) == Some("kv_put"))
-        .expect("expected kv_put connector_op span");
+        .find(|s| s.fields.get("op").map(String::as_str) == Some("record_put"))
+        .expect("expected record_put connector_op span");
     assert_eq!(
         put_span.fields.get("otel.kind").map(String::as_str),
         Some("client")

@@ -544,9 +544,9 @@ pub trait OutboundConnector: Send + Sync {
     async fn close(&self) -> Result<()>;
 }
 
-/// Unified L2 working-memory / key-value store contract (Redis/Valkey, SQLite, etc.).
+/// Unified L2 working-memory / record store contract (Redis/Valkey, SQLite, etc.).
 #[async_trait]
-pub trait KvStore: OutboundConnector {
+pub trait RecordStore: OutboundConnector {
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>>;
 
     async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()>;
@@ -665,7 +665,7 @@ impl<T: OutboundConnector + ?Sized> OutboundConnector for Arc<T> {
 }
 
 #[async_trait]
-impl<T: KvStore + ?Sized> KvStore for Arc<T> {
+impl<T: RecordStore + ?Sized> RecordStore for Arc<T> {
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
         (**self).get(ns, id).await
     }
