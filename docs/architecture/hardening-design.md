@@ -1,12 +1,19 @@
-# Phase 5 Design - Gateway Hardening
+# Phase 5 Design - Consistency Hardening
 
 Status: **approved 2026-11-16, not yet implemented**.
+
+:::note Shape superseded
+This design was written when Aether was framed as a gateway with a single facade.
+The [pieces-first SDK design](./sdk-design.md) now sets the overall shape, and its section 7 lists what it changes here.
+The record-store contract, indexer semantics, validation rules, scope rules, and ranking algorithm below remain the design of the consistency pieces.
+:::
+
 The step-by-step implementation plan is in the repository at `docs/superpowers/plans/2026-11-16-gateway-hardening.md` (not published on this site).
 This document resolves the open choices in [Roadmap Phase 5](../about/roadmap.md) into one design a builder can plan from.
 
 ## 1. Intent
 
-Aether stays a **storage gateway** (decided 2026-11-16).
+Aether stays **model-free** (decided 2026-11-16).
 It does not embed, chunk, extract, or call models.
 The audience is developers who run their own memory, RAG, or knowledge-base stack and already produce their own embeddings and entities.
 

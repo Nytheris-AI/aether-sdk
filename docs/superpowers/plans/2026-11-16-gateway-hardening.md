@@ -2,6 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Partly superseded (2026-11-16).** `docs/architecture/sdk-design.md` changed Aether's shape to pieces first after this plan was written.
+> Tasks 1 to 7 and Task 14 are still valid, with one change: `Indexer` takes optional vector and graph stores.
+> Tasks 8 to 13 must be revised against the SDK design before execution. Do not execute them as written.
+
 **Goal:** Make the record store the source of truth and the vector and graph stores derived indexes, so that writes, updates, and deletes are never lost, never resurrected, and never mis-ranked.
 
 **Architecture:** Every `remember`, `update`, and `forget` becomes a versioned change to one durable record in a `RecordStore`.
