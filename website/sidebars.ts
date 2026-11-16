@@ -10,6 +10,7 @@ const sidebars: SidebarsConfig = {
         'architecture/index',
         'architecture/rust-migration',
         'architecture/connectors',
+        'architecture/hardening-design',
       ],
     },
     {
