@@ -503,8 +503,5 @@ fn matches_temporal(edge: &GraphEdge, temporal: &TemporalFilter) -> bool {
             return false;
         }
     }
-    if temporal.active_only && edge.invalid_at.is_some() {
-        return false;
-    }
-    true
+    !(temporal.active_only && edge.invalid_at.is_some())
 }
