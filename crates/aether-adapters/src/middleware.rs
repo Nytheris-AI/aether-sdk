@@ -102,8 +102,7 @@ impl<T: KvStore> KvStore for Resilient<T> {
         ttl: Option<Duration>,
     ) -> Result<Option<MemoryReceipt>> {
         retry_transient(self.policy, || {
-            self.inner
-                .put_if_absent(ns, idempotency_key, receipt, ttl)
+            self.inner.put_if_absent(ns, idempotency_key, receipt, ttl)
         })
         .await
     }
@@ -143,7 +142,10 @@ impl<T: VectorStore> VectorStore for Resilient<T> {
         dimensions: usize,
         metric: DistanceMetric,
     ) -> Result<()> {
-        retry_transient(self.policy, || self.inner.initialize(ns, dimensions, metric)).await
+        retry_transient(self.policy, || {
+            self.inner.initialize(ns, dimensions, metric)
+        })
+        .await
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {
@@ -284,8 +286,7 @@ impl<T: KvStore> KvStore for Timeout<T> {
     ) -> Result<Option<MemoryReceipt>> {
         self.run(
             self.inner.name(),
-            self.inner
-                .put_if_absent(ns, idempotency_key, receipt, ttl),
+            self.inner.put_if_absent(ns, idempotency_key, receipt, ttl),
         )
         .await
     }
@@ -315,8 +316,7 @@ impl<T: KvStore> KvStore for Timeout<T> {
     }
 
     async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
-        self.run(self.inner.name(), self.inner.delete(ns, id))
-            .await
+        self.run(self.inner.name(), self.inner.delete(ns, id)).await
     }
 }
 
@@ -328,8 +328,11 @@ impl<T: VectorStore> VectorStore for Timeout<T> {
         dimensions: usize,
         metric: DistanceMetric,
     ) -> Result<()> {
-        self.run(self.inner.name(), self.inner.initialize(ns, dimensions, metric))
-            .await
+        self.run(
+            self.inner.name(),
+            self.inner.initialize(ns, dimensions, metric),
+        )
+        .await
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {
@@ -338,7 +341,8 @@ impl<T: VectorStore> VectorStore for Timeout<T> {
     }
 
     async fn delete(&self, ns: &ProjectId, ids: &[MemoryId]) -> Result<()> {
-        self.run(self.inner.name(), self.inner.delete(ns, ids)).await
+        self.run(self.inner.name(), self.inner.delete(ns, ids))
+            .await
     }
 
     async fn search(
@@ -740,8 +744,7 @@ impl<T: GraphStore> GraphStore for Traced<T> {
         );
         run_connector_span(
             span,
-            self.inner
-                .upsert_relations(ns, source_memory_id, relations),
+            self.inner.upsert_relations(ns, source_memory_id, relations),
         )
         .await
     }

@@ -4,7 +4,8 @@ use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, ConsistencyMode, DistanceMetric, Entity,
     EntityId, FilterExpr, FilterValue, GraphStore, KvStore, MemoryId, MemoryInbound, MemoryInput,
     MemoryItem, MemoryReceipt, MemoryScope, MemoryTier, OutboundConnector, ProjectId, RecallMode,
-    RecallQuery, ReceiptState, Relation, TemporalFilter, VectorRecord, VectorStore, WriteDurability,
+    RecallQuery, ReceiptState, Relation, TemporalFilter, VectorRecord, VectorStore,
+    WriteDurability,
 };
 use chrono::Utc;
 use uuid::Uuid;
@@ -80,7 +81,10 @@ fn filter_expr_and_temporal_filter_roundtrip_serde() {
     assert!(temporal.as_of.is_none());
 
     let t_json = serde_json::to_string(&temporal).unwrap();
-    assert_eq!(serde_json::from_str::<TemporalFilter>(&t_json).unwrap(), temporal);
+    assert_eq!(
+        serde_json::from_str::<TemporalFilter>(&t_json).unwrap(),
+        temporal
+    );
 }
 
 #[test]
@@ -122,7 +126,10 @@ fn memory_input_validation_and_receipt_states() {
         version: 1,
     };
     let r_json = serde_json::to_string(&receipt).unwrap();
-    assert_eq!(serde_json::from_str::<MemoryReceipt>(&r_json).unwrap(), receipt);
+    assert_eq!(
+        serde_json::from_str::<MemoryReceipt>(&r_json).unwrap(),
+        receipt
+    );
 }
 
 #[test]

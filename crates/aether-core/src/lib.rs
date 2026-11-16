@@ -65,7 +65,9 @@ impl ProjectId {
     pub fn new(id: impl Into<String>) -> Result<Self> {
         let s = id.into();
         if s.trim().is_empty() {
-            return Err(AetherError::InvalidInput("project_id must not be empty".into()));
+            return Err(AetherError::InvalidInput(
+                "project_id must not be empty".into(),
+            ));
         }
         Ok(Self(s))
     }
@@ -118,7 +120,9 @@ impl EntityId {
     pub fn new(id: impl Into<String>) -> Result<Self> {
         let s = id.into();
         if s.trim().is_empty() {
-            return Err(AetherError::InvalidInput("entity_id must not be empty".into()));
+            return Err(AetherError::InvalidInput(
+                "entity_id must not be empty".into(),
+            ));
         }
         Ok(Self(s))
     }

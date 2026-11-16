@@ -3,7 +3,7 @@ use std::sync::Arc;
 use aether_adapters::InMemoryBackend;
 use aether_core::{
     DistanceMetric, Entity, EntityId, GraphEdge, MemoryId, MemoryInput, MemoryItem, ProjectId,
-    ReceiptState, RecallMode, RecallQuery, Relation, Subgraph, VectorStore, WriteDurability,
+    RecallMode, RecallQuery, ReceiptState, Relation, Subgraph, VectorStore, WriteDurability,
 };
 use aether_cortex::{
     HotContextCache, IngestionBuffer, PersonalizedPageRank, PolicyDecision, PolicyRouter,
@@ -138,7 +138,10 @@ fn personalized_page_rank_ranks_seed_neighborhood_higher() {
 async fn ingestion_buffer_and_query_planner_support_read_your_writes_and_flush() {
     let backend = Arc::new(InMemoryBackend::new());
     let pid = ProjectId::new("proj-ryw").unwrap();
-    backend.initialize(&pid, 3, DistanceMetric::Cosine).await.unwrap();
+    backend
+        .initialize(&pid, 3, DistanceMetric::Cosine)
+        .await
+        .unwrap();
 
     let cache = Arc::new(HotContextCache::new(32));
     let buffer = Arc::new(IngestionBuffer::new(backend.clone(), backend.clone()));
@@ -161,7 +164,10 @@ async fn ingestion_buffer_and_query_planner_support_read_your_writes_and_flush()
 
     let item = MemoryItem::from_input(input, 1);
     cache.insert(item.clone());
-    let receipt = buffer.enqueue(item.clone(), WriteDurability::Buffered).await.unwrap();
+    let receipt = buffer
+        .enqueue(item.clone(), WriteDurability::Buffered)
+        .await
+        .unwrap();
     assert_eq!(receipt.state, ReceiptState::Buffered);
 
     // Before flush(), ReadYourWrites recall still finds the buffered memory!
@@ -181,7 +187,10 @@ async fn ingestion_buffer_and_query_planner_support_read_your_writes_and_flush()
 
     // After flush(), outbound VectorStore + GraphStore both hold the persisted data.
     buffer.flush().await.unwrap();
-    let vec_hits = backend.search(&pid, &[1.0, 0.0, 0.0], 5, None).await.unwrap();
+    let vec_hits = backend
+        .search(&pid, &[1.0, 0.0, 0.0], 5, None)
+        .await
+        .unwrap();
     assert_eq!(vec_hits.len(), 1);
     assert_eq!(vec_hits[0].id, item.id);
 }

@@ -4,13 +4,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aether_core::{
-    AetherError, GraphStore, KvStore, MemoryId, MemoryInbound, MemoryInput,
-    MemoryReceipt, MemoryScope, MemoryUpdate, ProjectId, RecallQuery, RecallResult, ReceiptState,
-    Result, VectorStore, WriteDurability,
+    AetherError, GraphStore, KvStore, MemoryId, MemoryInbound, MemoryInput, MemoryReceipt,
+    MemoryScope, MemoryUpdate, ProjectId, RecallQuery, RecallResult, ReceiptState, Result,
+    VectorStore, WriteDurability,
 };
-use aether_cortex::{
-    HotContextCache, IngestionBuffer, PolicyDecision, PolicyRouter, QueryPlanner,
-};
+use aether_cortex::{HotContextCache, IngestionBuffer, PolicyDecision, PolicyRouter, QueryPlanner};
 use async_trait::async_trait;
 use chrono::Utc;
 use tracing::Instrument;
@@ -278,18 +276,13 @@ impl MemoryInbound for MemoryManager {
     }
 
     async fn flush(&self) -> Result<()> {
-        let span = tracing::info_span!(
-            "aether.flush",
-            otel.status_code = tracing::field::Empty,
-        );
+        let span = tracing::info_span!("aether.flush", otel.status_code = tracing::field::Empty,);
         run_spanned(span, self.buffer.flush()).await
     }
 
     async fn shutdown(&self) -> Result<()> {
-        let span = tracing::info_span!(
-            "aether.shutdown",
-            otel.status_code = tracing::field::Empty,
-        );
+        let span =
+            tracing::info_span!("aether.shutdown", otel.status_code = tracing::field::Empty,);
         run_spanned(span, async {
             self.buffer.shutdown().await?;
             self.kv_store.close().await?;

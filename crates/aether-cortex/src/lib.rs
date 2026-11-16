@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use aether_core::{
     AetherError, ConsistencyMode, EntityId, FilterExpr, FilterValue, GraphStore, KvStore, MemoryId,
-    MemoryInput, MemoryItem, MemoryReceipt, ProjectId, ReceiptState, RecallHit, RecallMode,
-    RecallQuery, RecallResult, Result, Subgraph, VectorRecord, VectorStore, WriteDurability,
+    MemoryInput, MemoryItem, MemoryReceipt, ProjectId, RecallHit, RecallMode, RecallQuery,
+    RecallResult, ReceiptState, Result, Subgraph, VectorRecord, VectorStore, WriteDurability,
 };
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
@@ -190,10 +190,7 @@ impl IngestionBuffer {
 
     /// Drains all buffered writes to the configured `VectorStore` and `GraphStore`.
     pub async fn flush(&self) -> Result<()> {
-        let span = tracing::info_span!(
-            "aether.cortex.flush",
-            item_count = tracing::field::Empty,
-        );
+        let span = tracing::info_span!("aether.cortex.flush", item_count = tracing::field::Empty,);
         async {
             let _guard = self.flush_lock.lock().await;
             let items: Vec<MemoryItem> = {
@@ -308,7 +305,8 @@ impl PersonalizedPageRank {
         }
 
         for edge in &subgraph.edges {
-            if let (Some(&src), Some(&dst)) = (indices.get(&edge.source), indices.get(&edge.target)) {
+            if let (Some(&src), Some(&dst)) = (indices.get(&edge.source), indices.get(&edge.target))
+            {
                 graph.add_edge(src, dst, ());
             }
         }
@@ -547,9 +545,9 @@ fn eval_filter(expr: &FilterExpr, metadata: &Value) -> bool {
         FilterExpr::Eq { field, value } => metadata
             .get(field)
             .map_or(false, |v| value_matches(v, value)),
-        FilterExpr::In { field, values } => metadata
-            .get(field)
-            .map_or(false, |v| values.iter().any(|target| value_matches(v, target))),
+        FilterExpr::In { field, values } => metadata.get(field).map_or(false, |v| {
+            values.iter().any(|target| value_matches(v, target))
+        }),
         FilterExpr::Range { field, gte, lte } => metadata
             .get(field)
             .and_then(|v| v.as_f64())

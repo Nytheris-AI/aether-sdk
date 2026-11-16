@@ -485,12 +485,15 @@ fn eval_filter(expr: &FilterExpr, metadata: &Value) -> bool {
         FilterExpr::Eq { field, value } => metadata
             .get(field)
             .map_or(false, |v| value_matches(v, value)),
-        FilterExpr::In { field, values } => metadata
-            .get(field)
-            .map_or(false, |v| values.iter().any(|target| value_matches(v, target))),
-        FilterExpr::Range { field, gte, lte } => metadata.get(field).and_then(|v| v.as_f64()).map_or(false, |num| {
-            gte.map_or(true, |min| num >= min) && lte.map_or(true, |max| num <= max)
+        FilterExpr::In { field, values } => metadata.get(field).map_or(false, |v| {
+            values.iter().any(|target| value_matches(v, target))
         }),
+        FilterExpr::Range { field, gte, lte } => metadata
+            .get(field)
+            .and_then(|v| v.as_f64())
+            .map_or(false, |num| {
+                gte.map_or(true, |min| num >= min) && lte.map_or(true, |max| num <= max)
+            }),
         FilterExpr::And(exprs) => exprs.iter().all(|e| eval_filter(e, metadata)),
         FilterExpr::Or(exprs) => exprs.iter().any(|e| eval_filter(e, metadata)),
     }

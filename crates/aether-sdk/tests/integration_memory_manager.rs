@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use aether_adapters::InMemoryBackend;
 use aether_core::{
-    AetherError, DistanceMetric, Entity, EntityId, MemoryInbound, MemoryInput, MemoryUpdate,
-    ProjectId, ReceiptState, RecallMode, RecallQuery, Relation, TemporalFilter, VectorStore,
-    GraphStore, WriteDurability,
+    AetherError, DistanceMetric, Entity, EntityId, GraphStore, MemoryInbound, MemoryInput,
+    MemoryUpdate, ProjectId, RecallMode, RecallQuery, ReceiptState, Relation, TemporalFilter,
+    VectorStore, WriteDurability,
 };
 use aether_sdk::MemoryManager;
 use chrono::Utc;
@@ -13,7 +13,10 @@ use chrono::Utc;
 async fn remember_recall_update_cas_and_forget_lifecycle() {
     let backend = Arc::new(InMemoryBackend::new());
     let pid = ProjectId::new("proj-sdk").unwrap();
-    backend.initialize(&pid, 3, DistanceMetric::Cosine).await.unwrap();
+    backend
+        .initialize(&pid, 3, DistanceMetric::Cosine)
+        .await
+        .unwrap();
 
     let manager: Arc<dyn MemoryInbound> = Arc::new(MemoryManager::new(
         backend.clone(),
@@ -85,7 +88,10 @@ async fn remember_recall_update_cas_and_forget_lifecycle() {
     // forget() removes vector record AND retracts graph provenance edges.
     manager.forget(&pid, receipt.memory_id).await.unwrap();
 
-    let vec_after = backend.search(&pid, &[1.0, 0.0, 0.0], 5, None).await.unwrap();
+    let vec_after = backend
+        .search(&pid, &[1.0, 0.0, 0.0], 5, None)
+        .await
+        .unwrap();
     assert!(vec_after.is_empty());
 
     let graph_after = backend

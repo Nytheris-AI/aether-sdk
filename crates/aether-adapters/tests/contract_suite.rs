@@ -6,9 +6,9 @@ use aether_adapters::memory_test::InMemoryBackend;
 use aether_adapters::middleware::{Batcher, Resilient, RetryPolicy, Timeout, Traced};
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
-    FilterExpr, FilterValue, GraphStore, KvStore, MemoryId, MemoryInput, MemoryItem,
-    MemoryReceipt, MemoryScope, OutboundConnector, ProjectId, ReceiptState, Relation, Result,
-    Subgraph, TemporalFilter, VectorMatch, VectorRecord, VectorStore,
+    FilterExpr, FilterValue, GraphStore, KvStore, MemoryId, MemoryInput, MemoryItem, MemoryReceipt,
+    MemoryScope, OutboundConnector, ProjectId, ReceiptState, Relation, Result, Subgraph,
+    TemporalFilter, VectorMatch, VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
 use chrono::{Duration as ChronoDuration, Utc};
@@ -20,8 +20,14 @@ async fn contract_namespace_isolation_vector_and_graph() {
     let ns_a = ProjectId::new("tenant-a").unwrap();
     let ns_b = ProjectId::new("tenant-b").unwrap();
 
-    backend.initialize(&ns_a, 3, DistanceMetric::Cosine).await.unwrap();
-    backend.initialize(&ns_b, 3, DistanceMetric::Cosine).await.unwrap();
+    backend
+        .initialize(&ns_a, 3, DistanceMetric::Cosine)
+        .await
+        .unwrap();
+    backend
+        .initialize(&ns_b, 3, DistanceMetric::Cosine)
+        .await
+        .unwrap();
 
     let mem_a = MemoryId::new();
     backend
@@ -36,8 +42,14 @@ async fn contract_namespace_isolation_vector_and_graph() {
         .await
         .unwrap();
 
-    let hits_a = backend.search(&ns_a, &[1.0, 0.0, 0.0], 5, None).await.unwrap();
-    let hits_b = backend.search(&ns_b, &[1.0, 0.0, 0.0], 5, None).await.unwrap();
+    let hits_a = backend
+        .search(&ns_a, &[1.0, 0.0, 0.0], 5, None)
+        .await
+        .unwrap();
+    let hits_b = backend
+        .search(&ns_b, &[1.0, 0.0, 0.0], 5, None)
+        .await
+        .unwrap();
     assert_eq!(hits_a.len(), 1);
     assert!(hits_b.is_empty());
 
@@ -51,7 +63,10 @@ async fn contract_namespace_isolation_vector_and_graph() {
         name: "Qdrant".into(),
         entity_type: "Database".into(),
     };
-    backend.upsert_entities(&ns_a, &[alice.clone(), qdrant.clone()]).await.unwrap();
+    backend
+        .upsert_entities(&ns_a, &[alice.clone(), qdrant.clone()])
+        .await
+        .unwrap();
     backend
         .upsert_relations(
             &ns_a,
@@ -68,7 +83,13 @@ async fn contract_namespace_isolation_vector_and_graph() {
         .unwrap();
 
     let sub_a = backend
-        .neighborhood(&ns_a, &[alice.id.clone()], 1, 10, &TemporalFilter::default())
+        .neighborhood(
+            &ns_a,
+            &[alice.id.clone()],
+            1,
+            10,
+            &TemporalFilter::default(),
+        )
         .await
         .unwrap();
     let sub_b = backend
@@ -83,7 +104,10 @@ async fn contract_namespace_isolation_vector_and_graph() {
 async fn contract_upsert_delete_and_dimension_check() {
     let backend = InMemoryBackend::new();
     let ns = ProjectId::new("proj-vec").unwrap();
-    backend.initialize(&ns, 3, DistanceMetric::Cosine).await.unwrap();
+    backend
+        .initialize(&ns, 3, DistanceMetric::Cosine)
+        .await
+        .unwrap();
 
     let id1 = MemoryId::new();
     let id2 = MemoryId::new();
@@ -118,12 +142,18 @@ async fn contract_upsert_delete_and_dimension_check() {
         .await;
     assert!(dim_err.is_err());
 
-    let matches = backend.search(&ns, &[1.0, 0.0, 0.0], 2, None).await.unwrap();
+    let matches = backend
+        .search(&ns, &[1.0, 0.0, 0.0], 2, None)
+        .await
+        .unwrap();
     assert_eq!(matches[0].id, id1);
 
     VectorStore::delete(&backend, &ns, &[id1]).await.unwrap();
     VectorStore::delete(&backend, &ns, &[id1]).await.unwrap();
-    let after_del = backend.search(&ns, &[1.0, 0.0, 0.0], 2, None).await.unwrap();
+    let after_del = backend
+        .search(&ns, &[1.0, 0.0, 0.0], 2, None)
+        .await
+        .unwrap();
     assert_eq!(after_del.len(), 1);
     assert_eq!(after_del[0].id, id2);
 }
@@ -132,7 +162,10 @@ async fn contract_upsert_delete_and_dimension_check() {
 async fn contract_filter_expr_evaluation() {
     let backend = InMemoryBackend::new();
     let ns = ProjectId::new("proj-filter").unwrap();
-    backend.initialize(&ns, 2, DistanceMetric::Dot).await.unwrap();
+    backend
+        .initialize(&ns, 2, DistanceMetric::Dot)
+        .await
+        .unwrap();
 
     let id1 = MemoryId::new();
     let id2 = MemoryId::new();
@@ -173,7 +206,10 @@ async fn contract_filter_expr_evaluation() {
         },
     ]);
 
-    let hits = backend.search(&ns, &[1.0, 0.0], 10, Some(&filter)).await.unwrap();
+    let hits = backend
+        .search(&ns, &[1.0, 0.0], 10, Some(&filter))
+        .await
+        .unwrap();
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].id, id1);
 }
@@ -198,7 +234,10 @@ async fn contract_temporal_provenance_and_retract_memory_facts() {
         name: "Chroma".into(),
         entity_type: "Database".into(),
     };
-    backend.upsert_entities(&ns, &[alice.clone(), neo4j.clone(), chroma.clone()]).await.unwrap();
+    backend
+        .upsert_entities(&ns, &[alice.clone(), neo4j.clone(), chroma.clone()])
+        .await
+        .unwrap();
 
     let t0 = Utc::now() - ChronoDuration::minutes(10);
     let t_retract = Utc::now() - ChronoDuration::minutes(2);
@@ -235,7 +274,10 @@ async fn contract_temporal_provenance_and_retract_memory_facts() {
         .await
         .unwrap();
 
-    backend.retract_memory_facts(&ns, mem1, t_retract).await.unwrap();
+    backend
+        .retract_memory_facts(&ns, mem1, t_retract)
+        .await
+        .unwrap();
 
     let active = backend
         .neighborhood(&ns, &[alice.id.clone()], 1, 10, &TemporalFilter::default())
@@ -440,11 +482,16 @@ async fn contract_kv_store_ttl_idempotency_cas_and_recent() {
         .unwrap();
     assert_eq!(dup, Some(receipt));
     assert!(kv
-        .put_if_absent(&ns_b, "idem-1", &MemoryReceipt {
-            memory_id: MemoryId::new(),
-            state: ReceiptState::Buffered,
-            version: 1,
-        }, None)
+        .put_if_absent(
+            &ns_b,
+            "idem-1",
+            &MemoryReceipt {
+                memory_id: MemoryId::new(),
+                state: ReceiptState::Buffered,
+                version: 1,
+            },
+            None
+        )
         .await
         .unwrap()
         .is_none());
@@ -467,7 +514,10 @@ async fn contract_kv_store_ttl_idempotency_cas_and_recent() {
     let proj_item = MemoryItem::from_input(proj_input, 1);
     kv.put(&ns_a, &proj_item, None).await.unwrap();
 
-    let session_recent = kv.recent(&ns_a, Some(MemoryScope::Session), 10).await.unwrap();
+    let session_recent = kv
+        .recent(&ns_a, Some(MemoryScope::Session), 10)
+        .await
+        .unwrap();
     assert_eq!(session_recent.len(), 1);
     assert_eq!(session_recent[0].id, item1.id);
 

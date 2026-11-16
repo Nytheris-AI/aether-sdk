@@ -175,21 +175,30 @@ fn otel_traces_connect_memory_manager_cortex_and_adapters() {
     let remember_spans = collector.find_by_name("aether.remember");
     assert_eq!(remember_spans.len(), 1);
     assert_eq!(
-        remember_spans[0].fields.get("otel.status_code").map(String::as_str),
+        remember_spans[0]
+            .fields
+            .get("otel.status_code")
+            .map(String::as_str),
         Some("OK")
     );
 
     let recall_spans = collector.find_by_name("aether.recall");
     assert_eq!(recall_spans.len(), 1);
     assert_eq!(
-        recall_spans[0].fields.get("otel.status_code").map(String::as_str),
+        recall_spans[0]
+            .fields
+            .get("otel.status_code")
+            .map(String::as_str),
         Some("OK")
     );
 
     let update_spans = collector.find_by_name("aether.update");
     assert_eq!(update_spans.len(), 1);
     assert_eq!(
-        update_spans[0].fields.get("otel.status_code").map(String::as_str),
+        update_spans[0]
+            .fields
+            .get("otel.status_code")
+            .map(String::as_str),
         Some("ERROR")
     );
 

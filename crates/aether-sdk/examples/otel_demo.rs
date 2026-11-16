@@ -12,9 +12,8 @@ use chrono::Utc;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. One-line OTel setup (OTLP traces + OTLP logs + stdout logs)
-    let mut telemetry = init_otel(
-        OtelConfig::from_env("aether-sdk-demo").with_log_format(LogFormat::Pretty),
-    )?;
+    let mut telemetry =
+        init_otel(OtelConfig::from_env("aether-sdk-demo").with_log_format(LogFormat::Pretty))?;
 
     // 2. Zero-boilerplate MemoryManager (auto-wraps stores with Traced<T>)
     let backend = Arc::new(InMemoryBackend::new());
