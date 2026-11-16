@@ -85,8 +85,9 @@ pub trait RecordStore: OutboundConnector {
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>>;
     async fn get_many(&self, ns: &ProjectId, ids: &[MemoryId]) -> Result<Vec<MemoryItem>>;
     async fn cas_update(&self, ns: &ProjectId, id: MemoryId, expected_version: Option<u64>, new_item: &MemoryItem) -> Result<()>;
-    /// Marks the record deleted and bumps its version. The record is removed by `mark_indexed`.
-    async fn tombstone(&self, ns: &ProjectId, id: MemoryId) -> Result<u64>;
+    /// Marks the record deleted, bumps its version, and returns it. `None` if there is no live record.
+    /// The record is removed by `mark_indexed`.
+    async fn tombstone(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>>;
 
     /// Records whose indexes are behind their version, oldest first, across all projects.
     async fn pending(&self, limit: usize) -> Result<Vec<PendingRecord>>;
@@ -116,7 +117,7 @@ All three become "change the record, then index".
 3. **forget**: `tombstone`.
 4. In every case the record is now pending.
    `Buffered` returns immediately.
-   `WaitFlush`, `update`, and `forget` wait until that record's version is indexed.
+   `WaitFlush`, `update`, and `forget` index that record before returning.
    If indexing that record fails, the waiter receives the error and the record stays pending for retry.
 
 **Indexer** (replaces `IngestionBuffer`):
