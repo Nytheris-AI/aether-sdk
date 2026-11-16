@@ -23,6 +23,9 @@ The table below is the honest status, not the aspirational one.
 
 ## Phase 5 - Correctness Hardening (next)
 
+The sections below list the problems.
+The [Phase 5 design](../architecture/hardening-design.md) resolves them into one design and an order of work.
+
 This phase comes before any production driver.
 Every driver written now would inherit the semantics below and make them more expensive to change.
 Each item is a behaviour change and follows Red - Green - Refactor with a failing test first.
@@ -127,8 +130,9 @@ A driver that needs a contract change is a signal the contract is wrong, and tha
 - HTTP/gRPC gateway server.
 - MCP server.
 
-## Open Scope Question
+## Scope Decision
 
-The blueprint excludes model inference from the core, so Aether today stores, indexes, and retrieves what the caller hands it.
-It does not yet *manage* memory: no consolidation, deduplication of near-identical facts, contradiction handling, decay, or summarization.
-Whether that belongs in Aether (behind caller-supplied model traits) or stays the caller's job decides what comes after Phase 6 and is not settled.
+Decided 2026-11-16: Aether stays a storage gateway.
+It stores, indexes, and retrieves what the caller hands it, and does not embed, chunk, extract, or call models.
+The value it competes on is keeping a record store, a vector index, and a graph index consistent for one memory through writes, updates, deletes, crashes, and retries.
+Model-backed features (text-in recall, consolidation, context assembly) are deliberately deferred until that core has users.
