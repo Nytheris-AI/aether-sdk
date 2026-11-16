@@ -7,6 +7,7 @@
 - **[Architecture Overview](architecture/index.md)**: Layered 4-crate Rust workspace and L1/L2/L3 serving model.
 - **[Rust Migration Blueprint](architecture/rust-migration.md)**: Core domain contracts (`aether-core`), `aether-cortex`, and `aether-sdk`.
 - **[Connectors Architecture](architecture/connectors.md)**: Outbound `KvStore`, `VectorStore`, and `GraphStore` drivers with shared resilience middleware.
+- **[Phase 5 Hardening Design](architecture/hardening-design.md)**: Approved design for making the record store the source of truth, with vector and graph stores as derived indexes.
 
 ## Guides
 
@@ -17,7 +18,7 @@
 ## Development & Roadmap
 
 - **[Development Guidelines](development/guidelines.md)**: Engineering standards, micro commits, and TDD conventions.
-- **[Roadmap](about/roadmap.md)**: Current milestones and upcoming storage/database drivers.
+- **[Roadmap](about/roadmap.md)**: Real status of each component, known gaps, and what comes next.
 
 ---
 
