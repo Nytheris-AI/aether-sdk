@@ -23,8 +23,15 @@ The table below is the honest status, not the aspirational one.
 
 ## Phase 5 - Correctness Hardening (next)
 
-The sections below list the problems.
-The [Phase 5 design](../architecture/hardening-design.md) resolves them into one design and an order of work.
+Status: design approved 2026-11-16, implementation not started.
+
+- The sections below list the problems as they exist in the code today.
+- The [Phase 5 design](../architecture/hardening-design.md) resolves them into one design.
+- The implementation plan, 14 test-first tasks, is in the repository at `docs/superpowers/plans/2026-11-16-gateway-hardening.md`.
+
+To pick this up: read the design, then start the plan at Task 1.
+Task 14 (removing the Python package) needs explicit owner sign-off before it starts.
+Where the design and the sections below differ, the design wins: it drops the queue capacity item (5.2) because the in-memory queue itself is removed, and it settles every "either / or" below.
 
 This phase comes before any production driver.
 Every driver written now would inherit the semantics below and make them more expensive to change.

@@ -1,6 +1,7 @@
 # Phase 5 Design - Gateway Hardening
 
-Status: **draft, awaiting approval**.
+Status: **approved 2026-11-16, not yet implemented**.
+The step-by-step implementation plan is in the repository at `docs/superpowers/plans/2026-11-16-gateway-hardening.md` (not published on this site).
 This document resolves the open choices in [Roadmap Phase 5](../about/roadmap.md) into one design a builder can plan from.
 
 ## 1. Intent
@@ -232,9 +233,9 @@ None on running systems: no production driver exists and nothing is published.
 The public Rust API changes in breaking ways (`KvStore` renamed and reshaped, `MemoryScope` variants, `MemoryUpdate` fields, `recall` now errors where it returned empty results).
 The crate is at `0.1.0` and unreleased, so no migration path is provided.
 
-## 7. Calls Made Here (not yet confirmed)
+## 7. Design Calls
 
-These were chosen by the author and are open to correction.
+These were proposed by the author and approved with the design on 2026-11-16.
 
 - Renaming `KvStore` to `RecordStore` instead of only redefining it in prose.
 - Deleting `HotContextCache` and `PolicyRouter` instead of fixing them.
