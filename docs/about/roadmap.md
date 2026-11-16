@@ -2,6 +2,7 @@
 
 Aether is a model-free Rust **memory SDK**: a set of pieces developers integrate into their own workflow to store, index, and retrieve AI memory across record, vector, and graph stores (**SQLite, Redis/Valkey, Turbopuffer, Neo4j, Qdrant, Chroma, pgvector**).
 The shape is defined in the [pieces-first SDK design](../architecture/sdk-design.md).
+For a single list of what will be removed, changed, and added, see the [change overview](../architecture/change-overview.md).
 
 ## Current State
 

@@ -7,6 +7,7 @@
 - **[Architecture Overview](architecture/index.md)**: Layered 4-crate Rust workspace and L1/L2/L3 serving model.
 - **[Rust Migration Blueprint](architecture/rust-migration.md)**: Core domain contracts (`aether-core`), `aether-cortex`, and `aether-sdk`.
 - **[Connectors Architecture](architecture/connectors.md)**: Outbound `KvStore`, `VectorStore`, and `GraphStore` drivers with shared resilience middleware.
+- **[Change Overview](architecture/change-overview.md)**: One-screen summary of what will be removed, changed, added, and kept.
 - **[Pieces-First SDK Design](architecture/sdk-design.md)**: The shape of Aether. Five levels of pieces, from single connectors to the optional `MemoryManager` facade.
 - **[Phase 5 Hardening Design](architecture/hardening-design.md)**: Approved design for making the record store the source of truth, with vector and graph stores as derived indexes.
 
