@@ -437,11 +437,7 @@ impl QueryPlanner {
                 .kv_store
                 .recent(&query.project_id, None, query.top_k)
                 .await?;
-            for item in pending
-                .into_iter()
-                .chain(hot_recent.into_iter())
-                .chain(kv_recent.into_iter())
-            {
+            for item in pending.into_iter().chain(hot_recent).chain(kv_recent) {
                 if hits_by_id.contains_key(&item.id) {
                     continue;
                 }
@@ -516,12 +512,11 @@ impl QueryPlanner {
             .chain(self.hot_cache.recent(&query.project_id, 25))
         {
             for entity in item.entities {
-                if q_lower.contains(&entity.name.to_lowercase())
-                    || q_lower.contains(&entity.id.as_str().to_lowercase())
+                if (q_lower.contains(&entity.name.to_lowercase())
+                    || q_lower.contains(&entity.id.as_str().to_lowercase()))
+                    && !seeds.contains(&entity.id)
                 {
-                    if !seeds.contains(&entity.id) {
-                        seeds.push(entity.id);
-                    }
+                    seeds.push(entity.id);
                 }
             }
         }
@@ -542,17 +537,17 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 
 fn eval_filter(expr: &FilterExpr, metadata: &Value) -> bool {
     match expr {
-        FilterExpr::Eq { field, value } => metadata
+        FilterExpr::Eq { field, value } => {
+            metadata.get(field).is_some_and(|v| value_matches(v, value))
+        }
+        FilterExpr::In { field, values } => metadata
             .get(field)
-            .map_or(false, |v| value_matches(v, value)),
-        FilterExpr::In { field, values } => metadata.get(field).map_or(false, |v| {
-            values.iter().any(|target| value_matches(v, target))
-        }),
+            .is_some_and(|v| values.iter().any(|target| value_matches(v, target))),
         FilterExpr::Range { field, gte, lte } => metadata
             .get(field)
             .and_then(|v| v.as_f64())
-            .map_or(false, |num| {
-                gte.map_or(true, |min| num >= min) && lte.map_or(true, |max| num <= max)
+            .is_some_and(|num| {
+                gte.is_none_or(|min| num >= min) && lte.is_none_or(|max| num <= max)
             }),
         FilterExpr::And(exprs) => exprs.iter().all(|e| eval_filter(e, metadata)),
         FilterExpr::Or(exprs) => exprs.iter().any(|e| eval_filter(e, metadata)),
@@ -564,7 +559,7 @@ fn value_matches(json_val: &Value, filter_val: &FilterValue) -> bool {
         (Value::String(a), FilterValue::String(b)) => a == b,
         (Value::Number(a), FilterValue::Int(b)) => a.as_i64() == Some(*b),
         (Value::Number(a), FilterValue::Float(b)) => {
-            a.as_f64().map_or(false, |x| (x - b).abs() < f64::EPSILON)
+            a.as_f64().is_some_and(|x| (x - b).abs() < f64::EPSILON)
         }
         (Value::Bool(a), FilterValue::Bool(b)) => a == b,
         _ => false,

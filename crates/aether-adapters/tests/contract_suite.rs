@@ -85,7 +85,7 @@ async fn contract_namespace_isolation_vector_and_graph() {
     let sub_a = backend
         .neighborhood(
             &ns_a,
-            &[alice.id.clone()],
+            std::slice::from_ref(&alice.id),
             1,
             10,
             &TemporalFilter::default(),
@@ -280,7 +280,13 @@ async fn contract_temporal_provenance_and_retract_memory_facts() {
         .unwrap();
 
     let active = backend
-        .neighborhood(&ns, &[alice.id.clone()], 1, 10, &TemporalFilter::default())
+        .neighborhood(
+            &ns,
+            std::slice::from_ref(&alice.id),
+            1,
+            10,
+            &TemporalFilter::default(),
+        )
         .await
         .unwrap();
     assert_eq!(active.edges.len(), 1);

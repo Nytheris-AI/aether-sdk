@@ -121,7 +121,7 @@ fn personalized_page_rank_ranks_seed_neighborhood_higher() {
         ],
     };
 
-    let ranks = PersonalizedPageRank::default().rank(&subgraph, &[alice.clone()]);
+    let ranks = PersonalizedPageRank::default().rank(&subgraph, std::slice::from_ref(&alice));
     let score_of = |id: &EntityId| {
         ranks
             .iter()

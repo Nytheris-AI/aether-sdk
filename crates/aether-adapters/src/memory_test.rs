@@ -94,7 +94,7 @@ impl KvStore for InMemoryBackend {
             return Ok(None);
         };
         Ok(entry.items.get(&id).and_then(|e| {
-            if e.expires_at.map_or(false, |exp| now >= exp) {
+            if e.expires_at.is_some_and(|exp| now >= exp) {
                 None
             } else {
                 Some(e.item.clone())
@@ -130,7 +130,7 @@ impl KvStore for InMemoryBackend {
         let mut guard = self.kv.write().unwrap();
         let entry = guard.entry(ns.clone()).or_default();
         if let Some(existing) = entry.idempotency.get(idempotency_key) {
-            if !existing.expires_at.map_or(false, |exp| now >= exp) {
+            if existing.expires_at.is_none_or(|exp| now < exp) {
                 return Ok(Some(existing.receipt.clone()));
             }
         }
@@ -159,7 +159,7 @@ impl KvStore for InMemoryBackend {
         let current = entry
             .items
             .get(&id)
-            .filter(|e| !e.expires_at.map_or(false, |exp| now >= exp))
+            .filter(|e| e.expires_at.is_none_or(|exp| now < exp))
             .ok_or_else(|| AetherError::NotFound(format!("memory {id}")))?;
 
         if let Some(expected) = expected_version {
@@ -200,10 +200,10 @@ impl KvStore for InMemoryBackend {
         let mut items: Vec<&KvEntry> = entry
             .items
             .values()
-            .filter(|e| !e.expires_at.map_or(false, |exp| now >= exp))
-            .filter(|e| scope.map_or(true, |s| e.item.scope == s))
+            .filter(|e| e.expires_at.is_none_or(|exp| now < exp))
+            .filter(|e| scope.is_none_or(|s| e.item.scope == s))
             .collect();
-        items.sort_by(|a, b| b.seq.cmp(&a.seq));
+        items.sort_by_key(|b| std::cmp::Reverse(b.seq));
         Ok(items
             .into_iter()
             .take(limit)
@@ -449,7 +449,7 @@ fn ensure_node(ns: &mut GraphNamespace, id: &EntityId) -> NodeIndex {
 fn matches_temporal(edge: &GraphEdge, temporal: &TemporalFilter) -> bool {
     if let Some(as_of) = temporal.as_of {
         let valid = edge.valid_at <= as_of;
-        let not_invalid = edge.invalid_at.map_or(true, |inv| as_of < inv);
+        let not_invalid = edge.invalid_at.is_none_or(|inv| as_of < inv);
         if !(valid && not_invalid) {
             return false;
         }
@@ -482,17 +482,17 @@ fn similarity(metric: DistanceMetric, a: &[f32], b: &[f32]) -> f32 {
 
 fn eval_filter(expr: &FilterExpr, metadata: &Value) -> bool {
     match expr {
-        FilterExpr::Eq { field, value } => metadata
+        FilterExpr::Eq { field, value } => {
+            metadata.get(field).is_some_and(|v| value_matches(v, value))
+        }
+        FilterExpr::In { field, values } => metadata
             .get(field)
-            .map_or(false, |v| value_matches(v, value)),
-        FilterExpr::In { field, values } => metadata.get(field).map_or(false, |v| {
-            values.iter().any(|target| value_matches(v, target))
-        }),
+            .is_some_and(|v| values.iter().any(|target| value_matches(v, target))),
         FilterExpr::Range { field, gte, lte } => metadata
             .get(field)
             .and_then(|v| v.as_f64())
-            .map_or(false, |num| {
-                gte.map_or(true, |min| num >= min) && lte.map_or(true, |max| num <= max)
+            .is_some_and(|num| {
+                gte.is_none_or(|min| num >= min) && lte.is_none_or(|max| num <= max)
             }),
         FilterExpr::And(exprs) => exprs.iter().all(|e| eval_filter(e, metadata)),
         FilterExpr::Or(exprs) => exprs.iter().any(|e| eval_filter(e, metadata)),
@@ -504,7 +504,7 @@ fn value_matches(json_val: &Value, filter_val: &FilterValue) -> bool {
         (Value::String(a), FilterValue::String(b)) => a == b,
         (Value::Number(a), FilterValue::Int(b)) => a.as_i64() == Some(*b),
         (Value::Number(a), FilterValue::Float(b)) => {
-            a.as_f64().map_or(false, |x| (x - b).abs() < f64::EPSILON)
+            a.as_f64().is_some_and(|x| (x - b).abs() < f64::EPSILON)
         }
         (Value::Bool(a), FilterValue::Bool(b)) => a == b,
         _ => false,

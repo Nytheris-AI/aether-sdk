@@ -137,7 +137,7 @@ pub fn init_otel(config: OtelConfig) -> Result<TelemetryGuard> {
         .as_ref()
         .map(OpenTelemetryTracingBridge::new);
 
-    let pretty_layer = (config.log_format == LogFormat::Pretty).then(|| fmt::layer());
+    let pretty_layer = (config.log_format == LogFormat::Pretty).then(fmt::layer);
     let json_layer = (config.log_format == LogFormat::Json).then(|| fmt::layer().json());
 
     let filter = config
