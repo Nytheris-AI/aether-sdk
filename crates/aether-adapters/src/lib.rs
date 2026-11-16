@@ -1,5 +1,7 @@
 //! Outbound storage & database connectors for Aether SDK.
 
+#[cfg(feature = "contract-suite")]
+pub mod contract;
 pub mod memory_test;
 pub mod middleware;
 
