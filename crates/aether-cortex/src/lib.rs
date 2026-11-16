@@ -12,6 +12,7 @@ use aether_core::{
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use serde_json::Value;
+use tracing::Instrument;
 
 /// Result of deterministic inbound policy evaluation.
 #[derive(Debug, Clone)]
@@ -133,34 +134,44 @@ impl IngestionBuffer {
         item: MemoryItem,
         durability: WriteDurability,
     ) -> Result<MemoryReceipt> {
-        if *self.closed.read().unwrap() {
-            return Err(AetherError::InvalidInput(
-                "ingestion buffer is shut down".into(),
-            ));
-        }
-        let receipt_id = item.id;
-        let version = item.version;
-        {
-            let mut queue = self.pending.lock().unwrap();
-            queue.retain(|existing| existing.id != item.id);
-            queue.push_back(item);
-        }
+        let span = tracing::info_span!(
+            "aether.cortex.enqueue",
+            project_id = %item.project_id,
+            memory_id = %item.id,
+            durability = ?durability,
+        );
+        async move {
+            if *self.closed.read().unwrap() {
+                return Err(AetherError::InvalidInput(
+                    "ingestion buffer is shut down".into(),
+                ));
+            }
+            let receipt_id = item.id;
+            let version = item.version;
+            {
+                let mut queue = self.pending.lock().unwrap();
+                queue.retain(|existing| existing.id != item.id);
+                queue.push_back(item);
+            }
 
-        match durability {
-            WriteDurability::Buffered => Ok(MemoryReceipt {
-                memory_id: receipt_id,
-                state: ReceiptState::Buffered,
-                version,
-            }),
-            WriteDurability::WaitFlush => {
-                self.flush().await?;
-                Ok(MemoryReceipt {
+            match durability {
+                WriteDurability::Buffered => Ok(MemoryReceipt {
                     memory_id: receipt_id,
-                    state: ReceiptState::Persisted,
+                    state: ReceiptState::Buffered,
                     version,
-                })
+                }),
+                WriteDurability::WaitFlush => {
+                    self.flush().await?;
+                    Ok(MemoryReceipt {
+                        memory_id: receipt_id,
+                        state: ReceiptState::Persisted,
+                        version,
+                    })
+                }
             }
         }
+        .instrument(span)
+        .await
     }
 
     pub fn pending_snapshot(&self, project_id: &ProjectId) -> Vec<MemoryItem> {
@@ -179,57 +190,66 @@ impl IngestionBuffer {
 
     /// Drains all buffered writes to the configured `VectorStore` and `GraphStore`.
     pub async fn flush(&self) -> Result<()> {
-        let _guard = self.flush_lock.lock().await;
-        let items: Vec<MemoryItem> = {
-            let mut queue = self.pending.lock().unwrap();
-            queue.drain(..).collect()
-        };
+        let span = tracing::info_span!(
+            "aether.cortex.flush",
+            item_count = tracing::field::Empty,
+        );
+        async {
+            let _guard = self.flush_lock.lock().await;
+            let items: Vec<MemoryItem> = {
+                let mut queue = self.pending.lock().unwrap();
+                queue.drain(..).collect()
+            };
+            tracing::Span::current().record("item_count", items.len());
 
-        if items.is_empty() {
-            return Ok(());
-        }
+            if items.is_empty() {
+                return Ok(());
+            }
 
-        let mut by_project: HashMap<ProjectId, Vec<MemoryItem>> = HashMap::new();
-        for item in items {
-            by_project
-                .entry(item.project_id.clone())
-                .or_default()
-                .push(item);
-        }
+            let mut by_project: HashMap<ProjectId, Vec<MemoryItem>> = HashMap::new();
+            for item in items {
+                by_project
+                    .entry(item.project_id.clone())
+                    .or_default()
+                    .push(item);
+            }
 
-        for (project_id, project_items) in by_project {
-            let vector_records: Vec<VectorRecord> = project_items
-                .iter()
-                .filter_map(|item| {
-                    item.embedding.as_ref().map(|vec| VectorRecord {
-                        id: item.id,
-                        vector: vec.clone(),
-                        metadata: enrich_metadata(item),
+            for (project_id, project_items) in by_project {
+                let vector_records: Vec<VectorRecord> = project_items
+                    .iter()
+                    .filter_map(|item| {
+                        item.embedding.as_ref().map(|vec| VectorRecord {
+                            id: item.id,
+                            vector: vec.clone(),
+                            metadata: enrich_metadata(item),
+                        })
                     })
-                })
-                .collect();
+                    .collect();
 
-            if !vector_records.is_empty() {
-                self.vector_store
-                    .upsert_batch(&project_id, &vector_records)
-                    .await?;
-            }
-
-            for item in &project_items {
-                if !item.entities.is_empty() {
-                    self.graph_store
-                        .upsert_entities(&project_id, &item.entities)
+                if !vector_records.is_empty() {
+                    self.vector_store
+                        .upsert_batch(&project_id, &vector_records)
                         .await?;
                 }
-                if !item.relations.is_empty() {
-                    self.graph_store
-                        .upsert_relations(&project_id, item.id, &item.relations)
-                        .await?;
+
+                for item in &project_items {
+                    if !item.entities.is_empty() {
+                        self.graph_store
+                            .upsert_entities(&project_id, &item.entities)
+                            .await?;
+                    }
+                    if !item.relations.is_empty() {
+                        self.graph_store
+                            .upsert_relations(&project_id, item.id, &item.relations)
+                            .await?;
+                    }
                 }
             }
+
+            Ok(())
         }
-
-        Ok(())
+        .instrument(span)
+        .await
     }
 
     pub async fn shutdown(&self) -> Result<()> {
@@ -268,6 +288,14 @@ impl Default for PersonalizedPageRank {
 
 impl PersonalizedPageRank {
     pub fn rank(&self, subgraph: &Subgraph, seeds: &[EntityId]) -> Vec<(EntityId, f32)> {
+        let _span = tracing::debug_span!(
+            "aether.cortex.ppr",
+            iterations = self.iterations,
+            seed_count = seeds.len(),
+            entity_count = subgraph.entities.len(),
+            edge_count = subgraph.edges.len(),
+        )
+        .entered();
         if subgraph.entities.is_empty() {
             return Vec::new();
         }
@@ -364,6 +392,17 @@ impl QueryPlanner {
     }
 
     pub async fn plan_and_execute(&self, query: &RecallQuery) -> Result<RecallResult> {
+        let span = tracing::info_span!(
+            "aether.cortex.query_plan",
+            project_id = %query.project_id,
+            mode = ?query.mode,
+            consistency = ?query.consistency,
+            top_k = query.top_k,
+        );
+        self.plan_and_execute_inner(query).instrument(span).await
+    }
+
+    async fn plan_and_execute_inner(&self, query: &RecallQuery) -> Result<RecallResult> {
         let mut hits_by_id: HashMap<MemoryId, RecallHit> = HashMap::new();
 
         if matches!(query.mode, RecallMode::Vector | RecallMode::Hybrid) {
