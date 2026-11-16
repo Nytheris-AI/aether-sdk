@@ -2,6 +2,12 @@
 
 Aether organizes agent memory across **tiers**, **scopes**, and **three storage layers (L1 / L2 / L3)** so short-term working memory and long-term semantic/graph knowledge behave predictably in production.
 
+:::note Status
+This page describes the code as it is today.
+The approved Phase 5 design changes this model: scopes gain user and session ids, `Global` is removed, session memory stays out of the vector and graph stores, and the L1 cache and ingestion buffer are replaced by a durable record store.
+See the [Roadmap](../about/roadmap.md) for the real status and the [Phase 5 design](../architecture/hardening-design.md) for what changes.
+:::
+
 ## Memory Tiers (`MemoryTier`)
 - **`Episodic`**: Time-bound events and interaction history.
 - **`Semantic`** *(default)*: Durable facts and structured knowledge.

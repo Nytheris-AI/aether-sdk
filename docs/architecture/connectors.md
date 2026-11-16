@@ -2,6 +2,13 @@
 
 At the core of `aether-sdk` is its unified outbound connector layer (`aether-adapters`), which lets applications connect uniformly to AI memory storage and databases—such as **Turbopuffer, Neo4j, Qdrant, Chroma, and pgvector**—behind one consistent API. Connectors are structured so every downstream driver inherits resilience, batching, tenant isolation, and observability without duplicating boilerplate.
 
+:::note Status
+This page describes the target connector layer.
+Not built yet: every production driver, `config.rs`, `registry.rs`, retry jitter, and the circuit breaker.
+The approved Phase 5 design also renames `KvStore` to `RecordStore`, makes it the source of truth, and drops `WalStore` and the circuit breaker from the plan.
+See the [Roadmap](../about/roadmap.md) for the real status and the [Phase 5 design](../architecture/hardening-design.md) for what changes.
+:::
+
 ---
 
 ## 1. Multi-Tier Storage & Database Connector Traits
