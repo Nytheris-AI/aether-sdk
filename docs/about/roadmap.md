@@ -1,6 +1,7 @@
 # Aether SDK Roadmap
 
-Aether SDK is built as a unified Rust **AI Memory Gateway** for connecting applications to AI memory storage and databases (**Redis/Valkey, SQLite, Turbopuffer, Neo4j, Qdrant, Chroma, pgvector**).
+Aether is a model-free Rust **memory SDK**: a set of pieces developers integrate into their own workflow to store, index, and retrieve AI memory across record, vector, and graph stores (**SQLite, Redis/Valkey, Turbopuffer, Neo4j, Qdrant, Chroma, pgvector**).
+The shape is defined in the [pieces-first SDK design](../architecture/sdk-design.md).
 
 ## Current State
 
@@ -23,13 +24,15 @@ The table below is the honest status, not the aspirational one.
 
 ## Phase 5 - Correctness Hardening (next)
 
-Status: design approved 2026-11-16, implementation not started.
+Status: consistency design approved 2026-11-16, implementation not started.
+The [pieces-first SDK design](../architecture/sdk-design.md) (draft) changes how this phase is delivered: the same mechanics, exposed as public pieces with an optional facade.
 
 - The sections below list the problems as they exist in the code today.
 - The [Phase 5 design](../architecture/hardening-design.md) resolves them into one design.
 - The implementation plan, 14 test-first tasks, is in the repository at `docs/superpowers/plans/2026-11-16-gateway-hardening.md`.
 
-To pick this up: read the design, then start the plan at Task 1.
+To pick this up: read the SDK design and the Phase 5 design, then start the plan at Task 1.
+Plan tasks 1 to 7 are valid as written; tasks 8 to 13 must be revised against the SDK design first.
 Task 14 (removing the Python package) needs explicit owner sign-off before it starts.
 Where the design and the sections below differ, the design wins: it drops the queue capacity item (5.2) because the in-memory queue itself is removed, and it settles every "either / or" below.
 
@@ -131,15 +134,21 @@ Build one backend per role and prove the contract suite against real infrastruct
 The remaining drivers (`redis`, `turbopuffer`, `chroma`) follow only after the first three have run the suite unchanged.
 A driver that needs a contract change is a signal the contract is wrong, and that is cheapest to learn with three drivers, not seven.
 
-## Phase 7 - Bindings
+## Phase 7 - Language Bindings (undecided)
 
-- Optional `PyO3` Python bindings.
-- HTTP/gRPC gateway server.
-- MCP server.
+Bindings for other languages (for example Python through `PyO3`) are deferred until there is a concrete need.
+A pieces-first Rust API does not map one-to-one onto another language, so this needs its own design.
 
-## Scope Decision
+The HTTP/gRPC gateway server and the MCP server are removed from the roadmap.
+Aether is a library developers call, not a service they deploy.
 
-Decided 2026-11-16: Aether stays a storage gateway.
-It stores, indexes, and retrieves what the caller hands it, and does not embed, chunk, extract, or call models.
-The value it competes on is keeping a record store, a vector index, and a graph index consistent for one memory through writes, updates, deletes, crashes, and retries.
-Model-backed features (text-in recall, consolidation, context assembly) are deliberately deferred until that core has users.
+## Scope Decisions
+
+**Model-free (2026-11-16).**
+Aether stores, indexes, and retrieves what the caller hands it, and does not embed, chunk, extract, or call models.
+Model-backed features are deferred until the core has users.
+
+**SDK, not gateway (2026-11-16).**
+Aether is a set of pieces a developer calls from their own workflow, in their own order, beside their own steps.
+Every capability is usable without the `MemoryManager` facade, only the stores in use are required, and nothing runs in the background unless the developer starts it.
+The value it competes on is unchanged: keeping a record store, a vector index, and a graph index consistent for one memory through writes, updates, deletes, crashes, and retries.
