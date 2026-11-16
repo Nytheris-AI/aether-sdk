@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 
 use aether_core::{
-    AetherError, ConsistencyMode, EntityId, FilterExpr, FilterValue, GraphStore, KvStore, MemoryId,
+    AetherError, ConsistencyMode, DistanceMetric, EntityId, GraphStore, KvStore, MemoryId,
     MemoryInput, MemoryItem, MemoryReceipt, ProjectId, RecallHit, RecallMode, RecallQuery,
     RecallResult, ReceiptState, Result, Subgraph, VectorRecord, VectorStore, WriteDurability,
 };
@@ -443,12 +443,12 @@ impl QueryPlanner {
                 }
                 let meta = enrich_metadata(&item);
                 if let Some(filter) = &query.filters {
-                    if !eval_filter(filter, &meta) {
+                    if !filter.matches(&meta) {
                         continue;
                     }
                 }
                 let score = match (&query.query_vector, &item.embedding) {
-                    (Some(q), Some(v)) if q.len() == v.len() => cosine(q, v),
+                    (Some(q), Some(v)) if q.len() == v.len() => DistanceMetric::Cosine.score(q, v),
                     _ if item
                         .content
                         .to_lowercase()
@@ -521,47 +521,5 @@ impl QueryPlanner {
             }
         }
         seeds
-    }
-}
-
-fn cosine(a: &[f32], b: &[f32]) -> f32 {
-    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
-    let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if na == 0.0 || nb == 0.0 {
-        0.0
-    } else {
-        dot / (na * nb)
-    }
-}
-
-fn eval_filter(expr: &FilterExpr, metadata: &Value) -> bool {
-    match expr {
-        FilterExpr::Eq { field, value } => {
-            metadata.get(field).is_some_and(|v| value_matches(v, value))
-        }
-        FilterExpr::In { field, values } => metadata
-            .get(field)
-            .is_some_and(|v| values.iter().any(|target| value_matches(v, target))),
-        FilterExpr::Range { field, gte, lte } => metadata
-            .get(field)
-            .and_then(|v| v.as_f64())
-            .is_some_and(|num| {
-                gte.is_none_or(|min| num >= min) && lte.is_none_or(|max| num <= max)
-            }),
-        FilterExpr::And(exprs) => exprs.iter().all(|e| eval_filter(e, metadata)),
-        FilterExpr::Or(exprs) => exprs.iter().any(|e| eval_filter(e, metadata)),
-    }
-}
-
-fn value_matches(json_val: &Value, filter_val: &FilterValue) -> bool {
-    match (json_val, filter_val) {
-        (Value::String(a), FilterValue::String(b)) => a == b,
-        (Value::Number(a), FilterValue::Int(b)) => a.as_i64() == Some(*b),
-        (Value::Number(a), FilterValue::Float(b)) => {
-            a.as_f64().is_some_and(|x| (x - b).abs() < f64::EPSILON)
-        }
-        (Value::Bool(a), FilterValue::Bool(b)) => a == b,
-        _ => false,
     }
 }

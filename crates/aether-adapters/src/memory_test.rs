@@ -6,16 +6,15 @@ use std::time::{Duration, Instant};
 
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
-    FilterExpr, FilterValue, GraphEdge, GraphStore, KvStore, MemoryId, MemoryItem, MemoryReceipt,
-    MemoryScope, OutboundConnector, ProjectId, Relation, Result, Subgraph, TemporalFilter,
-    VectorMatch, VectorRecord, VectorStore,
+    FilterExpr, GraphEdge, GraphStore, KvStore, MemoryId, MemoryItem, MemoryReceipt, MemoryScope,
+    OutboundConnector, ProjectId, Relation, Result, Subgraph, TemporalFilter, VectorMatch,
+    VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
-use serde_json::Value;
 
 #[derive(Default)]
 struct VectorNamespace {
@@ -291,12 +290,12 @@ impl VectorStore for InMemoryBackend {
             .records
             .values()
             .filter(|rec| match filter {
-                Some(expr) => eval_filter(expr, &rec.metadata),
+                Some(expr) => expr.matches(&rec.metadata),
                 None => true,
             })
             .map(|rec| VectorMatch {
                 id: rec.id,
-                score: similarity(entry.metric, query_vector, &rec.vector),
+                score: entry.metric.score(query_vector, &rec.vector),
                 metadata: rec.metadata.clone(),
             })
             .collect();
@@ -458,55 +457,4 @@ fn matches_temporal(edge: &GraphEdge, temporal: &TemporalFilter) -> bool {
         return false;
     }
     true
-}
-
-fn similarity(metric: DistanceMetric, a: &[f32], b: &[f32]) -> f32 {
-    match metric {
-        DistanceMetric::Dot => a.iter().zip(b).map(|(x, y)| x * y).sum(),
-        DistanceMetric::Cosine => {
-            let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
-            let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-            let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-            if norm_a == 0.0 || norm_b == 0.0 {
-                0.0
-            } else {
-                dot / (norm_a * norm_b)
-            }
-        }
-        DistanceMetric::Euclidean => {
-            let dist_sq: f32 = a.iter().zip(b).map(|(x, y)| (x - y).powi(2)).sum();
-            -dist_sq.sqrt()
-        }
-    }
-}
-
-fn eval_filter(expr: &FilterExpr, metadata: &Value) -> bool {
-    match expr {
-        FilterExpr::Eq { field, value } => {
-            metadata.get(field).is_some_and(|v| value_matches(v, value))
-        }
-        FilterExpr::In { field, values } => metadata
-            .get(field)
-            .is_some_and(|v| values.iter().any(|target| value_matches(v, target))),
-        FilterExpr::Range { field, gte, lte } => metadata
-            .get(field)
-            .and_then(|v| v.as_f64())
-            .is_some_and(|num| {
-                gte.is_none_or(|min| num >= min) && lte.is_none_or(|max| num <= max)
-            }),
-        FilterExpr::And(exprs) => exprs.iter().all(|e| eval_filter(e, metadata)),
-        FilterExpr::Or(exprs) => exprs.iter().any(|e| eval_filter(e, metadata)),
-    }
-}
-
-fn value_matches(json_val: &Value, filter_val: &FilterValue) -> bool {
-    match (json_val, filter_val) {
-        (Value::String(a), FilterValue::String(b)) => a == b,
-        (Value::Number(a), FilterValue::Int(b)) => a.as_i64() == Some(*b),
-        (Value::Number(a), FilterValue::Float(b)) => {
-            a.as_f64().is_some_and(|x| (x - b).abs() < f64::EPSILON)
-        }
-        (Value::Bool(a), FilterValue::Bool(b)) => a == b,
-        _ => false,
-    }
 }

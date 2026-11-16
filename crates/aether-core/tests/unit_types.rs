@@ -180,3 +180,34 @@ fn recall_query_and_connector_types_roundtrip_and_traits_are_object_safe() {
 fn input_fixture() -> MemoryInput {
     MemoryInput::new(ProjectId::new("proj-1").unwrap(), "Fact")
 }
+
+#[test]
+fn distance_metric_score_is_higher_for_closer_vectors() {
+    let q = [1.0, 0.0];
+    for m in [
+        DistanceMetric::Cosine,
+        DistanceMetric::Dot,
+        DistanceMetric::Euclidean,
+    ] {
+        assert!(m.score(&q, &[1.0, 0.0]) > m.score(&q, &[0.0, 1.0]), "{m:?}");
+    }
+    assert_eq!(DistanceMetric::Cosine.score(&q, &[0.0, 0.0]), 0.0);
+}
+
+#[test]
+fn filter_expr_matches_metadata() {
+    let meta = serde_json::json!({"tier": "semantic", "n": 3});
+    let eq = FilterExpr::Eq {
+        field: "tier".into(),
+        value: FilterValue::String("semantic".into()),
+    };
+    let range = FilterExpr::Range {
+        field: "n".into(),
+        gte: Some(4.0),
+        lte: None,
+    };
+    assert!(eq.matches(&meta));
+    assert!(!range.matches(&meta));
+    assert!(FilterExpr::Or(vec![eq.clone(), range.clone()]).matches(&meta));
+    assert!(!FilterExpr::And(vec![eq, range]).matches(&meta));
+}
