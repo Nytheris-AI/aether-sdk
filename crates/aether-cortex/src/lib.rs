@@ -5,13 +5,14 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 
 use aether_core::{
-    AetherError, ConsistencyMode, EntityId, FilterExpr, FilterValue, GraphStore, KvStore, MemoryId,
-    MemoryInput, MemoryItem, MemoryReceipt, ProjectId, ReceiptState, RecallHit, RecallMode,
-    RecallQuery, RecallResult, Result, Subgraph, VectorRecord, VectorStore, WriteDurability,
+    AetherError, ConsistencyMode, DistanceMetric, EntityId, GraphStore, MemoryId, MemoryInput,
+    MemoryItem, MemoryReceipt, ProjectId, RecallHit, RecallMode, RecallQuery, RecallResult,
+    ReceiptState, RecordStore, Result, Subgraph, VectorRecord, VectorStore, WriteDurability,
 };
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use serde_json::Value;
+use tracing::Instrument;
 
 /// Result of deterministic inbound policy evaluation.
 #[derive(Debug, Clone)]
@@ -133,34 +134,44 @@ impl IngestionBuffer {
         item: MemoryItem,
         durability: WriteDurability,
     ) -> Result<MemoryReceipt> {
-        if *self.closed.read().unwrap() {
-            return Err(AetherError::InvalidInput(
-                "ingestion buffer is shut down".into(),
-            ));
-        }
-        let receipt_id = item.id;
-        let version = item.version;
-        {
-            let mut queue = self.pending.lock().unwrap();
-            queue.retain(|existing| existing.id != item.id);
-            queue.push_back(item);
-        }
+        let span = tracing::info_span!(
+            "aether.cortex.enqueue",
+            project_id = %item.project_id,
+            memory_id = %item.id,
+            durability = ?durability,
+        );
+        async move {
+            if *self.closed.read().unwrap() {
+                return Err(AetherError::InvalidInput(
+                    "ingestion buffer is shut down".into(),
+                ));
+            }
+            let receipt_id = item.id;
+            let version = item.version;
+            {
+                let mut queue = self.pending.lock().unwrap();
+                queue.retain(|existing| existing.id != item.id);
+                queue.push_back(item);
+            }
 
-        match durability {
-            WriteDurability::Buffered => Ok(MemoryReceipt {
-                memory_id: receipt_id,
-                state: ReceiptState::Buffered,
-                version,
-            }),
-            WriteDurability::WaitFlush => {
-                self.flush().await?;
-                Ok(MemoryReceipt {
+            match durability {
+                WriteDurability::Buffered => Ok(MemoryReceipt {
                     memory_id: receipt_id,
-                    state: ReceiptState::Persisted,
+                    state: ReceiptState::Buffered,
                     version,
-                })
+                }),
+                WriteDurability::WaitFlush => {
+                    self.flush().await?;
+                    Ok(MemoryReceipt {
+                        memory_id: receipt_id,
+                        state: ReceiptState::Persisted,
+                        version,
+                    })
+                }
             }
         }
+        .instrument(span)
+        .await
     }
 
     pub fn pending_snapshot(&self, project_id: &ProjectId) -> Vec<MemoryItem> {
@@ -179,57 +190,63 @@ impl IngestionBuffer {
 
     /// Drains all buffered writes to the configured `VectorStore` and `GraphStore`.
     pub async fn flush(&self) -> Result<()> {
-        let _guard = self.flush_lock.lock().await;
-        let items: Vec<MemoryItem> = {
-            let mut queue = self.pending.lock().unwrap();
-            queue.drain(..).collect()
-        };
+        let span = tracing::info_span!("aether.cortex.flush", item_count = tracing::field::Empty,);
+        async {
+            let _guard = self.flush_lock.lock().await;
+            let items: Vec<MemoryItem> = {
+                let mut queue = self.pending.lock().unwrap();
+                queue.drain(..).collect()
+            };
+            tracing::Span::current().record("item_count", items.len());
 
-        if items.is_empty() {
-            return Ok(());
-        }
+            if items.is_empty() {
+                return Ok(());
+            }
 
-        let mut by_project: HashMap<ProjectId, Vec<MemoryItem>> = HashMap::new();
-        for item in items {
-            by_project
-                .entry(item.project_id.clone())
-                .or_default()
-                .push(item);
-        }
+            let mut by_project: HashMap<ProjectId, Vec<MemoryItem>> = HashMap::new();
+            for item in items {
+                by_project
+                    .entry(item.project_id.clone())
+                    .or_default()
+                    .push(item);
+            }
 
-        for (project_id, project_items) in by_project {
-            let vector_records: Vec<VectorRecord> = project_items
-                .iter()
-                .filter_map(|item| {
-                    item.embedding.as_ref().map(|vec| VectorRecord {
-                        id: item.id,
-                        vector: vec.clone(),
-                        metadata: enrich_metadata(item),
+            for (project_id, project_items) in by_project {
+                let vector_records: Vec<VectorRecord> = project_items
+                    .iter()
+                    .filter_map(|item| {
+                        item.embedding.as_ref().map(|vec| VectorRecord {
+                            id: item.id,
+                            vector: vec.clone(),
+                            metadata: enrich_metadata(item),
+                        })
                     })
-                })
-                .collect();
+                    .collect();
 
-            if !vector_records.is_empty() {
-                self.vector_store
-                    .upsert_batch(&project_id, &vector_records)
-                    .await?;
-            }
-
-            for item in &project_items {
-                if !item.entities.is_empty() {
-                    self.graph_store
-                        .upsert_entities(&project_id, &item.entities)
+                if !vector_records.is_empty() {
+                    self.vector_store
+                        .upsert_batch(&project_id, &vector_records)
                         .await?;
                 }
-                if !item.relations.is_empty() {
-                    self.graph_store
-                        .upsert_relations(&project_id, item.id, &item.relations)
-                        .await?;
+
+                for item in &project_items {
+                    if !item.entities.is_empty() {
+                        self.graph_store
+                            .upsert_entities(&project_id, &item.entities)
+                            .await?;
+                    }
+                    if !item.relations.is_empty() {
+                        self.graph_store
+                            .upsert_relations(&project_id, item.id, &item.relations)
+                            .await?;
+                    }
                 }
             }
+
+            Ok(())
         }
-
-        Ok(())
+        .instrument(span)
+        .await
     }
 
     pub async fn shutdown(&self) -> Result<()> {
@@ -268,6 +285,14 @@ impl Default for PersonalizedPageRank {
 
 impl PersonalizedPageRank {
     pub fn rank(&self, subgraph: &Subgraph, seeds: &[EntityId]) -> Vec<(EntityId, f32)> {
+        let _span = tracing::debug_span!(
+            "aether.cortex.ppr",
+            iterations = self.iterations,
+            seed_count = seeds.len(),
+            entity_count = subgraph.entities.len(),
+            edge_count = subgraph.edges.len(),
+        )
+        .entered();
         if subgraph.entities.is_empty() {
             return Vec::new();
         }
@@ -280,7 +305,8 @@ impl PersonalizedPageRank {
         }
 
         for edge in &subgraph.edges {
-            if let (Some(&src), Some(&dst)) = (indices.get(&edge.source), indices.get(&edge.target)) {
+            if let (Some(&src), Some(&dst)) = (indices.get(&edge.source), indices.get(&edge.target))
+            {
                 graph.add_edge(src, dst, ());
             }
         }
@@ -337,7 +363,7 @@ impl PersonalizedPageRank {
 
 /// Plans and executes Vector, Graph, and Hybrid recall with L1/L2 Read-Your-Writes merging.
 pub struct QueryPlanner {
-    kv_store: Arc<dyn KvStore>,
+    record_store: Arc<dyn RecordStore>,
     vector_store: Arc<dyn VectorStore>,
     graph_store: Arc<dyn GraphStore>,
     hot_cache: Arc<HotContextCache>,
@@ -347,14 +373,14 @@ pub struct QueryPlanner {
 
 impl QueryPlanner {
     pub fn new(
-        kv_store: Arc<dyn KvStore>,
+        record_store: Arc<dyn RecordStore>,
         vector_store: Arc<dyn VectorStore>,
         graph_store: Arc<dyn GraphStore>,
         hot_cache: Arc<HotContextCache>,
         buffer: Arc<IngestionBuffer>,
     ) -> Self {
         Self {
-            kv_store,
+            record_store,
             vector_store,
             graph_store,
             hot_cache,
@@ -364,6 +390,17 @@ impl QueryPlanner {
     }
 
     pub async fn plan_and_execute(&self, query: &RecallQuery) -> Result<RecallResult> {
+        let span = tracing::info_span!(
+            "aether.cortex.query_plan",
+            project_id = %query.project_id,
+            mode = ?query.mode,
+            consistency = ?query.consistency,
+            top_k = query.top_k,
+        );
+        self.plan_and_execute_inner(query).instrument(span).await
+    }
+
+    async fn plan_and_execute_inner(&self, query: &RecallQuery) -> Result<RecallResult> {
         let mut hits_by_id: HashMap<MemoryId, RecallHit> = HashMap::new();
 
         if matches!(query.mode, RecallMode::Vector | RecallMode::Hybrid) {
@@ -392,30 +429,26 @@ impl QueryPlanner {
             }
         }
 
-        // Read-Your-Writes: merge buffered, L1 hot-cache, and L2 KvStore items.
+        // Read-Your-Writes: merge buffered, L1 hot-cache, and L2 RecordStore items.
         if query.consistency == ConsistencyMode::ReadYourWrites {
             let pending = self.buffer.pending_snapshot(&query.project_id);
             let hot_recent = self.hot_cache.recent(&query.project_id, query.top_k);
-            let kv_recent = self
-                .kv_store
+            let record_recent = self
+                .record_store
                 .recent(&query.project_id, None, query.top_k)
                 .await?;
-            for item in pending
-                .into_iter()
-                .chain(hot_recent.into_iter())
-                .chain(kv_recent.into_iter())
-            {
+            for item in pending.into_iter().chain(hot_recent).chain(record_recent) {
                 if hits_by_id.contains_key(&item.id) {
                     continue;
                 }
                 let meta = enrich_metadata(&item);
                 if let Some(filter) = &query.filters {
-                    if !eval_filter(filter, &meta) {
+                    if !filter.matches(&meta) {
                         continue;
                     }
                 }
                 let score = match (&query.query_vector, &item.embedding) {
-                    (Some(q), Some(v)) if q.len() == v.len() => cosine(q, v),
+                    (Some(q), Some(v)) if q.len() == v.len() => DistanceMetric::Cosine.score(q, v),
                     _ if item
                         .content
                         .to_lowercase()
@@ -479,57 +512,14 @@ impl QueryPlanner {
             .chain(self.hot_cache.recent(&query.project_id, 25))
         {
             for entity in item.entities {
-                if q_lower.contains(&entity.name.to_lowercase())
-                    || q_lower.contains(&entity.id.as_str().to_lowercase())
+                if (q_lower.contains(&entity.name.to_lowercase())
+                    || q_lower.contains(&entity.id.as_str().to_lowercase()))
+                    && !seeds.contains(&entity.id)
                 {
-                    if !seeds.contains(&entity.id) {
-                        seeds.push(entity.id);
-                    }
+                    seeds.push(entity.id);
                 }
             }
         }
         seeds
-    }
-}
-
-fn cosine(a: &[f32], b: &[f32]) -> f32 {
-    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
-    let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if na == 0.0 || nb == 0.0 {
-        0.0
-    } else {
-        dot / (na * nb)
-    }
-}
-
-fn eval_filter(expr: &FilterExpr, metadata: &Value) -> bool {
-    match expr {
-        FilterExpr::Eq { field, value } => metadata
-            .get(field)
-            .map_or(false, |v| value_matches(v, value)),
-        FilterExpr::In { field, values } => metadata
-            .get(field)
-            .map_or(false, |v| values.iter().any(|target| value_matches(v, target))),
-        FilterExpr::Range { field, gte, lte } => metadata
-            .get(field)
-            .and_then(|v| v.as_f64())
-            .map_or(false, |num| {
-                gte.map_or(true, |min| num >= min) && lte.map_or(true, |max| num <= max)
-            }),
-        FilterExpr::And(exprs) => exprs.iter().all(|e| eval_filter(e, metadata)),
-        FilterExpr::Or(exprs) => exprs.iter().any(|e| eval_filter(e, metadata)),
-    }
-}
-
-fn value_matches(json_val: &Value, filter_val: &FilterValue) -> bool {
-    match (json_val, filter_val) {
-        (Value::String(a), FilterValue::String(b)) => a == b,
-        (Value::Number(a), FilterValue::Int(b)) => a.as_i64() == Some(*b),
-        (Value::Number(a), FilterValue::Float(b)) => {
-            a.as_f64().map_or(false, |x| (x - b).abs() < f64::EPSILON)
-        }
-        (Value::Bool(a), FilterValue::Bool(b)) => a == b,
-        _ => false,
     }
 }

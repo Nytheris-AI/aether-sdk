@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use aether_adapters::{InMemoryBackend, RetryPolicy, Resilient, Timeout, Traced};
+use aether_adapters::{InMemoryBackend, Resilient, RetryPolicy, Timeout, Traced};
 use aether_core::{
     DistanceMetric, MemoryInbound, MemoryInput, ProjectId, RecallMode, RecallQuery, VectorStore,
     WriteDurability,
@@ -11,7 +11,7 @@ use std::time::Duration;
 #[tokio::test]
 async fn e2e_concurrent_multi_tenant_ingestion_with_resilient_middleware() {
     let raw = Arc::new(InMemoryBackend::new());
-    let kv_store = Arc::new(Traced::new(Resilient::new(
+    let record_store = Arc::new(Traced::new(Resilient::new(
         Timeout::new(raw.clone(), Duration::from_secs(2)),
         RetryPolicy::default(),
     )));
@@ -26,10 +26,16 @@ async fn e2e_concurrent_multi_tenant_ingestion_with_resilient_middleware() {
 
     let p1 = ProjectId::new("tenant-1").unwrap();
     let p2 = ProjectId::new("tenant-2").unwrap();
-    vec_store.initialize(&p1, 2, DistanceMetric::Cosine).await.unwrap();
-    vec_store.initialize(&p2, 2, DistanceMetric::Cosine).await.unwrap();
+    vec_store
+        .initialize(&p1, 2, DistanceMetric::Cosine)
+        .await
+        .unwrap();
+    vec_store
+        .initialize(&p2, 2, DistanceMetric::Cosine)
+        .await
+        .unwrap();
 
-    let manager = Arc::new(MemoryManager::new(kv_store, vec_store, graph_store));
+    let manager = Arc::new(MemoryManager::new(record_store, vec_store, graph_store));
 
     let mut handles = Vec::new();
     for i in 0..20 {

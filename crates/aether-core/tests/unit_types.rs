@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, ConsistencyMode, DistanceMetric, Entity,
-    EntityId, FilterExpr, FilterValue, GraphStore, KvStore, MemoryId, MemoryInbound, MemoryInput,
+    EntityId, FilterExpr, FilterValue, GraphStore, MemoryId, MemoryInbound, MemoryInput,
     MemoryItem, MemoryReceipt, MemoryScope, MemoryTier, OutboundConnector, ProjectId, RecallMode,
-    RecallQuery, ReceiptState, Relation, TemporalFilter, VectorRecord, VectorStore, WriteDurability,
+    RecallQuery, ReceiptState, RecordStore, Relation, TemporalFilter, VectorRecord, VectorStore,
+    WriteDurability,
 };
 use chrono::Utc;
 use uuid::Uuid;
@@ -80,7 +81,10 @@ fn filter_expr_and_temporal_filter_roundtrip_serde() {
     assert!(temporal.as_of.is_none());
 
     let t_json = serde_json::to_string(&temporal).unwrap();
-    assert_eq!(serde_json::from_str::<TemporalFilter>(&t_json).unwrap(), temporal);
+    assert_eq!(
+        serde_json::from_str::<TemporalFilter>(&t_json).unwrap(),
+        temporal
+    );
 }
 
 #[test]
@@ -122,7 +126,10 @@ fn memory_input_validation_and_receipt_states() {
         version: 1,
     };
     let r_json = serde_json::to_string(&receipt).unwrap();
-    assert_eq!(serde_json::from_str::<MemoryReceipt>(&r_json).unwrap(), receipt);
+    assert_eq!(
+        serde_json::from_str::<MemoryReceipt>(&r_json).unwrap(),
+        receipt
+    );
 }
 
 #[test]
@@ -163,7 +170,7 @@ fn recall_query_and_connector_types_roundtrip_and_traits_are_object_safe() {
     fn _assert_object_safe(
         _inbound: Arc<dyn MemoryInbound>,
         _conn: Arc<dyn OutboundConnector>,
-        _kv: Arc<dyn KvStore>,
+        _records: Arc<dyn RecordStore>,
         _vec: Arc<dyn VectorStore>,
         _grp: Arc<dyn GraphStore>,
     ) {
@@ -172,4 +179,35 @@ fn recall_query_and_connector_types_roundtrip_and_traits_are_object_safe() {
 
 fn input_fixture() -> MemoryInput {
     MemoryInput::new(ProjectId::new("proj-1").unwrap(), "Fact")
+}
+
+#[test]
+fn distance_metric_score_is_higher_for_closer_vectors() {
+    let q = [1.0, 0.0];
+    for m in [
+        DistanceMetric::Cosine,
+        DistanceMetric::Dot,
+        DistanceMetric::Euclidean,
+    ] {
+        assert!(m.score(&q, &[1.0, 0.0]) > m.score(&q, &[0.0, 1.0]), "{m:?}");
+    }
+    assert_eq!(DistanceMetric::Cosine.score(&q, &[0.0, 0.0]), 0.0);
+}
+
+#[test]
+fn filter_expr_matches_metadata() {
+    let meta = serde_json::json!({"tier": "semantic", "n": 3});
+    let eq = FilterExpr::Eq {
+        field: "tier".into(),
+        value: FilterValue::String("semantic".into()),
+    };
+    let range = FilterExpr::Range {
+        field: "n".into(),
+        gte: Some(4.0),
+        lte: None,
+    };
+    assert!(eq.matches(&meta));
+    assert!(!range.matches(&meta));
+    assert!(FilterExpr::Or(vec![eq.clone(), range.clone()]).matches(&meta));
+    assert!(!FilterExpr::And(vec![eq, range]).matches(&meta));
 }

@@ -65,7 +65,9 @@ impl ProjectId {
     pub fn new(id: impl Into<String>) -> Result<Self> {
         let s = id.into();
         if s.trim().is_empty() {
-            return Err(AetherError::InvalidInput("project_id must not be empty".into()));
+            return Err(AetherError::InvalidInput(
+                "project_id must not be empty".into(),
+            ));
         }
         Ok(Self(s))
     }
@@ -118,7 +120,9 @@ impl EntityId {
     pub fn new(id: impl Into<String>) -> Result<Self> {
         let s = id.into();
         if s.trim().is_empty() {
-            return Err(AetherError::InvalidInput("entity_id must not be empty".into()));
+            return Err(AetherError::InvalidInput(
+                "entity_id must not be empty".into(),
+            ));
         }
         Ok(Self(s))
     }
@@ -195,6 +199,32 @@ pub enum DistanceMetric {
     Euclidean,
 }
 
+impl DistanceMetric {
+    /// Computes similarity score between two vectors such that higher values indicate closer vectors.
+    ///
+    /// For Cosine, zero-norm vectors yield 0.0.
+    /// For Euclidean, the negative Euclidean distance is returned so that closer vectors have a higher score.
+    pub fn score(&self, a: &[f32], b: &[f32]) -> f32 {
+        match self {
+            DistanceMetric::Dot => a.iter().zip(b).map(|(x, y)| x * y).sum(),
+            DistanceMetric::Cosine => {
+                let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+                let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+                let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+                if norm_a == 0.0 || norm_b == 0.0 {
+                    0.0
+                } else {
+                    dot / (norm_a * norm_b)
+                }
+            }
+            DistanceMetric::Euclidean => {
+                let dist_sq: f32 = a.iter().zip(b).map(|(x, y)| (x - y).powi(2)).sum();
+                -dist_sq.sqrt()
+            }
+        }
+    }
+}
+
 /// Scalar value used inside portable `FilterExpr` predicates.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -224,6 +254,40 @@ pub enum FilterExpr {
     },
     And(Vec<FilterExpr>),
     Or(Vec<FilterExpr>),
+}
+
+impl FilterExpr {
+    /// Evaluates whether the given JSON metadata matches this filter expression.
+    pub fn matches(&self, metadata: &Value) -> bool {
+        match self {
+            FilterExpr::Eq { field, value } => {
+                metadata.get(field).is_some_and(|v| value_matches(v, value))
+            }
+            FilterExpr::In { field, values } => metadata
+                .get(field)
+                .is_some_and(|v| values.iter().any(|target| value_matches(v, target))),
+            FilterExpr::Range { field, gte, lte } => metadata
+                .get(field)
+                .and_then(|v| v.as_f64())
+                .is_some_and(|num| {
+                    gte.is_none_or(|min| num >= min) && lte.is_none_or(|max| num <= max)
+                }),
+            FilterExpr::And(exprs) => exprs.iter().all(|e| e.matches(metadata)),
+            FilterExpr::Or(exprs) => exprs.iter().any(|e| e.matches(metadata)),
+        }
+    }
+}
+
+fn value_matches(json_val: &Value, filter_val: &FilterValue) -> bool {
+    match (json_val, filter_val) {
+        (Value::String(a), FilterValue::String(b)) => a == b,
+        (Value::Number(a), FilterValue::Int(b)) => a.as_i64() == Some(*b),
+        (Value::Number(a), FilterValue::Float(b)) => {
+            a.as_f64().is_some_and(|x| (x - b).abs() < f64::EPSILON)
+        }
+        (Value::Bool(a), FilterValue::Bool(b)) => a == b,
+        _ => false,
+    }
 }
 
 /// Point-in-time and active-edge filter for temporal `GraphStore` reads.
@@ -480,9 +544,9 @@ pub trait OutboundConnector: Send + Sync {
     async fn close(&self) -> Result<()>;
 }
 
-/// Unified L2 working-memory / key-value store contract (Redis/Valkey, SQLite, etc.).
+/// Unified L2 working-memory / record store contract (Redis/Valkey, SQLite, etc.).
 #[async_trait]
-pub trait KvStore: OutboundConnector {
+pub trait RecordStore: OutboundConnector {
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>>;
 
     async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()>;
@@ -601,7 +665,7 @@ impl<T: OutboundConnector + ?Sized> OutboundConnector for Arc<T> {
 }
 
 #[async_trait]
-impl<T: KvStore + ?Sized> KvStore for Arc<T> {
+impl<T: RecordStore + ?Sized> RecordStore for Arc<T> {
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
         (**self).get(ns, id).await
     }

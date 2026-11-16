@@ -46,7 +46,7 @@ graph LR
 ```
 
 Key data-flow guarantees:
-- **Write-Behind Durability**: `IngestionBuffer → WorkerPool → Outbound Backends` handles durable async persistence. Callers choose `WriteDurability::Buffered` or `WriteDurability::Sync`, and `MemoryManager::flush()` / `shutdown()` drain in-flight writes cleanly.
+- **Write-Behind Durability**: `IngestionBuffer → WorkerPool → Outbound Backends` handles durable async persistence. Callers choose `WriteDurability::Buffered` or `WriteDurability::WaitFlush`, and `MemoryManager::flush()` / `shutdown()` drain in-flight writes cleanly.
 - **Read-Your-Writes**: `QueryPlanner` merges un-flushed entries from `HotContextCache` / `IngestionBuffer` (or awaits a flush barrier when `ConsistencyMode::ReadYourWrites` is requested).
 - **Zero-LLM Hot Path**: `PolicyRouter` is strictly deterministic (schema validation, embedding-dimension checks, content-hash deduplication, routing rules).
 
@@ -71,25 +71,23 @@ aether/
 All I/O and tenant boundaries use strongly typed newtypes and portable ASTs:
 
 ```rust
-pub struct ProjectId(pub String);
+pub struct ProjectId(String);  // validated non-empty
 pub struct MemoryId(pub Uuid);
-pub struct EntityId(pub String); // Canonical deterministic slug or caller ID
+pub struct EntityId(String);   // validated non-empty; canonical slug or caller ID
 ```
 
 ### Canonical DTOs
-- **`MemoryType`**: `Working` | `Episodic` | `Semantic`
-- **`MemoryAction`**: `Add` | `Update` | `Delete` | `Ignore`
-- **`WriteDurability`**: `Buffered` | `Sync`
-- **`ConsistencyMode`**: `Eventual` | `ReadYourWrites`
-- **`MemoryReceipt`**: `{ id: MemoryId, status: ReceiptStatus /* Buffered | Persisted */, version: u64 }`
-- **`Entity`**: `{ id: EntityId, name: String, entity_type: String, description: Option<String> }`
-- **`Relation`**: `{ source: EntityId, target: EntityId, relation_type: String, valid_at: Option<DateTime<Utc>>, invalid_at: Option<DateTime<Utc>>, description: Option<String> }`
-- **`MemoryItem`**:
-  - `id: MemoryId`, `project_id: ProjectId`, `version: u64` (optimistic CAS)
-  - `content: String`, `idempotency_key: String`, `memory_type: MemoryType`
-  - `entities: Vec<Entity>`, `relations: Vec<Relation>`
-  - `significance: f32`, `created_at: DateTime<Utc>`, `updated_at: DateTime<Utc>`
-  - `metadata: Value`, `embedding: Option<Vec<f32>>` (validated against configured `dimensions` when present)
+- **`MemoryTier`**: `Episodic` | `Semantic` *(default)* | `Procedural` | `Profile`
+- **`MemoryScope`**: `Project` *(default)* | `User` | `Session` | `Global`
+- **`WriteDurability`**: `Buffered` *(default)* | `WaitFlush`
+- **`ConsistencyMode`**: `Eventual` | `ReadYourWrites` *(default)*
+- **`RecallMode`**: `Vector` | `Graph` | `Hybrid` *(default)*
+- **`MemoryReceipt`**: `{ memory_id: MemoryId, state: ReceiptState /* Buffered | Persisted */, version: u64 }`
+- **`Entity`**: `{ id: EntityId, name: String, entity_type: String }`
+- **`Relation`**: `{ source: EntityId, target: EntityId, relation_type: String, valid_at: DateTime<Utc>, invalid_at: Option<DateTime<Utc>> }`
+- **`MemoryInput`**: `project_id`, `content`, `embedding: Option<Vec<f32>>`, `entities`, `relations`, `tier`, `scope`, `durability`, `idempotency_key: Option<String>`, `metadata: Value`
+- **`MemoryItem`**: the stored form of `MemoryInput` plus `id: MemoryId`, `version: u64` (optimistic CAS), `created_at`, `updated_at`
+- **`MemoryUpdate`**: `{ content, embedding, metadata, expected_version: Option<u64> }` (all optional)
 - **`FilterExpr`**:
   ```rust
   pub enum FilterExpr {
@@ -103,9 +101,10 @@ pub struct EntityId(pub String); // Canonical deterministic slug or caller ID
 - **`TemporalFilter`**: `{ as_of: Option<DateTime<Utc>>, active_only: bool }`
 - **`RecallQuery`**:
   - `project_id: ProjectId`, `query: String`, `query_vector: Option<Vec<f32>>`, `top_k: usize`
-  - `mode: RetrievalMode` (`Hybrid` | `Vector` | `Graph`)
-  - `seed_entities: Vec<EntityId>` (caller-supplied PPR seeds, supplemented by `EntityId`s from top-k vector hits)
+  - `mode: RecallMode`, `hops: u8`, `per_node_limit: usize`
+  - `seed_entities: Vec<EntityId>` (caller-supplied PPR seeds)
   - `temporal: TemporalFilter`, `filters: Option<FilterExpr>`, `consistency: ConsistencyMode`
+- **`RecallResult`**: `{ hits: Vec<RecallHit>, subgraph: Subgraph }`
 
 ### Inbound Operations (`MemoryInbound` Trait)
 All transports (Rust SDK, `PyO3`, HTTP/gRPC server, MCP server) delegate to an object-safe `MemoryInbound` trait so validation, `ProjectId` scoping, and `tracing` spans are implemented **once**:
@@ -113,15 +112,16 @@ All transports (Rust SDK, `PyO3`, HTTP/gRPC server, MCP server) delegate to an o
 ```rust
 #[async_trait::async_trait]
 pub trait MemoryInbound: Send + Sync {
-    async fn remember(&self, input: MemoryInput, durability: WriteDurability) -> Result<MemoryReceipt>;
-    async fn remember_batch(&self, inputs: Vec<MemoryInput>, durability: WriteDurability) -> Result<Vec<MemoryReceipt>>;
-    async fn recall(&self, query: RecallQuery) -> Result<ContextResult>;
-    async fn update(&self, ns: &ProjectId, id: MemoryId, expected_version: u64, patch: MemoryPatch) -> Result<MemoryReceipt>;
-    async fn forget(&self, ns: &ProjectId, id: MemoryId) -> Result<()>;
+    async fn remember(&self, input: MemoryInput) -> Result<MemoryReceipt>;
+    async fn recall(&self, query: RecallQuery) -> Result<RecallResult>;
+    async fn update(&self, project_id: &ProjectId, memory_id: MemoryId, patch: MemoryUpdate) -> Result<MemoryReceipt>;
+    async fn forget(&self, project_id: &ProjectId, memory_id: MemoryId) -> Result<()>;
     async fn flush(&self) -> Result<()>;
     async fn shutdown(&self) -> Result<()>;
 }
 ```
+
+Durability is a field on `MemoryInput` and the expected version is a field on `MemoryUpdate`, not separate arguments.
 
 ---
 
@@ -138,17 +138,8 @@ All outbound traits inherit `OutboundConnector` (`name`, `capabilities`, `health
 
 ---
 
-## 6. TDD & Phased Migration Roadmap
+## 6. Status & Known Gaps
 
-All implementation follows **Red → Green → Refactor** (see `AGENTS.md`):
-
-1. **Phase 1 — `aether-core` (Contracts & Validation)**:
-   - Implement newtypes, inbound DTOs, `FilterExpr`, `TemporalFilter`, `AetherError` (`Transient` vs `Permanent`), and object-safe `MemoryInbound` / `OutboundConnector` traits with unit tests.
-2. **Phase 1.5 — `InMemoryBackend` & Contract Suite**:
-   - Implement the in-memory test backend (`VectorStore` + `petgraph` `GraphStore`) and the shared contract test suite before building `aether-cortex`.
-3. **Phase 2 — `aether-cortex` (Gateway Core)**:
-   - Implement `PolicyRouter`, `HotContextCache`, `IngestionBuffer` + `WorkerPool`, `QueryPlanner` (seed resolution + read-your-writes merge), and `PersonalizedPageRank` (`petgraph`).
-4. **Phase 3 — `aether-adapters` (Production Storage & DB Connectors)**:
-   - Implement the shared `middleware/` stack (`Resilient`, `Timeout`, `Batcher`, `Traced`) and feature-gated `turbopuffer`, `qdrant`, `neo4j`, `chroma`, and `pgvector` connectors.
-5. **Phase 4 — `aether-sdk` (Facade, Lifecycle & Heavy E2E)**:
-   - Implement `MemoryManager` (`flush`, `shutdown`), heavy concurrency/read-your-writes E2E tests, and optional `PyO3` / HTTP gateway bindings.
+This document describes the target design.
+Parts of it are not implemented yet: there is no `WorkerPool` (flushes run only on demand), `PolicyRouter` does not check embedding dimensions or content hashes, and PPR output does not yet influence ranking.
+The [Roadmap](../about/roadmap.md) tracks the real status of each component and the hardening work that comes before production drivers.

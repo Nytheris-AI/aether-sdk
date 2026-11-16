@@ -6,6 +6,7 @@ license.workspace = true
 
 [features]
 default = []
+contract-suite = []
 turbopuffer = []
 qdrant = []
 neo4j = []
@@ -24,4 +25,5 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+aether-adapters = { path = ".", features = ["contract-suite"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

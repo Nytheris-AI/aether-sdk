@@ -1,13 +1,13 @@
 //! In-memory `VectorStore` + `petgraph` `GraphStore` for `cargo test` and local dry-runs.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
-    FilterExpr, FilterValue, GraphEdge, GraphStore, KvStore, MemoryId, MemoryItem, MemoryReceipt,
-    MemoryScope, OutboundConnector, ProjectId, Relation, Result, Subgraph, TemporalFilter,
+    FilterExpr, GraphEdge, GraphStore, MemoryId, MemoryItem, MemoryReceipt, MemoryScope,
+    OutboundConnector, ProjectId, RecordStore, Relation, Result, Subgraph, TemporalFilter,
     VectorMatch, VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
@@ -15,7 +15,6 @@ use chrono::{DateTime, Utc};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;
-use serde_json::Value;
 
 #[derive(Default)]
 struct VectorNamespace {
@@ -30,7 +29,7 @@ struct GraphNamespace {
     node_index: HashMap<EntityId, NodeIndex>,
 }
 
-struct KvEntry {
+struct RecordEntry {
     item: MemoryItem,
     expires_at: Option<Instant>,
     seq: u64,
@@ -42,23 +41,68 @@ struct IdemEntry {
 }
 
 #[derive(Default)]
-struct KvNamespace {
-    items: HashMap<MemoryId, KvEntry>,
+struct RecordNamespace {
+    items: HashMap<MemoryId, RecordEntry>,
     idempotency: HashMap<String, IdemEntry>,
     next_seq: u64,
 }
 
-/// Zero-infra, thread-safe in-memory backend implementing `KvStore`, `VectorStore`, and `GraphStore`.
+/// Operations on [`InMemoryBackend`] that can be configured to fail transiently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FaultPoint {
+    VectorUpsert,
+    VectorDelete,
+    GraphUpsert,
+    GraphRetract,
+}
+
+/// Zero-infra, thread-safe in-memory backend implementing `RecordStore`, `VectorStore`, and `GraphStore`.
 #[derive(Default)]
 pub struct InMemoryBackend {
-    kv: RwLock<HashMap<ProjectId, KvNamespace>>,
+    records: RwLock<HashMap<ProjectId, RecordNamespace>>,
     vectors: RwLock<HashMap<ProjectId, VectorNamespace>>,
     graphs: RwLock<HashMap<ProjectId, GraphNamespace>>,
+    faults: Mutex<HashMap<FaultPoint, usize>>,
 }
 
 impl InMemoryBackend {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Injects `times` transient faults for the given `point` on subsequent calls.
+    pub fn fail_next(&self, point: FaultPoint, times: usize) {
+        let mut faults = self.faults.lock().unwrap();
+        if times == 0 {
+            faults.remove(&point);
+        } else {
+            faults.insert(point, times);
+        }
+    }
+
+    /// Returns whether a vector with `id` currently exists in namespace `ns`.
+    pub fn has_vector(&self, ns: &ProjectId, id: MemoryId) -> bool {
+        let guard = self.vectors.read().unwrap();
+        guard
+            .get(ns)
+            .is_some_and(|entry| entry.records.contains_key(&id))
+    }
+
+    fn maybe_inject_fault(&self, point: FaultPoint) -> Result<()> {
+        let mut faults = self.faults.lock().unwrap();
+        if let Some(remaining) = faults.get_mut(&point) {
+            if *remaining > 0 {
+                *remaining -= 1;
+                if *remaining == 0 {
+                    faults.remove(&point);
+                }
+                return Err(AetherError::Transient {
+                    connector: "in_memory",
+                    message: "injected fault".into(),
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -86,15 +130,15 @@ impl OutboundConnector for InMemoryBackend {
 }
 
 #[async_trait]
-impl KvStore for InMemoryBackend {
+impl RecordStore for InMemoryBackend {
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
         let now = Instant::now();
-        let guard = self.kv.read().unwrap();
+        let guard = self.records.read().unwrap();
         let Some(entry) = guard.get(ns) else {
             return Ok(None);
         };
         Ok(entry.items.get(&id).and_then(|e| {
-            if e.expires_at.map_or(false, |exp| now >= exp) {
+            if e.expires_at.is_some_and(|exp| now >= exp) {
                 None
             } else {
                 Some(e.item.clone())
@@ -104,13 +148,13 @@ impl KvStore for InMemoryBackend {
 
     async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
         let now = Instant::now();
-        let mut guard = self.kv.write().unwrap();
+        let mut guard = self.records.write().unwrap();
         let entry = guard.entry(ns.clone()).or_default();
         entry.next_seq += 1;
         let seq = entry.next_seq;
         entry.items.insert(
             item.id,
-            KvEntry {
+            RecordEntry {
                 item: item.clone(),
                 expires_at: ttl.map(|d| now + d),
                 seq,
@@ -127,10 +171,10 @@ impl KvStore for InMemoryBackend {
         ttl: Option<Duration>,
     ) -> Result<Option<MemoryReceipt>> {
         let now = Instant::now();
-        let mut guard = self.kv.write().unwrap();
+        let mut guard = self.records.write().unwrap();
         let entry = guard.entry(ns.clone()).or_default();
         if let Some(existing) = entry.idempotency.get(idempotency_key) {
-            if !existing.expires_at.map_or(false, |exp| now >= exp) {
+            if existing.expires_at.is_none_or(|exp| now < exp) {
                 return Ok(Some(existing.receipt.clone()));
             }
         }
@@ -152,14 +196,14 @@ impl KvStore for InMemoryBackend {
         new_item: &MemoryItem,
     ) -> Result<()> {
         let now = Instant::now();
-        let mut guard = self.kv.write().unwrap();
+        let mut guard = self.records.write().unwrap();
         let entry = guard
             .get_mut(ns)
             .ok_or_else(|| AetherError::NotFound(format!("memory {id}")))?;
         let current = entry
             .items
             .get(&id)
-            .filter(|e| !e.expires_at.map_or(false, |exp| now >= exp))
+            .filter(|e| e.expires_at.is_none_or(|exp| now < exp))
             .ok_or_else(|| AetherError::NotFound(format!("memory {id}")))?;
 
         if let Some(expected) = expected_version {
@@ -177,7 +221,7 @@ impl KvStore for InMemoryBackend {
         let seq = entry.next_seq;
         entry.items.insert(
             id,
-            KvEntry {
+            RecordEntry {
                 item: new_item.clone(),
                 expires_at,
                 seq,
@@ -193,17 +237,17 @@ impl KvStore for InMemoryBackend {
         limit: usize,
     ) -> Result<Vec<MemoryItem>> {
         let now = Instant::now();
-        let guard = self.kv.read().unwrap();
+        let guard = self.records.read().unwrap();
         let Some(entry) = guard.get(ns) else {
             return Ok(Vec::new());
         };
-        let mut items: Vec<&KvEntry> = entry
+        let mut items: Vec<&RecordEntry> = entry
             .items
             .values()
-            .filter(|e| !e.expires_at.map_or(false, |exp| now >= exp))
-            .filter(|e| scope.map_or(true, |s| e.item.scope == s))
+            .filter(|e| e.expires_at.is_none_or(|exp| now < exp))
+            .filter(|e| scope.is_none_or(|s| e.item.scope == s))
             .collect();
-        items.sort_by(|a, b| b.seq.cmp(&a.seq));
+        items.sort_by_key(|b| std::cmp::Reverse(b.seq));
         Ok(items
             .into_iter()
             .take(limit)
@@ -212,7 +256,7 @@ impl KvStore for InMemoryBackend {
     }
 
     async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
-        let mut guard = self.kv.write().unwrap();
+        let mut guard = self.records.write().unwrap();
         if let Some(entry) = guard.get_mut(ns) {
             entry.items.remove(&id);
         }
@@ -241,6 +285,7 @@ impl VectorStore for InMemoryBackend {
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {
+        self.maybe_inject_fault(FaultPoint::VectorUpsert)?;
         let mut guard = self.vectors.write().unwrap();
         let entry = guard.entry(ns.clone()).or_default();
         for rec in records {
@@ -258,6 +303,7 @@ impl VectorStore for InMemoryBackend {
     }
 
     async fn delete(&self, ns: &ProjectId, ids: &[MemoryId]) -> Result<()> {
+        self.maybe_inject_fault(FaultPoint::VectorDelete)?;
         let mut guard = self.vectors.write().unwrap();
         if let Some(entry) = guard.get_mut(ns) {
             for id in ids {
@@ -291,12 +337,12 @@ impl VectorStore for InMemoryBackend {
             .records
             .values()
             .filter(|rec| match filter {
-                Some(expr) => eval_filter(expr, &rec.metadata),
+                Some(expr) => expr.matches(&rec.metadata),
                 None => true,
             })
             .map(|rec| VectorMatch {
                 id: rec.id,
-                score: similarity(entry.metric, query_vector, &rec.vector),
+                score: entry.metric.score(query_vector, &rec.vector),
                 metadata: rec.metadata.clone(),
             })
             .collect();
@@ -310,6 +356,7 @@ impl VectorStore for InMemoryBackend {
 #[async_trait]
 impl GraphStore for InMemoryBackend {
     async fn upsert_entities(&self, ns: &ProjectId, entities: &[Entity]) -> Result<()> {
+        self.maybe_inject_fault(FaultPoint::GraphUpsert)?;
         let mut guard = self.graphs.write().unwrap();
         let entry = guard.entry(ns.clone()).or_default();
         for entity in entities {
@@ -329,6 +376,7 @@ impl GraphStore for InMemoryBackend {
         source_memory_id: MemoryId,
         relations: &[Relation],
     ) -> Result<()> {
+        self.maybe_inject_fault(FaultPoint::GraphUpsert)?;
         let mut guard = self.graphs.write().unwrap();
         let entry = guard.entry(ns.clone()).or_default();
         for rel in relations {
@@ -356,6 +404,7 @@ impl GraphStore for InMemoryBackend {
         source_memory_id: MemoryId,
         invalidated_at: DateTime<Utc>,
     ) -> Result<()> {
+        self.maybe_inject_fault(FaultPoint::GraphRetract)?;
         let mut guard = self.graphs.write().unwrap();
         if let Some(entry) = guard.get_mut(ns) {
             for edge in entry.graph.edge_weights_mut() {
@@ -449,61 +498,10 @@ fn ensure_node(ns: &mut GraphNamespace, id: &EntityId) -> NodeIndex {
 fn matches_temporal(edge: &GraphEdge, temporal: &TemporalFilter) -> bool {
     if let Some(as_of) = temporal.as_of {
         let valid = edge.valid_at <= as_of;
-        let not_invalid = edge.invalid_at.map_or(true, |inv| as_of < inv);
+        let not_invalid = edge.invalid_at.is_none_or(|inv| as_of < inv);
         if !(valid && not_invalid) {
             return false;
         }
     }
-    if temporal.active_only && edge.invalid_at.is_some() {
-        return false;
-    }
-    true
-}
-
-fn similarity(metric: DistanceMetric, a: &[f32], b: &[f32]) -> f32 {
-    match metric {
-        DistanceMetric::Dot => a.iter().zip(b).map(|(x, y)| x * y).sum(),
-        DistanceMetric::Cosine => {
-            let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
-            let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-            let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-            if norm_a == 0.0 || norm_b == 0.0 {
-                0.0
-            } else {
-                dot / (norm_a * norm_b)
-            }
-        }
-        DistanceMetric::Euclidean => {
-            let dist_sq: f32 = a.iter().zip(b).map(|(x, y)| (x - y).powi(2)).sum();
-            -dist_sq.sqrt()
-        }
-    }
-}
-
-fn eval_filter(expr: &FilterExpr, metadata: &Value) -> bool {
-    match expr {
-        FilterExpr::Eq { field, value } => metadata
-            .get(field)
-            .map_or(false, |v| value_matches(v, value)),
-        FilterExpr::In { field, values } => metadata
-            .get(field)
-            .map_or(false, |v| values.iter().any(|target| value_matches(v, target))),
-        FilterExpr::Range { field, gte, lte } => metadata.get(field).and_then(|v| v.as_f64()).map_or(false, |num| {
-            gte.map_or(true, |min| num >= min) && lte.map_or(true, |max| num <= max)
-        }),
-        FilterExpr::And(exprs) => exprs.iter().all(|e| eval_filter(e, metadata)),
-        FilterExpr::Or(exprs) => exprs.iter().any(|e| eval_filter(e, metadata)),
-    }
-}
-
-fn value_matches(json_val: &Value, filter_val: &FilterValue) -> bool {
-    match (json_val, filter_val) {
-        (Value::String(a), FilterValue::String(b)) => a == b,
-        (Value::Number(a), FilterValue::Int(b)) => a.as_i64() == Some(*b),
-        (Value::Number(a), FilterValue::Float(b)) => {
-            a.as_f64().map_or(false, |x| (x - b).abs() < f64::EPSILON)
-        }
-        (Value::Bool(a), FilterValue::Bool(b)) => a == b,
-        _ => false,
-    }
+    !(temporal.active_only && edge.invalid_at.is_some())
 }
