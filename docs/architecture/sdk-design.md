@@ -2,6 +2,7 @@
 
 Status: **draft, awaiting approval** (2026-11-16).
 This document sets the shape of Aether.
+The [change overview](./change-overview.md) lists every removal, change, and addition in one place.
 It supersedes the "gateway" framing everywhere else in these docs.
 The consistency mechanics in the [Phase 5 hardening design](./hardening-design.md) stay valid and become one of the pieces described here; section 7 lists exactly what this document changes in it.
 
@@ -240,6 +241,9 @@ The public Rust API changes in breaking ways on top of those already listed in t
 - Servers and MCP leave the roadmap; language bindings are deferred, not rejected.
 - Crate names and the `MemoryManager` name stay as they are.
 - `memory_test` is renamed `in_memory`.
+- The empty driver feature flags in `aether-adapters` are removed until each driver exists.
+- The planned `config.rs` and `ConnectorRegistry` are dropped: developers construct the stores they use.
+- `docs/architecture/rust-migration.md` is deleted once the work lands; the two design docs and rustdoc replace it.
 
 ## 11. Left to the Builder
 
