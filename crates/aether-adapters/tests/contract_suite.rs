@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_adapters::memory_test::InMemoryBackend;
 use aether_adapters::middleware::{Batcher, Resilient, RetryPolicy, Timeout, Traced};
+use aether_adapters::{FaultPoint, InMemoryBackend};
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
     FilterExpr, FilterValue, GraphStore, MemoryId, MemoryInput, MemoryItem, MemoryReceipt,
@@ -536,4 +536,98 @@ async fn contract_record_store_ttl_idempotency_cas_and_recent() {
 
     store.delete(&ns_a, item1.id).await.unwrap();
     assert!(store.get(&ns_a, item1.id).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn in_memory_backend_injects_transient_faults_then_recovers() {
+    let b = InMemoryBackend::new();
+    let p = ProjectId::new(format!("t-{}", uuid::Uuid::new_v4())).unwrap();
+    b.initialize(&p, 2, DistanceMetric::Cosine).await.unwrap();
+    let rec = VectorRecord {
+        id: MemoryId::new(),
+        vector: vec![1.0, 0.0],
+        metadata: json!({}),
+    };
+    b.fail_next(FaultPoint::VectorUpsert, 1);
+    let err = b
+        .upsert_batch(&p, std::slice::from_ref(&rec))
+        .await
+        .unwrap_err();
+    assert!(err.is_retryable());
+    assert!(!b.has_vector(&p, rec.id));
+    b.upsert_batch(&p, std::slice::from_ref(&rec))
+        .await
+        .unwrap();
+    assert!(b.has_vector(&p, rec.id));
+}
+
+#[tokio::test]
+async fn in_memory_backend_injects_delete_and_graph_faults() {
+    let b = InMemoryBackend::new();
+    let p = ProjectId::new(format!("t-{}", uuid::Uuid::new_v4())).unwrap();
+    b.initialize(&p, 2, DistanceMetric::Cosine).await.unwrap();
+    let rec = VectorRecord {
+        id: MemoryId::new(),
+        vector: vec![1.0, 0.0],
+        metadata: json!({}),
+    };
+    b.upsert_batch(&p, std::slice::from_ref(&rec))
+        .await
+        .unwrap();
+
+    b.fail_next(FaultPoint::VectorDelete, 1);
+    let err = VectorStore::delete(&b, &p, &[rec.id]).await.unwrap_err();
+    assert!(err.is_retryable());
+    assert!(b.has_vector(&p, rec.id));
+    VectorStore::delete(&b, &p, &[rec.id]).await.unwrap();
+    assert!(!b.has_vector(&p, rec.id));
+
+    let alice = Entity {
+        id: EntityId::new("person:alice").unwrap(),
+        name: "Alice".into(),
+        entity_type: "Person".into(),
+    };
+    let bob = Entity {
+        id: EntityId::new("person:bob").unwrap(),
+        name: "Bob".into(),
+        entity_type: "Person".into(),
+    };
+    b.fail_next(FaultPoint::GraphUpsert, 2);
+    assert!(b
+        .upsert_entities(&p, std::slice::from_ref(&alice))
+        .await
+        .unwrap_err()
+        .is_retryable());
+    let mem_id = MemoryId::new();
+    let rel = Relation {
+        source: alice.id.clone(),
+        target: bob.id.clone(),
+        relation_type: "KNOWS".into(),
+        valid_at: Utc::now(),
+        invalid_at: None,
+    };
+    assert!(b
+        .upsert_relations(&p, mem_id, std::slice::from_ref(&rel))
+        .await
+        .unwrap_err()
+        .is_retryable());
+    b.upsert_entities(&p, &[alice.clone(), bob.clone()])
+        .await
+        .unwrap();
+    b.upsert_relations(&p, mem_id, &[rel]).await.unwrap();
+
+    b.fail_next(FaultPoint::GraphRetract, 1);
+    assert!(b
+        .retract_memory_facts(&p, mem_id, Utc::now())
+        .await
+        .unwrap_err()
+        .is_retryable());
+    b.retract_memory_facts(&p, mem_id, Utc::now())
+        .await
+        .unwrap();
+    let active = b
+        .neighborhood(&p, &[alice.id], 1, 10, &TemporalFilter::default())
+        .await
+        .unwrap();
+    assert!(active.edges.is_empty());
 }

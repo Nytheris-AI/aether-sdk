@@ -1,7 +1,7 @@
 //! In-memory `VectorStore` + `petgraph` `GraphStore` for `cargo test` and local dry-runs.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use aether_core::{
@@ -47,17 +47,62 @@ struct RecordNamespace {
     next_seq: u64,
 }
 
+/// Operations on [`InMemoryBackend`] that can be configured to fail transiently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FaultPoint {
+    VectorUpsert,
+    VectorDelete,
+    GraphUpsert,
+    GraphRetract,
+}
+
 /// Zero-infra, thread-safe in-memory backend implementing `RecordStore`, `VectorStore`, and `GraphStore`.
 #[derive(Default)]
 pub struct InMemoryBackend {
     records: RwLock<HashMap<ProjectId, RecordNamespace>>,
     vectors: RwLock<HashMap<ProjectId, VectorNamespace>>,
     graphs: RwLock<HashMap<ProjectId, GraphNamespace>>,
+    faults: Mutex<HashMap<FaultPoint, usize>>,
 }
 
 impl InMemoryBackend {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Injects `times` transient faults for the given `point` on subsequent calls.
+    pub fn fail_next(&self, point: FaultPoint, times: usize) {
+        let mut faults = self.faults.lock().unwrap();
+        if times == 0 {
+            faults.remove(&point);
+        } else {
+            faults.insert(point, times);
+        }
+    }
+
+    /// Returns whether a vector with `id` currently exists in namespace `ns`.
+    pub fn has_vector(&self, ns: &ProjectId, id: MemoryId) -> bool {
+        let guard = self.vectors.read().unwrap();
+        guard
+            .get(ns)
+            .is_some_and(|entry| entry.records.contains_key(&id))
+    }
+
+    fn maybe_inject_fault(&self, point: FaultPoint) -> Result<()> {
+        let mut faults = self.faults.lock().unwrap();
+        if let Some(remaining) = faults.get_mut(&point) {
+            if *remaining > 0 {
+                *remaining -= 1;
+                if *remaining == 0 {
+                    faults.remove(&point);
+                }
+                return Err(AetherError::Transient {
+                    connector: "in_memory",
+                    message: "injected fault".into(),
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -240,6 +285,7 @@ impl VectorStore for InMemoryBackend {
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {
+        self.maybe_inject_fault(FaultPoint::VectorUpsert)?;
         let mut guard = self.vectors.write().unwrap();
         let entry = guard.entry(ns.clone()).or_default();
         for rec in records {
@@ -257,6 +303,7 @@ impl VectorStore for InMemoryBackend {
     }
 
     async fn delete(&self, ns: &ProjectId, ids: &[MemoryId]) -> Result<()> {
+        self.maybe_inject_fault(FaultPoint::VectorDelete)?;
         let mut guard = self.vectors.write().unwrap();
         if let Some(entry) = guard.get_mut(ns) {
             for id in ids {
@@ -309,6 +356,7 @@ impl VectorStore for InMemoryBackend {
 #[async_trait]
 impl GraphStore for InMemoryBackend {
     async fn upsert_entities(&self, ns: &ProjectId, entities: &[Entity]) -> Result<()> {
+        self.maybe_inject_fault(FaultPoint::GraphUpsert)?;
         let mut guard = self.graphs.write().unwrap();
         let entry = guard.entry(ns.clone()).or_default();
         for entity in entities {
@@ -328,6 +376,7 @@ impl GraphStore for InMemoryBackend {
         source_memory_id: MemoryId,
         relations: &[Relation],
     ) -> Result<()> {
+        self.maybe_inject_fault(FaultPoint::GraphUpsert)?;
         let mut guard = self.graphs.write().unwrap();
         let entry = guard.entry(ns.clone()).or_default();
         for rel in relations {
@@ -355,6 +404,7 @@ impl GraphStore for InMemoryBackend {
         source_memory_id: MemoryId,
         invalidated_at: DateTime<Utc>,
     ) -> Result<()> {
+        self.maybe_inject_fault(FaultPoint::GraphRetract)?;
         let mut guard = self.graphs.write().unwrap();
         if let Some(entry) = guard.get_mut(ns) {
             for edge in entry.graph.edge_weights_mut() {
