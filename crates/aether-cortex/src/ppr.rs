@@ -2,9 +2,27 @@
 
 use std::collections::{HashMap, HashSet};
 
-use aether_core::{EntityId, Subgraph};
+use aether_core::{EntityId, MemoryId, Subgraph};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
+
+/// Aggregates entity PageRank scores onto source memories via `source_memory_id` edges.
+pub fn graph_scores(
+    subgraph: &Subgraph,
+    entity_ranks: &[(EntityId, f32)],
+) -> HashMap<MemoryId, f32> {
+    let rank_map: HashMap<&EntityId, f32> = entity_ranks
+        .iter()
+        .map(|(id, score)| (id, *score))
+        .collect();
+    let mut scores: HashMap<MemoryId, f32> = HashMap::new();
+    for edge in &subgraph.edges {
+        let src_score = rank_map.get(&edge.source).copied().unwrap_or(0.0);
+        let dst_score = rank_map.get(&edge.target).copied().unwrap_or(0.0);
+        *scores.entry(edge.source_memory_id).or_insert(0.0) += src_score + dst_score;
+    }
+    scores
+}
 
 /// Personalized PageRank over a retrieved `Subgraph` using `petgraph`.
 pub struct PersonalizedPageRank {

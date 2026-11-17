@@ -3,9 +3,10 @@
 
 pub mod indexer;
 pub mod ppr;
+pub mod recall;
 
 pub use indexer::{index_metadata, Indexer, PassReport};
-pub use ppr::PersonalizedPageRank;
+pub use ppr::{graph_scores, PersonalizedPageRank};
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
