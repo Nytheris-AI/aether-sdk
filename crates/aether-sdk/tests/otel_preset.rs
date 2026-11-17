@@ -16,3 +16,12 @@ async fn init_otel_preset_is_one_liner_and_idempotent() {
     guard2.shutdown();
     guard1.shutdown();
 }
+
+#[test]
+fn otel_config_debug_redacts_endpoint_credentials() {
+    let cfg = OtelConfig::from_env("aether-test-service")
+        .with_endpoint("https://collector:s3cr3tpass@otel.example.com:4317");
+    let dbg = format!("{cfg:?}");
+    assert!(!dbg.contains("s3cr3tpass"));
+    assert!(dbg.contains("[REDACTED]@otel.example.com:4317"));
+}
