@@ -335,11 +335,13 @@ async fn handle_query_v2(
                 .map(|s| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc));
             let per_node_limit = params["per_node_limit"].as_u64().unwrap() as usize;
 
+            let slice_per_seed = stmt.contains("[0..$per_node_limit]");
             let rows = execute_mock_neighborhood(
                 proj,
                 &seeds,
                 hops,
                 per_node_limit,
+                slice_per_seed,
                 &TemporalFilter { as_of, active_only },
             );
             return (
@@ -409,6 +411,7 @@ fn execute_mock_neighborhood(
     seeds: &[String],
     hops: u8,
     per_node_limit: usize,
+    slice_per_seed: bool,
     temporal: &TemporalFilter,
 ) -> Vec<Vec<Value>> {
     let mut rows = Vec::new();
@@ -485,7 +488,7 @@ fn execute_mock_neighborhood(
             }
         }
 
-        if hops == 1 {
+        if slice_per_seed {
             paths.truncate(per_node_limit);
         }
 
@@ -981,4 +984,68 @@ async fn neo4j_error_mapping_transient_and_permanent() {
         .await
         .unwrap();
     assert_eq!(sub.entities.len(), 1);
+}
+
+#[tokio::test]
+async fn neo4j_multi_seed_per_node_limit_does_not_drop_unvisited_edges() {
+    let (base_url, _state) = spawn_mock_neo4j("neo4j", "neo4j", "secret").await;
+    let store = Neo4jGraphStore::new(Neo4jConfig {
+        base_url,
+        database: "neo4j".into(),
+        username: "neo4j".into(),
+        password: SecretString::new("secret"),
+    })
+    .unwrap();
+    let ns = ProjectId::new(format!("multi-seed-{}", uuid::Uuid::new_v4())).unwrap();
+
+    let a = Entity {
+        id: EntityId::new("n:a").unwrap(),
+        name: "A".into(),
+        entity_type: "Node".into(),
+    };
+    let b = Entity {
+        id: EntityId::new("n:b").unwrap(),
+        name: "B".into(),
+        entity_type: "Node".into(),
+    };
+    let c = Entity {
+        id: EntityId::new("n:c").unwrap(),
+        name: "C".into(),
+        entity_type: "Node".into(),
+    };
+    store
+        .upsert_entities(&ns, &[a.clone(), b.clone(), c.clone()])
+        .await
+        .unwrap();
+
+    let now = chrono::Utc::now();
+    store
+        .upsert_relations(
+            &ns,
+            MemoryId::new(),
+            &[
+                Relation {
+                    source: a.id.clone(),
+                    target: b.id.clone(),
+                    relation_type: "LINK".into(),
+                    valid_at: now,
+                    invalid_at: None,
+                },
+                Relation {
+                    source: b.id.clone(),
+                    target: c.id.clone(),
+                    relation_type: "LINK".into(),
+                    valid_at: now,
+                    invalid_at: None,
+                },
+            ],
+        )
+        .await
+        .unwrap();
+
+    let sub = store
+        .neighborhood(&ns, &[a.id, b.id], 1, 1, &TemporalFilter::default())
+        .await
+        .unwrap();
+    assert_eq!(sub.edges.len(), 2);
 }

@@ -84,10 +84,15 @@ impl Neo4jGraphStore {
             }
         };
 
-        let parsed: QueryResponse = resp.json().await.map_err(|err| AetherError::Permanent {
-            connector: CONNECTOR_NAME,
-            message: format!("failed to decode Neo4j Query API response: {err}"),
-        })?;
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|err| http::map_transport_err(CONNECTOR_NAME, err))?;
+        let parsed: QueryResponse =
+            serde_json::from_slice(&bytes).map_err(|err| AetherError::Permanent {
+                connector: CONNECTOR_NAME,
+                message: format!("failed to decode Neo4j Query API response: {err}"),
+            })?;
 
         if !parsed.errors.is_empty() {
             return Err(map_neo4j_errors(&parsed.errors));
@@ -255,11 +260,6 @@ impl GraphStore for Neo4jGraphStore {
             return decode_seed_only_subgraph(data);
         }
 
-        let limit_slice = if hops == 1 {
-            "[0..$per_node_limit]"
-        } else {
-            ""
-        };
         let statement = format!(
             "MATCH (seed:AetherEntity {{project_id: $ns}}) \
              WHERE seed.id IN $seeds \
@@ -281,7 +281,7 @@ impl GraphStore for Neo4jGraphStore {
                    valid_at: r.valid_at, \
                    invalid_at: r.invalid_at \
                  }}] \
-               }}]{limit_slice} AS paths"
+               }}] AS paths"
         );
 
         let data = self
