@@ -7,7 +7,7 @@ use aether_adapters::middleware::{Batcher, Resilient, RetryPolicy, Timeout, Trac
 use aether_adapters::{FaultPoint, InMemoryBackend};
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
-    FilterExpr, GraphStore, MemoryId, OutboundConnector, ProjectId, Relation, Result,
+    FilterExpr, GraphStore, IndexSpec, MemoryId, OutboundConnector, ProjectId, Relation, Result,
     TemporalFilter, VectorMatch, VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
@@ -74,6 +74,9 @@ impl OutboundConnector for FlakyStore {
 impl VectorStore for FlakyStore {
     async fn initialize(&self, _ns: &ProjectId, _d: usize, _m: DistanceMetric) -> Result<()> {
         Ok(())
+    }
+    async fn describe(&self, _ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        Ok(None)
     }
     async fn upsert_batch(&self, _ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {
         self.batch_sizes.lock().unwrap().push(records.len());

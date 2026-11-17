@@ -58,6 +58,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 content: Some("stale".into()),
                 embedding: None,
                 metadata: None,
+                entities: None,
+                relations: None,
                 expected_version: Some(999),
             },
         )

@@ -7,9 +7,9 @@ use std::time::{Duration, Instant};
 
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome, DistanceMetric, Entity,
-    EntityId, FilterExpr, GraphEdge, GraphStore, MemoryId, MemoryItem, MemoryReceipt, MemoryScope,
-    OutboundConnector, PendingRecord, ProjectId, ReceiptState, RecordStore, Relation, Result,
-    Subgraph, TemporalFilter, VectorMatch, VectorRecord, VectorStore,
+    EntityId, FilterExpr, GraphEdge, GraphStore, IndexSpec, MemoryId, MemoryItem, MemoryReceipt,
+    MemoryScope, OutboundConnector, PendingRecord, ProjectId, ReceiptState, RecordStore, Relation,
+    Result, Subgraph, TemporalFilter, VectorMatch, VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -447,6 +447,16 @@ impl VectorStore for InMemoryBackend {
         entry.dimensions = Some(dimensions);
         entry.metric = metric;
         Ok(())
+    }
+
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        let guard = self.vectors.read().unwrap();
+        Ok(guard.get(ns).and_then(|entry| {
+            entry.dimensions.map(|dimensions| IndexSpec {
+                dimensions,
+                metric: entry.metric,
+            })
+        }))
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {

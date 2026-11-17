@@ -474,6 +474,8 @@ async fn e2e_knowledge_lifecycle_cas_temporal_and_forget() {
                         content: Some(upd.new_content.clone()),
                         embedding: Some(embed_text(&upd.new_content)),
                         metadata: Some(upd.new_metadata.clone()),
+                        entities: None,
+                        relations: None,
                         expected_version: Some(1),
                     },
                 )
@@ -489,6 +491,8 @@ async fn e2e_knowledge_lifecycle_cas_temporal_and_forget() {
                         content: Some("stale overwrite".into()),
                         embedding: None,
                         metadata: None,
+                        entities: None,
+                        relations: None,
                         expected_version: Some(1),
                     },
                 )

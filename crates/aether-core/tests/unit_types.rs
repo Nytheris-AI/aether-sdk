@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use aether_core::{
     redact_url_userinfo, AetherError, ConnectorCapabilities, ConnectorHealth, ConsistencyMode,
-    DistanceMetric, Entity, EntityId, FilterExpr, FilterValue, GraphStore, MemoryId, MemoryInbound,
-    MemoryInput, MemoryItem, MemoryReceipt, MemoryScope, MemoryTier, OutboundConnector, ProjectId,
-    RecallMode, RecallQuery, ReceiptState, RecordStore, Relation, SecretString, TemporalFilter,
-    VectorRecord, VectorStore, WriteDurability,
+    DistanceMetric, Entity, EntityId, FilterExpr, FilterValue, GraphStore, IndexSpec, MemoryId,
+    MemoryInbound, MemoryInput, MemoryItem, MemoryReceipt, MemoryScope, MemoryTier, MemoryUpdate,
+    OutboundConnector, ProjectId, RecallMode, RecallQuery, ReceiptState, RecordStore, Relation,
+    SecretString, TemporalFilter, VectorRecord, VectorStore, WriteDurability,
 };
 use chrono::Utc;
 use uuid::Uuid;
@@ -236,4 +236,86 @@ fn redact_url_userinfo_strips_credentials_from_authority_only() {
         "http://localhost:4317/v1?user=a@b.com"
     );
     assert_eq!(redact_url_userinfo("not-a-url"), "not-a-url");
+}
+
+#[test]
+fn memory_input_rejects_non_object_and_reserved_metadata() {
+    let mut bad_type = input_fixture();
+    bad_type.metadata = serde_json::json!(["not", "an", "object"]);
+    assert!(matches!(
+        bad_type.validate(),
+        Err(AetherError::InvalidInput(_))
+    ));
+
+    let mut reserved = input_fixture();
+    reserved.metadata = serde_json::json!({"_aether_scope": "project"});
+    assert!(matches!(
+        reserved.validate(),
+        Err(AetherError::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn memory_update_rejects_invalid_metadata_and_non_finite_embedding() {
+    let mut bad_meta = MemoryUpdate {
+        content: None,
+        embedding: None,
+        metadata: Some(serde_json::json!({"_aether_tier": "episodic"})),
+        entities: None,
+        relations: None,
+        expected_version: None,
+    };
+    assert!(matches!(
+        bad_meta.validate(),
+        Err(AetherError::InvalidInput(_))
+    ));
+
+    bad_meta.metadata = None;
+    bad_meta.embedding = Some(vec![1.0, f32::NAN]);
+    assert!(matches!(
+        bad_meta.validate(),
+        Err(AetherError::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn index_spec_check_validates_dimensions_and_finiteness() {
+    let spec = IndexSpec {
+        dimensions: 3,
+        metric: DistanceMetric::Cosine,
+    };
+    assert!(spec.check(&[1.0, 0.0, 0.0]).is_ok());
+    assert!(matches!(
+        spec.check(&[1.0, 0.0]),
+        Err(AetherError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        spec.check(&[1.0, f32::INFINITY, 0.0]),
+        Err(AetherError::InvalidInput(_))
+    ));
+}
+
+#[test]
+fn recall_query_validation() {
+    let pid = ProjectId::new("proj-q").unwrap();
+    let missing_vec = RecallQuery::new(pid.clone(), "hello");
+    assert!(matches!(
+        missing_vec.validate(),
+        Err(AetherError::InvalidInput(_))
+    ));
+
+    let mut graph_no_seeds = RecallQuery::new(pid.clone(), "hello");
+    graph_no_seeds.mode = RecallMode::Graph;
+    assert!(matches!(
+        graph_no_seeds.validate(),
+        Err(AetherError::InvalidInput(_))
+    ));
+
+    let mut nan_vec = RecallQuery::new(pid, "hello");
+    nan_vec.mode = RecallMode::Vector;
+    nan_vec.query_vector = Some(vec![1.0, f32::NAN]);
+    assert!(matches!(
+        nan_vec.validate(),
+        Err(AetherError::InvalidInput(_))
+    ));
 }

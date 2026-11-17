@@ -404,7 +404,7 @@ impl MemoryInput {
         }
     }
 
-    /// Validates required invariants before entering the gateway core.
+    /// Validates required invariants before entering the SDK.
     pub fn validate(&self) -> Result<()> {
         if self.content.trim().is_empty() {
             return Err(AetherError::InvalidInput(
@@ -412,33 +412,58 @@ impl MemoryInput {
             ));
         }
         if let Some(vec) = &self.embedding {
-            if vec.is_empty() {
-                return Err(AetherError::InvalidInput(
-                    "embedding vector must not be empty when provided".into(),
-                ));
-            }
-            if vec.iter().any(|x| !x.is_finite()) {
-                return Err(AetherError::InvalidInput(
-                    "embedding vector contains non-finite values".into(),
-                ));
-            }
+            validate_vector_values(vec, "embedding vector")?;
         }
-        for entity in &self.entities {
-            if entity.name.trim().is_empty() {
-                return Err(AetherError::InvalidInput(
-                    "entity name must not be empty".into(),
-                ));
-            }
-        }
-        for rel in &self.relations {
-            if rel.relation_type.trim().is_empty() {
-                return Err(AetherError::InvalidInput(
-                    "relation_type must not be empty".into(),
-                ));
-            }
-        }
+        validate_metadata_object(&self.metadata)?;
+        validate_entities_and_relations(&self.entities, &self.relations)?;
         Ok(())
     }
+}
+
+fn validate_vector_values(vec: &[f32], label: &str) -> Result<()> {
+    if vec.is_empty() {
+        return Err(AetherError::InvalidInput(format!(
+            "{label} must not be empty when provided"
+        )));
+    }
+    if vec.iter().any(|x| !x.is_finite()) {
+        return Err(AetherError::InvalidInput(format!(
+            "{label} contains non-finite values"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_metadata_object(metadata: &Value) -> Result<()> {
+    let Some(map) = metadata.as_object() else {
+        return Err(AetherError::InvalidInput(
+            "metadata must be a JSON object".into(),
+        ));
+    };
+    if let Some(key) = map.keys().find(|k| k.starts_with("_aether_")) {
+        return Err(AetherError::InvalidInput(format!(
+            "metadata key `{key}` uses reserved `_aether_` prefix"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_entities_and_relations(entities: &[Entity], relations: &[Relation]) -> Result<()> {
+    for entity in entities {
+        if entity.name.trim().is_empty() {
+            return Err(AetherError::InvalidInput(
+                "entity name must not be empty".into(),
+            ));
+        }
+    }
+    for rel in relations {
+        if rel.relation_type.trim().is_empty() {
+            return Err(AetherError::InvalidInput(
+                "relation_type must not be empty".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Canonical stored memory record with optimistic-concurrency `version`.
@@ -499,12 +524,59 @@ pub struct PendingRecord {
     pub tombstone: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexSpec {
+    pub dimensions: usize,
+    pub metric: DistanceMetric,
+}
+
+impl IndexSpec {
+    /// Validates that `vector` is non-empty, finite, and matches `self.dimensions`.
+    pub fn check(&self, vector: &[f32]) -> Result<()> {
+        validate_vector_values(vector, "vector")?;
+        if vector.len() != self.dimensions {
+            return Err(AetherError::InvalidInput(format!(
+                "vector dimension mismatch: expected {}, got {}",
+                self.dimensions,
+                vector.len()
+            )));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MemoryUpdate {
     pub content: Option<String>,
     pub embedding: Option<Vec<f32>>,
     pub metadata: Option<Value>,
+    pub entities: Option<Vec<Entity>>,
+    pub relations: Option<Vec<Relation>>,
     pub expected_version: Option<u64>,
+}
+
+impl MemoryUpdate {
+    /// Validates updated fields at the boundary.
+    pub fn validate(&self) -> Result<()> {
+        if let Some(content) = &self.content {
+            if content.trim().is_empty() {
+                return Err(AetherError::InvalidInput(
+                    "updated content must not be empty".into(),
+                ));
+            }
+        }
+        if let Some(vec) = &self.embedding {
+            validate_vector_values(vec, "embedding vector")?;
+        }
+        if let Some(metadata) = &self.metadata {
+            validate_metadata_object(metadata)?;
+        }
+        validate_entities_and_relations(
+            self.entities.as_deref().unwrap_or(&[]),
+            self.relations.as_deref().unwrap_or(&[]),
+        )?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -537,6 +609,27 @@ impl RecallQuery {
             filters: None,
             consistency: ConsistencyMode::default(),
         }
+    }
+
+    /// Validates query requirements before dispatching to stores.
+    pub fn validate(&self) -> Result<()> {
+        if let Some(vec) = &self.query_vector {
+            validate_vector_values(vec, "query_vector")?;
+        }
+        match self.mode {
+            RecallMode::Vector | RecallMode::Hybrid if self.query_vector.is_none() => {
+                return Err(AetherError::InvalidInput(
+                    "query_vector is required for vector or hybrid recall".into(),
+                ));
+            }
+            RecallMode::Graph if self.seed_entities.is_empty() => {
+                return Err(AetherError::InvalidInput(
+                    "seed_entities must not be empty for graph recall".into(),
+                ));
+            }
+            _ => {}
+        }
+        Ok(())
     }
 }
 
@@ -666,6 +759,8 @@ pub trait VectorStore: OutboundConnector {
         dimensions: usize,
         metric: DistanceMetric,
     ) -> Result<()>;
+
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>>;
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()>;
 
@@ -834,6 +929,10 @@ impl<T: VectorStore + ?Sized> VectorStore for Arc<T> {
         metric: DistanceMetric,
     ) -> Result<()> {
         (**self).initialize(ns, dimensions, metric).await
+    }
+
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        (**self).describe(ns).await
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {

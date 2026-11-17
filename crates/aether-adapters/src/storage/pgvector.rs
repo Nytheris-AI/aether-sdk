@@ -6,8 +6,8 @@ use std::sync::RwLock;
 
 use aether_core::{
     redact_url_userinfo, AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric,
-    FilterExpr, FilterValue, MemoryId, OutboundConnector, ProjectId, Result, SecretString,
-    VectorMatch, VectorRecord, VectorStore,
+    FilterExpr, FilterValue, IndexSpec, MemoryId, OutboundConnector, ProjectId, Result,
+    SecretString, VectorMatch, VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
 use pgvector::Vector;
@@ -258,6 +258,13 @@ impl VectorStore for PgVectorStore {
         let mut guard = self.specs.write().unwrap_or_else(|e| e.into_inner());
         guard.insert(ns.clone(), NamespaceSpec { dimensions, metric });
         Ok(())
+    }
+
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        Ok(self.namespace_spec(ns).map(|s| IndexSpec {
+            dimensions: s.dimensions,
+            metric: s.metric,
+        }))
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {

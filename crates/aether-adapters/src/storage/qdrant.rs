@@ -5,8 +5,8 @@ use std::sync::RwLock;
 
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, FilterExpr, FilterValue,
-    MemoryId, OutboundConnector, ProjectId, Result, SecretString, VectorMatch, VectorRecord,
-    VectorStore,
+    IndexSpec, MemoryId, OutboundConnector, ProjectId, Result, SecretString, VectorMatch,
+    VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
 use reqwest::{Method, StatusCode};
@@ -217,6 +217,13 @@ impl VectorStore for QdrantVectorStore {
             .unwrap()
             .insert(ns.clone(), CollectionSpec { dimensions, metric });
         Ok(())
+    }
+
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        Ok(self.spec_for(ns).map(|s| IndexSpec {
+            dimensions: s.dimensions,
+            metric: s.metric,
+        }))
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {

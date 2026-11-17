@@ -8,8 +8,9 @@ use std::time::Duration;
 
 use aether_core::{
     AetherError, CreateOutcome, DistanceMetric, Entity, EntityId, FilterExpr, FilterValue,
-    GraphStore, MemoryId, MemoryInput, MemoryItem, MemoryReceipt, MemoryScope, PendingRecord,
-    ProjectId, ReceiptState, RecordStore, Relation, TemporalFilter, VectorRecord, VectorStore,
+    GraphStore, IndexSpec, MemoryId, MemoryInput, MemoryItem, MemoryReceipt, MemoryScope,
+    PendingRecord, ProjectId, ReceiptState, RecordStore, Relation, TemporalFilter, VectorRecord,
+    VectorStore,
 };
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
@@ -289,10 +290,19 @@ async fn vector_namespace_isolation<S: VectorStore>(store: &S) {
     let ns_a = fresh_project("vec-a");
     let ns_b = fresh_project("vec-b");
 
+    assert_eq!(store.describe(&ns_a).await.unwrap(), None);
+
     store
         .initialize(&ns_a, 3, DistanceMetric::Cosine)
         .await
         .unwrap();
+    assert_eq!(
+        store.describe(&ns_a).await.unwrap(),
+        Some(IndexSpec {
+            dimensions: 3,
+            metric: DistanceMetric::Cosine
+        })
+    );
     store
         .initialize(&ns_b, 3, DistanceMetric::Cosine)
         .await

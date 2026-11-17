@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome, DistanceMetric, Entity,
-    EntityId, FilterExpr, GraphStore, MemoryId, MemoryItem, MemoryReceipt, MemoryScope,
+    EntityId, FilterExpr, GraphStore, IndexSpec, MemoryId, MemoryItem, MemoryReceipt, MemoryScope,
     OutboundConnector, PendingRecord, ProjectId, RecordStore, Relation, Result, Subgraph,
     TemporalFilter, VectorMatch, VectorRecord, VectorStore,
 };
@@ -175,6 +175,10 @@ impl<T: VectorStore> VectorStore for Resilient<T> {
             self.inner.initialize(ns, dimensions, metric)
         })
         .await
+    }
+
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        retry_transient(self.policy, || self.inner.describe(ns)).await
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {
@@ -398,6 +402,10 @@ impl<T: VectorStore> VectorStore for Timeout<T> {
         .await
     }
 
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        self.run(self.inner.name(), self.inner.describe(ns)).await
+    }
+
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {
         self.run(self.inner.name(), self.inner.upsert_batch(ns, records))
             .await
@@ -510,6 +518,10 @@ impl<T: VectorStore> VectorStore for Batcher<T> {
         metric: DistanceMetric,
     ) -> Result<()> {
         self.inner.initialize(ns, dimensions, metric).await
+    }
+
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        self.inner.describe(ns).await
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {
@@ -807,6 +819,19 @@ impl<T: VectorStore> VectorStore for Traced<T> {
             otel.status_code = tracing::field::Empty,
         );
         run_connector_span(span, self.inner.initialize(ns, dimensions, metric)).await
+    }
+
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        let span = tracing::info_span!(
+            "connector_op",
+            otel.kind = "client",
+            db.system = self.inner.name(),
+            connector = self.inner.name(),
+            project_id = %ns,
+            op = "describe",
+            otel.status_code = tracing::field::Empty,
+        );
+        run_connector_span(span, self.inner.describe(ns)).await
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {

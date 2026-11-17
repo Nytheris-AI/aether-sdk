@@ -165,6 +165,8 @@ fn otel_traces_connect_memory_manager_cortex_and_adapters() {
                     content: Some("won't exist".into()),
                     embedding: None,
                     metadata: None,
+                    entities: None,
+                    relations: None,
                     expected_version: None,
                 },
             )
@@ -259,6 +261,8 @@ fn zero_boilerplate_memory_manager_emits_otel_client_spans() {
                     content: Some("conflict".into()),
                     embedding: None,
                     metadata: None,
+                    entities: None,
+                    relations: None,
                     expected_version: Some(999),
                 },
             )

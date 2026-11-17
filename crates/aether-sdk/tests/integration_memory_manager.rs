@@ -64,6 +64,8 @@ async fn remember_recall_update_cas_and_forget_lifecycle() {
                 content: Some("Alice uses Turbopuffer and Neo4j.".into()),
                 embedding: None,
                 metadata: None,
+                entities: None,
+                relations: None,
                 expected_version: Some(1),
             },
         )
@@ -79,6 +81,8 @@ async fn remember_recall_update_cas_and_forget_lifecycle() {
                 content: Some("stale write".into()),
                 embedding: None,
                 metadata: None,
+                entities: None,
+                relations: None,
                 expected_version: Some(1),
             },
         )
