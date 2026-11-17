@@ -61,3 +61,7 @@ required-features = ["chroma", "contract-suite"]
 [[test]]
 name = "driver_pgvector"
 required-features = ["pgvector", "contract-suite"]
+
+[[test]]
+name = "driver_neo4j"
+required-features = ["neo4j", "contract-suite"]
