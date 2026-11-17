@@ -685,6 +685,10 @@ pub trait VectorStore: OutboundConnector {
 pub trait GraphStore: OutboundConnector {
     async fn upsert_entities(&self, ns: &ProjectId, entities: &[Entity]) -> Result<()>;
 
+    /// Upserts provenance-tagged relations keyed by `(source_memory_id, source, target, relation_type)`.
+    ///
+    /// Repeating an upsert for an existing key replaces the stored edge in place (including
+    /// restoring an active `invalid_at = None` edge after prior retraction) rather than adding duplicates.
     async fn upsert_relations(
         &self,
         ns: &ProjectId,

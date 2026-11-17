@@ -560,7 +560,7 @@ async fn graph_temporal_provenance_and_retract<S: GraphStore>(store: &S) {
     let historical = store
         .neighborhood(
             &ns,
-            &[alice.id],
+            std::slice::from_ref(&alice.id),
             1,
             10,
             &TemporalFilter {
@@ -571,4 +571,98 @@ async fn graph_temporal_provenance_and_retract<S: GraphStore>(store: &S) {
         .await
         .unwrap();
     assert_eq!(historical.edges.len(), 2);
+
+    // Idempotent relation upserts: repeating or re-upserting after retraction replaces in place.
+    let mem3 = MemoryId::new();
+    let rel3 = Relation {
+        source: alice.id.clone(),
+        target: neo4j.id.clone(),
+        relation_type: "PREFERS".into(),
+        valid_at: t0,
+        invalid_at: None,
+    };
+    store
+        .upsert_relations(&ns, mem3, std::slice::from_ref(&rel3))
+        .await
+        .unwrap();
+    store
+        .upsert_relations(&ns, mem3, std::slice::from_ref(&rel3))
+        .await
+        .unwrap();
+    let total_for_mem3 = store
+        .neighborhood(
+            &ns,
+            std::slice::from_ref(&alice.id),
+            1,
+            25,
+            &TemporalFilter {
+                as_of: None,
+                active_only: false,
+            },
+        )
+        .await
+        .unwrap()
+        .edges
+        .into_iter()
+        .filter(|e| e.source_memory_id == mem3)
+        .count();
+    assert_eq!(total_for_mem3, 1);
+
+    store
+        .retract_memory_facts(&ns, mem3, t_retract)
+        .await
+        .unwrap();
+    let active_after_retract = store
+        .neighborhood(
+            &ns,
+            std::slice::from_ref(&alice.id),
+            1,
+            25,
+            &TemporalFilter::default(),
+        )
+        .await
+        .unwrap()
+        .edges
+        .into_iter()
+        .filter(|e| e.source_memory_id == mem3)
+        .count();
+    assert_eq!(active_after_retract, 0);
+
+    store
+        .upsert_relations(&ns, mem3, std::slice::from_ref(&rel3))
+        .await
+        .unwrap();
+    let active_after_reupsert = store
+        .neighborhood(
+            &ns,
+            std::slice::from_ref(&alice.id),
+            1,
+            25,
+            &TemporalFilter::default(),
+        )
+        .await
+        .unwrap()
+        .edges
+        .into_iter()
+        .filter(|e| e.source_memory_id == mem3)
+        .count();
+    assert_eq!(active_after_reupsert, 1);
+    let total_after_reupsert = store
+        .neighborhood(
+            &ns,
+            &[alice.id],
+            1,
+            25,
+            &TemporalFilter {
+                as_of: None,
+                active_only: false,
+            },
+        )
+        .await
+        .unwrap()
+        .edges
+        .into_iter()
+        .filter(|e| e.source_memory_id == mem3)
+        .count();
+    assert_eq!(total_after_reupsert, 1);
 }

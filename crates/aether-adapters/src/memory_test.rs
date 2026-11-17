@@ -547,18 +547,30 @@ impl GraphStore for InMemoryBackend {
         for rel in relations {
             let src_idx = ensure_node(entry, &rel.source);
             let dst_idx = ensure_node(entry, &rel.target);
-            entry.graph.add_edge(
-                src_idx,
-                dst_idx,
-                GraphEdge {
-                    source: rel.source.clone(),
-                    target: rel.target.clone(),
-                    relation_type: rel.relation_type.clone(),
-                    source_memory_id,
-                    valid_at: rel.valid_at,
-                    invalid_at: rel.invalid_at,
-                },
-            );
+            let new_edge = GraphEdge {
+                source: rel.source.clone(),
+                target: rel.target.clone(),
+                relation_type: rel.relation_type.clone(),
+                source_memory_id,
+                valid_at: rel.valid_at,
+                invalid_at: rel.invalid_at,
+            };
+            let existing = entry
+                .graph
+                .edges_connecting(src_idx, dst_idx)
+                .find(|edge_ref| {
+                    let w = edge_ref.weight();
+                    w.source_memory_id == source_memory_id
+                        && w.source == rel.source
+                        && w.target == rel.target
+                        && w.relation_type == rel.relation_type
+                })
+                .map(|edge_ref| edge_ref.id());
+            if let Some(edge_idx) = existing {
+                entry.graph[edge_idx] = new_edge;
+            } else {
+                entry.graph.add_edge(src_idx, dst_idx, new_edge);
+            }
         }
         Ok(())
     }
