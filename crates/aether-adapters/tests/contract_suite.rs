@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aether_adapters::contract;
-use aether_adapters::middleware::{Batcher, Resilient, RetryPolicy, Timeout, Traced};
+use aether_adapters::middleware::{jittered, Batcher, Resilient, RetryPolicy, Timeout, Traced};
 use aether_adapters::{FaultPoint, InMemoryBackend};
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
@@ -275,4 +275,14 @@ async fn in_memory_backend_injects_delete_and_graph_faults() {
         .await
         .unwrap();
     assert!(active.edges.is_empty());
+}
+
+#[test]
+fn jittered_backoff_stays_within_bounds() {
+    let max = Duration::from_millis(100);
+    assert_eq!(jittered(Duration::ZERO, 42), Duration::ZERO);
+    for seed in [0u64, 1, 7, 12345, u64::MAX] {
+        let d = jittered(max, seed);
+        assert!(d <= max, "jittered {d:?} exceeded {max:?}");
+    }
 }

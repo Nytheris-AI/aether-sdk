@@ -29,11 +29,23 @@ impl Default for RetryPolicy {
     }
 }
 
+pub fn jittered(backoff: Duration, random: u64) -> Duration {
+    if backoff.is_zero() {
+        return Duration::ZERO;
+    }
+    let nanos = backoff.as_nanos();
+    let capped = u128::from(random) % (nanos + 1);
+    Duration::from_nanos(u64::try_from(capped).unwrap_or(u64::MAX))
+}
+
 async fn retry_transient<F, Fut, T>(policy: RetryPolicy, mut op: F) -> Result<T>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T>>,
 {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+
     let mut attempt = 0;
     loop {
         match op().await {
@@ -41,14 +53,16 @@ where
             Err(err) if err.is_retryable() && attempt < policy.max_retries => {
                 let shift = attempt.min(10) as u32;
                 let backoff = policy.base_delay.saturating_mul(1u32 << shift);
+                let seed = RandomState::new().build_hasher().finish();
+                let delay = jittered(backoff, seed);
                 tracing::warn!(
                     attempt = attempt + 1,
                     max_retries = policy.max_retries,
-                    backoff_ms = backoff.as_millis() as u64,
+                    backoff_ms = delay.as_millis() as u64,
                     error = %err,
                     "retrying transient connector error"
                 );
-                tokio::time::sleep(backoff).await;
+                tokio::time::sleep(delay).await;
                 attempt += 1;
             }
             Err(err) => return Err(err),
