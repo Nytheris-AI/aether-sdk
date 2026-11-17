@@ -1,0 +1,120 @@
+{
+  "dataset": "aether-knowledge-lifecycle-v1",
+  "description": "Structured multi-tier, temporal knowledge graph and lifecycle-management dataset for testing transform -> incorporate -> update (CAS) -> temporal recall -> forget.",
+  "projects": [
+    {
+      "project_id": "arch-team-alpha",
+      "records": [
+        {
+          "id": "mem-vec-001",
+          "idempotency_key": "kb:arch-team-alpha:vec-001",
+          "tier": "semantic",
+          "scope": "project",
+          "content": "Team Alpha uses Qdrant as the primary vector index for production semantic search.",
+          "entities": [
+            { "id": "team:alpha", "name": "Team Alpha", "entity_type": "Team" },
+            { "id": "db:qdrant", "name": "Qdrant", "entity_type": "VectorDatabase" }
+          ],
+          "relations": [
+            {
+              "source": "team:alpha",
+              "target": "db:qdrant",
+              "relation_type": "USES_VECTOR_DB",
+              "valid_at": "2026-01-15T00:00:00Z",
+              "invalid_at": null
+            }
+          ],
+          "metadata": {
+            "domain": "infrastructure",
+            "confidence": 0.95,
+            "quarter": 1,
+            "active": true
+          }
+        },
+        {
+          "id": "mem-graph-002",
+          "idempotency_key": "kb:arch-team-alpha:graph-002",
+          "tier": "semantic",
+          "scope": "project",
+          "content": "Team Alpha stores entity provenance and temporal knowledge graphs in Neo4j.",
+          "entities": [
+            { "id": "team:alpha", "name": "Team Alpha", "entity_type": "Team" },
+            { "id": "db:neo4j", "name": "Neo4j", "entity_type": "GraphDatabase" }
+          ],
+          "relations": [
+            {
+              "source": "team:alpha",
+              "target": "db:neo4j",
+              "relation_type": "USES_GRAPH_DB",
+              "valid_at": "2026-01-15T00:00:00Z",
+              "invalid_at": null
+            }
+          ],
+          "metadata": {
+            "domain": "infrastructure",
+            "confidence": 0.98,
+            "quarter": 1,
+            "active": true
+          }
+        },
+        {
+          "id": "mem-proc-003",
+          "idempotency_key": "kb:arch-team-alpha:proc-003",
+          "tier": "procedural",
+          "scope": "project",
+          "content": "Run cargo test --workspace --all-features before merging any adapter PR.",
+          "entities": [
+            { "id": "team:alpha", "name": "Team Alpha", "entity_type": "Team" },
+            { "id": "proc:ci-gate", "name": "Workspace Test Gate", "entity_type": "Procedure" }
+          ],
+          "relations": [
+            {
+              "source": "team:alpha",
+              "target": "proc:ci-gate",
+              "relation_type": "ENFORCES",
+              "valid_at": "2026-02-01T00:00:00Z",
+              "invalid_at": null
+            }
+          ],
+          "metadata": {
+            "domain": "engineering",
+            "confidence": 1.0,
+            "quarter": 1,
+            "active": true
+          }
+        },
+        {
+          "id": "mem-sess-004",
+          "idempotency_key": "kb:arch-team-alpha:sess-004",
+          "tier": "episodic",
+          "scope": "session",
+          "content": "Temporary debugging note: Qdrant staging node restarted during load test.",
+          "entities": [
+            { "id": "db:qdrant", "name": "Qdrant", "entity_type": "VectorDatabase" }
+          ],
+          "relations": [],
+          "metadata": {
+            "domain": "operations",
+            "confidence": 0.7,
+            "quarter": 2,
+            "active": false
+          }
+        }
+      ],
+      "updates": [
+        {
+          "target_id": "mem-vec-001",
+          "new_content": "Team Alpha migrated from Qdrant to pgvector for unified SQL and vector storage.",
+          "new_metadata": {
+            "domain": "infrastructure",
+            "confidence": 0.99,
+            "quarter": 2,
+            "active": true,
+            "migrated_from": "qdrant"
+          }
+        }
+      ],
+      "forget_targets": ["mem-sess-004"]
+    }
+  ]
+}
