@@ -5,8 +5,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aether_core::{
-    redact_url_userinfo, AetherError, ConnectorCapabilities, ConnectorHealth, MemoryId, MemoryItem,
-    MemoryReceipt, MemoryScope, OutboundConnector, ProjectId, RecordStore, Result, SecretString,
+    redact_url_userinfo, AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome,
+    MemoryId, MemoryItem, MemoryReceipt, MemoryScope, OutboundConnector, PendingRecord, ProjectId,
+    RecordStore, Result, SecretString,
 };
 use async_trait::async_trait;
 use redis::aio::ConnectionManager;
@@ -271,6 +272,15 @@ impl OutboundConnector for RedisRecordStore {
 
 #[async_trait]
 impl RecordStore for RedisRecordStore {
+    async fn create(
+        &self,
+        _ns: &ProjectId,
+        _item: &MemoryItem,
+        _ttl: Option<Duration>,
+    ) -> Result<CreateOutcome> {
+        Err(AetherError::NotImplemented("redis::create"))
+    }
+
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
         let mut conn = self.manager.clone();
         let key = self.keys.record_key(ns, id);
@@ -500,5 +510,25 @@ impl RecordStore for RedisRecordStore {
             .await
             .map_err(map_redis_error)?;
         Ok(())
+    }
+
+    async fn get_many(&self, _ns: &ProjectId, _ids: &[MemoryId]) -> Result<Vec<MemoryItem>> {
+        Err(AetherError::NotImplemented("redis::get_many"))
+    }
+
+    async fn tombstone(&self, _ns: &ProjectId, _id: MemoryId) -> Result<Option<MemoryItem>> {
+        Err(AetherError::NotImplemented("redis::tombstone"))
+    }
+
+    async fn pending(&self, _limit: usize) -> Result<Vec<PendingRecord>> {
+        Err(AetherError::NotImplemented("redis::pending"))
+    }
+
+    async fn pending_for(&self, _ns: &ProjectId, _limit: usize) -> Result<Vec<MemoryItem>> {
+        Err(AetherError::NotImplemented("redis::pending_for"))
+    }
+
+    async fn mark_indexed(&self, _ns: &ProjectId, _id: MemoryId, _version: u64) -> Result<()> {
+        Err(AetherError::NotImplemented("redis::mark_indexed"))
     }
 }

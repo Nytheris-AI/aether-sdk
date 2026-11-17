@@ -487,6 +487,18 @@ pub struct MemoryReceipt {
     pub version: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CreateOutcome {
+    Created,
+    Duplicate(MemoryReceipt),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingRecord {
+    pub item: MemoryItem,
+    pub tombstone: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MemoryUpdate {
     pub content: Option<String>,
@@ -595,10 +607,19 @@ pub trait OutboundConnector: Send + Sync {
     async fn close(&self) -> Result<()>;
 }
 
-/// Unified L2 working-memory / record store contract (Redis/Valkey, SQLite, etc.).
+/// Unified record store contract (SQLite, Redis/Valkey, etc.).
 #[async_trait]
 pub trait RecordStore: OutboundConnector {
+    async fn create(
+        &self,
+        ns: &ProjectId,
+        item: &MemoryItem,
+        ttl: Option<Duration>,
+    ) -> Result<CreateOutcome>;
+
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>>;
+
+    async fn get_many(&self, ns: &ProjectId, ids: &[MemoryId]) -> Result<Vec<MemoryItem>>;
 
     async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()>;
 
@@ -617,6 +638,14 @@ pub trait RecordStore: OutboundConnector {
         expected_version: Option<u64>,
         new_item: &MemoryItem,
     ) -> Result<()>;
+
+    async fn tombstone(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>>;
+
+    async fn pending(&self, limit: usize) -> Result<Vec<PendingRecord>>;
+
+    async fn pending_for(&self, ns: &ProjectId, limit: usize) -> Result<Vec<MemoryItem>>;
+
+    async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()>;
 
     async fn recent(
         &self,
@@ -717,8 +746,21 @@ impl<T: OutboundConnector + ?Sized> OutboundConnector for Arc<T> {
 
 #[async_trait]
 impl<T: RecordStore + ?Sized> RecordStore for Arc<T> {
+    async fn create(
+        &self,
+        ns: &ProjectId,
+        item: &MemoryItem,
+        ttl: Option<Duration>,
+    ) -> Result<CreateOutcome> {
+        (**self).create(ns, item, ttl).await
+    }
+
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
         (**self).get(ns, id).await
+    }
+
+    async fn get_many(&self, ns: &ProjectId, ids: &[MemoryId]) -> Result<Vec<MemoryItem>> {
+        (**self).get_many(ns, ids).await
     }
 
     async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
@@ -747,6 +789,22 @@ impl<T: RecordStore + ?Sized> RecordStore for Arc<T> {
         (**self)
             .cas_update(ns, id, expected_version, new_item)
             .await
+    }
+
+    async fn tombstone(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
+        (**self).tombstone(ns, id).await
+    }
+
+    async fn pending(&self, limit: usize) -> Result<Vec<PendingRecord>> {
+        (**self).pending(limit).await
+    }
+
+    async fn pending_for(&self, ns: &ProjectId, limit: usize) -> Result<Vec<MemoryItem>> {
+        (**self).pending_for(ns, limit).await
+    }
+
+    async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()> {
+        (**self).mark_indexed(ns, id, version).await
     }
 
     async fn recent(

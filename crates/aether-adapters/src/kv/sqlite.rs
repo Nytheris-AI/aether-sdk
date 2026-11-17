@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use aether_core::{
-    AetherError, ConnectorCapabilities, ConnectorHealth, MemoryId, MemoryItem, MemoryReceipt,
-    MemoryScope, OutboundConnector, ProjectId, RecordStore, Result,
+    AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome, MemoryId, MemoryItem,
+    MemoryReceipt, MemoryScope, OutboundConnector, PendingRecord, ProjectId, RecordStore, Result,
 };
 use async_trait::async_trait;
 use rusqlite::{
@@ -185,6 +185,15 @@ impl OutboundConnector for SqliteRecordStore {
 
 #[async_trait]
 impl RecordStore for SqliteRecordStore {
+    async fn create(
+        &self,
+        _ns: &ProjectId,
+        _item: &MemoryItem,
+        _ttl: Option<Duration>,
+    ) -> Result<CreateOutcome> {
+        Err(AetherError::NotImplemented("sqlite::create"))
+    }
+
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
         let ns_str = ns.as_str().to_string();
         let id_str = id.to_string();
@@ -410,6 +419,26 @@ impl RecordStore for SqliteRecordStore {
             Ok(())
         })
         .await
+    }
+
+    async fn get_many(&self, _ns: &ProjectId, _ids: &[MemoryId]) -> Result<Vec<MemoryItem>> {
+        Err(AetherError::NotImplemented("sqlite::get_many"))
+    }
+
+    async fn tombstone(&self, _ns: &ProjectId, _id: MemoryId) -> Result<Option<MemoryItem>> {
+        Err(AetherError::NotImplemented("sqlite::tombstone"))
+    }
+
+    async fn pending(&self, _limit: usize) -> Result<Vec<PendingRecord>> {
+        Err(AetherError::NotImplemented("sqlite::pending"))
+    }
+
+    async fn pending_for(&self, _ns: &ProjectId, _limit: usize) -> Result<Vec<MemoryItem>> {
+        Err(AetherError::NotImplemented("sqlite::pending_for"))
+    }
+
+    async fn mark_indexed(&self, _ns: &ProjectId, _id: MemoryId, _version: u64) -> Result<()> {
+        Err(AetherError::NotImplemented("sqlite::mark_indexed"))
     }
 }
 

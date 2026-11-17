@@ -3,12 +3,13 @@
 //! Each suite uses freshly generated [`ProjectId`] namespaces so real shared
 //! backends can run them concurrently and repeatedly without cross-test interference.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use aether_core::{
-    AetherError, DistanceMetric, Entity, EntityId, FilterExpr, FilterValue, GraphStore, MemoryId,
-    MemoryInput, MemoryItem, MemoryReceipt, MemoryScope, ProjectId, ReceiptState, RecordStore,
-    Relation, TemporalFilter, VectorRecord, VectorStore,
+    AetherError, CreateOutcome, DistanceMetric, Entity, EntityId, FilterExpr, FilterValue,
+    GraphStore, MemoryId, MemoryInput, MemoryItem, MemoryReceipt, MemoryScope, PendingRecord,
+    ProjectId, ReceiptState, RecordStore, Relation, TemporalFilter, VectorRecord, VectorStore,
 };
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
@@ -102,6 +103,179 @@ pub async fn record_store<S: RecordStore>(store: &S) {
 
     store.delete(&ns_a, item1.id).await.unwrap();
     assert!(store.get(&ns_a, item1.id).await.unwrap().is_none());
+}
+
+/// Verifies versioned `RecordStore` contract: `create`, `pending`, `mark_indexed`, `get_many`, `tombstone`.
+pub async fn record_store_versioned<S: RecordStore>(store: &S) {
+    let ns_a = fresh_project("recv-a");
+
+    // Versioned records: create, pending/pending_for, mark_indexed, get_many, tombstone.
+    let mut v_input = MemoryInput::new(ns_a.clone(), "Versioned record");
+    v_input.idempotency_key = Some("v-idem-1".into());
+    let v_item = MemoryItem::from_input(v_input, 1);
+
+    let out1 = store.create(&ns_a, &v_item, None).await.unwrap();
+    assert_eq!(out1, CreateOutcome::Created);
+
+    // Duplicate idempotency key returns Duplicate(Buffered) before indexing.
+    let mut dup_input = MemoryInput::new(ns_a.clone(), "Different body");
+    dup_input.idempotency_key = Some("v-idem-1".into());
+    let dup_item = MemoryItem::from_input(dup_input, 1);
+    let out2 = store.create(&ns_a, &dup_item, None).await.unwrap();
+    assert_eq!(
+        out2,
+        CreateOutcome::Duplicate(MemoryReceipt {
+            memory_id: v_item.id,
+            state: ReceiptState::Buffered,
+            version: 1,
+        })
+    );
+
+    // Retried create for same MemoryId without idempotency key succeeds as Created and stores 1 record.
+    let mut retry_item = v_item.clone();
+    retry_item.idempotency_key = None;
+    assert_eq!(
+        store.create(&ns_a, &retry_item, None).await.unwrap(),
+        CreateOutcome::Created
+    );
+    assert_eq!(store.get_many(&ns_a, &[v_item.id]).await.unwrap().len(), 1);
+
+    let pf = store.pending_for(&ns_a, 100).await.unwrap();
+    assert!(pf.iter().any(|x| x.id == v_item.id));
+    let all_p = store.pending(1000).await.unwrap();
+    assert!(all_p
+        .iter()
+        .any(|p: &PendingRecord| p.item.id == v_item.id && !p.tombstone));
+
+    // Stale mark_indexed is a no-op; matching mark_indexed transitions to Persisted.
+    store.mark_indexed(&ns_a, v_item.id, 99).await.unwrap();
+    assert!(store
+        .pending_for(&ns_a, 100)
+        .await
+        .unwrap()
+        .iter()
+        .any(|x| x.id == v_item.id));
+    store.mark_indexed(&ns_a, v_item.id, 1).await.unwrap();
+    assert!(!store
+        .pending_for(&ns_a, 100)
+        .await
+        .unwrap()
+        .iter()
+        .any(|x| x.id == v_item.id));
+
+    let out_after_idx = store.create(&ns_a, &dup_item, None).await.unwrap();
+    assert_eq!(
+        out_after_idx,
+        CreateOutcome::Duplicate(MemoryReceipt {
+            memory_id: v_item.id,
+            state: ReceiptState::Persisted,
+            version: 1,
+        })
+    );
+
+    // CAS update puts the record back in pending_for.
+    let mut v_item_2 = v_item.clone();
+    v_item_2.content = "Versioned record v2".into();
+    v_item_2.version = 2;
+    store
+        .cas_update(&ns_a, v_item.id, Some(1), &v_item_2)
+        .await
+        .unwrap();
+    assert!(store
+        .pending_for(&ns_a, 100)
+        .await
+        .unwrap()
+        .iter()
+        .any(|x| x.id == v_item.id && x.version == 2));
+    store.mark_indexed(&ns_a, v_item.id, 2).await.unwrap();
+
+    // Tombstone bumps version, hides from get/get_many/pending_for, releases idempotency key,
+    // stays in pending(tombstone: true) until mark_indexed removes it.
+    let tomb = store.tombstone(&ns_a, v_item.id).await.unwrap().unwrap();
+    assert_eq!(tomb.version, 3);
+    assert!(store.get(&ns_a, v_item.id).await.unwrap().is_none());
+    assert!(store
+        .get_many(&ns_a, &[v_item.id])
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(!store
+        .pending_for(&ns_a, 100)
+        .await
+        .unwrap()
+        .iter()
+        .any(|x| x.id == v_item.id));
+    assert!(store
+        .pending(1000)
+        .await
+        .unwrap()
+        .iter()
+        .any(|p| p.item.id == v_item.id && p.tombstone && p.item.version == 3));
+    store.mark_indexed(&ns_a, v_item.id, 3).await.unwrap();
+    assert!(!store
+        .pending(1000)
+        .await
+        .unwrap()
+        .iter()
+        .any(|p| p.item.id == v_item.id));
+    assert!(store.tombstone(&ns_a, v_item.id).await.unwrap().is_none());
+
+    // Released idempotency key can now be reused.
+    let mut reuse_input = MemoryInput::new(ns_a.clone(), "Reused key");
+    reuse_input.idempotency_key = Some("v-idem-1".into());
+    let reuse_item = MemoryItem::from_input(reuse_input, 1);
+    assert_eq!(
+        store.create(&ns_a, &reuse_item, None).await.unwrap(),
+        CreateOutcome::Created
+    );
+
+    // Expired records from create are invisible to get and pending.
+    let exp_item = MemoryItem::from_input(MemoryInput::new(ns_a.clone(), "Short TTL"), 1);
+    store
+        .create(&ns_a, &exp_item, Some(Duration::from_millis(20)))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(35)).await;
+    assert!(store.get(&ns_a, exp_item.id).await.unwrap().is_none());
+    assert!(!store
+        .pending(1000)
+        .await
+        .unwrap()
+        .iter()
+        .any(|p| p.item.id == exp_item.id));
+}
+
+/// Verifies concurrent `create` calls with one idempotency key produce exactly one record.
+pub async fn record_store_concurrent_idempotency<S: RecordStore + 'static>(store: Arc<S>) {
+    let ns = fresh_project("rec-conc");
+    let mut handles = Vec::with_capacity(16);
+    for idx in 0..16 {
+        let store = Arc::clone(&store);
+        let ns = ns.clone();
+        handles.push(tokio::spawn(async move {
+            let mut input = MemoryInput::new(ns.clone(), format!("Concurrent {idx}"));
+            input.idempotency_key = Some("shared-conc-key".into());
+            let item = MemoryItem::from_input(input, 1);
+            let out = store.create(&ns, &item, None).await.unwrap();
+            (item.id, out)
+        }));
+    }
+
+    let mut created_count = 0usize;
+    let mut resolved_ids = Vec::with_capacity(16);
+    for handle in handles {
+        let (local_id, outcome) = handle.await.unwrap();
+        match outcome {
+            CreateOutcome::Created => {
+                created_count += 1;
+                resolved_ids.push(local_id);
+            }
+            CreateOutcome::Duplicate(receipt) => resolved_ids.push(receipt.memory_id),
+        }
+    }
+    assert_eq!(created_count, 1);
+    let first = resolved_ids[0];
+    assert!(resolved_ids.iter().all(|id| *id == first));
 }
 
 /// Verifies `VectorStore` contract: namespace isolation, upsert/delete/dimension checks, and filtering.

@@ -34,6 +34,13 @@ async fn contract_record_store_in_memory_through_middleware() {
         RetryPolicy::default(),
     ));
     contract::record_store(&store).await;
+    contract::record_store_versioned(&store).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn contract_record_store_concurrent_idempotency_in_memory() {
+    let backend = Arc::new(InMemoryBackend::new());
+    contract::record_store_concurrent_idempotency(backend).await;
 }
 
 struct FlakyStore {
