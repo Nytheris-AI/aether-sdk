@@ -6,6 +6,9 @@ website/node_modules/
 website/build/
 website/.docusaurus/
 
+# Local dev state
+.aether/
+
 # Environments, secrets & logs
 .env
 .env.*
