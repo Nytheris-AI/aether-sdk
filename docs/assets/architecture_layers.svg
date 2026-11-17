@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 420" role="img" aria-label="Aether layers: inbound facade, gateway core, outbound adapters"><title>Aether layers</title><style>text{font-family:Inter,system-ui,sans-serif;fill:#1f2937}.t{font-size:15px;font-weight:600}.s{font-size:12px;fill:#6b7280}.h{font-size:11px;font-weight:700;letter-spacing:.08em;fill:#6b7280}.b{stroke-width:1.5;rx:10}.in{fill:#e0f2fe;stroke:#0284c7}.co{fill:#ede9fe;stroke:#7c3aed}.ou{fill:#dcfce7;stroke:#16a34a}.ln{stroke:#6b7280;stroke-width:1.5;fill:none;marker-end:url(#a)}.bg{fill:#fff;stroke:#e5e7eb;stroke-width:1.5}</style><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6b7280"/></marker></defs>
+<rect class="bg" width="760" height="420" rx="14"/>
+<text class="h" x="30" y="38">1 INBOUND  aether-sdk</text>
+<rect class="b in" x="30" y="50" width="700" height="56"/><text class="t" x="380" y="84" text-anchor="middle">MemoryManager  (remember / recall / update / forget)</text>
+<path class="ln" d="M380 106V146"/>
+<text class="h" x="30" y="140">2 GATEWAY CORE  aether-cortex</text>
+<rect class="b co" x="30" y="150" width="160" height="70"/><text class="t" x="110" y="180" text-anchor="middle">PolicyRouter</text><text class="s" x="110" y="200" text-anchor="middle">deterministic, no LLM</text>
+<rect class="b co" x="210" y="150" width="160" height="70"/><text class="t" x="290" y="180" text-anchor="middle">HotContextCache</text><text class="s" x="290" y="200" text-anchor="middle">L1, in process</text>
+<rect class="b co" x="390" y="150" width="160" height="70"/><text class="t" x="470" y="180" text-anchor="middle">IngestionBuffer</text><text class="s" x="470" y="200" text-anchor="middle">write-behind</text>
+<rect class="b co" x="570" y="150" width="160" height="70"/><text class="t" x="650" y="180" text-anchor="middle">QueryPlanner</text><text class="s" x="650" y="200" text-anchor="middle">hybrid recall + PPR</text>
+<path class="ln" d="M380 220V260"/>
+<text class="h" x="30" y="254">3 OUTBOUND  aether-adapters</text>
+<rect class="b ou" x="30" y="264" width="700" height="40"/><text class="t" x="380" y="290" text-anchor="middle">Traced&lt;Resilient&lt;Timeout&lt;Batcher&lt;driver&gt;&gt;&gt;&gt;</text>
+<path class="ln" d="M380 304V334"/>
+<rect class="b ou" x="30" y="338" width="220" height="64"/><text class="t" x="140" y="366" text-anchor="middle">L2 KvStore</text><text class="s" x="140" y="386" text-anchor="middle">Redis / Valkey, SQLite</text>
+<rect class="b ou" x="270" y="338" width="220" height="64"/><text class="t" x="380" y="366" text-anchor="middle">L3 VectorStore</text><text class="s" x="380" y="386" text-anchor="middle">Qdrant, Turbopuffer, pgvector</text>
+<rect class="b ou" x="510" y="338" width="220" height="64"/><text class="t" x="620" y="366" text-anchor="middle">L3 GraphStore</text><text class="s" x="620" y="386" text-anchor="middle">Neo4j</text>
+</svg>
