@@ -9,9 +9,19 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     groups:
+      opentelemetry-minor-patch:
+        patterns:
+          - "opentelemetry*"
+          - "tracing-opentelemetry"
+        update-types:
+          - "minor"
+          - "patch"
       rust-minor-patch:
         patterns:
           - "*"
+        exclude-patterns:
+          - "opentelemetry*"
+          - "tracing-opentelemetry"
         update-types:
           - "minor"
           - "patch"
@@ -25,9 +35,26 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     groups:
+      docusaurus-minor-patch:
+        patterns:
+          - "@docusaurus/*"
+        update-types:
+          - "minor"
+          - "patch"
+      types-and-typescript-minor-patch:
+        patterns:
+          - "@types/*"
+          - "typescript"
+        update-types:
+          - "minor"
+          - "patch"
       website-minor-patch:
         patterns:
           - "*"
+        exclude-patterns:
+          - "@docusaurus/*"
+          - "@types/*"
+          - "typescript"
         update-types:
           - "minor"
           - "patch"
@@ -41,6 +68,9 @@ updates:
     commit-message:
       prefix: "chore(ci)"
     groups:
-      github-actions:
+      github-actions-minor-patch:
         patterns:
           - "*"
+        update-types:
+          - "minor"
+          - "patch"
