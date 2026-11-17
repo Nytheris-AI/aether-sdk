@@ -1,5 +1,9 @@
 //! Gateway core orchestration for Aether SDK:
-//! `PolicyRouter`, `HotContextCache`, `IngestionBuffer`, `QueryPlanner`, and `PersonalizedPageRank`.
+//! `PolicyRouter`, `HotContextCache`, `IngestionBuffer`, `QueryPlanner`, `Indexer`, and `PersonalizedPageRank`.
+
+pub mod indexer;
+
+pub use indexer::{index_metadata, Indexer, PassReport};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
