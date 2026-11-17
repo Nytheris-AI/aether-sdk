@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use aether_core::{
-    AetherError, ConnectorCapabilities, ConnectorHealth, ConsistencyMode, DistanceMetric, Entity,
-    EntityId, FilterExpr, FilterValue, GraphStore, MemoryId, MemoryInbound, MemoryInput,
-    MemoryItem, MemoryReceipt, MemoryScope, MemoryTier, OutboundConnector, ProjectId, RecallMode,
-    RecallQuery, ReceiptState, RecordStore, Relation, TemporalFilter, VectorRecord, VectorStore,
-    WriteDurability,
+    redact_url_userinfo, AetherError, ConnectorCapabilities, ConnectorHealth, ConsistencyMode,
+    DistanceMetric, Entity, EntityId, FilterExpr, FilterValue, GraphStore, MemoryId, MemoryInbound,
+    MemoryInput, MemoryItem, MemoryReceipt, MemoryScope, MemoryTier, OutboundConnector, ProjectId,
+    RecallMode, RecallQuery, ReceiptState, RecordStore, Relation, SecretString, TemporalFilter,
+    VectorRecord, VectorStore, WriteDurability,
 };
 use chrono::Utc;
 use uuid::Uuid;
@@ -210,4 +210,30 @@ fn filter_expr_matches_metadata() {
     assert!(!range.matches(&meta));
     assert!(FilterExpr::Or(vec![eq.clone(), range.clone()]).matches(&meta));
     assert!(!FilterExpr::And(vec![eq, range]).matches(&meta));
+}
+
+#[test]
+fn secret_string_redacts_debug_and_display_and_exposes_explicitly() {
+    let secret = SecretString::new("my-secret-token");
+    assert_eq!(format!("{secret:?}"), "[REDACTED]");
+    assert_eq!(format!("{secret}"), "[REDACTED]");
+    assert!(!format!("{secret:?}").contains("my-secret-token"));
+    assert_eq!(secret.expose_secret(), "my-secret-token");
+}
+
+#[test]
+fn redact_url_userinfo_strips_credentials_from_authority_only() {
+    assert_eq!(
+        redact_url_userinfo("https://alice:dbpass123@otel.example.com:4317/v1/traces"),
+        "https://[REDACTED]@otel.example.com:4317/v1/traces"
+    );
+    assert_eq!(
+        redact_url_userinfo("redis://:cachepass@localhost:6379/0"),
+        "redis://[REDACTED]@localhost:6379/0"
+    );
+    assert_eq!(
+        redact_url_userinfo("http://localhost:4317/v1?user=a@b.com"),
+        "http://localhost:4317/v1?user=a@b.com"
+    );
+    assert_eq!(redact_url_userinfo("not-a-url"), "not-a-url");
 }

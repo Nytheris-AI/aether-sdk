@@ -138,6 +138,57 @@ impl fmt::Display for EntityId {
     }
 }
 
+/// Opaque credential wrapper whose `Debug` and `Display` implementations always redact the value.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SecretString(String);
+
+impl SecretString {
+    pub fn new(secret: impl Into<String>) -> Self {
+        Self(secret.into())
+    }
+
+    pub fn expose_secret(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for SecretString {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&str> for SecretString {
+    fn from(value: &str) -> Self {
+        Self(value.to_owned())
+    }
+}
+
+impl fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
+impl fmt::Display for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
+/// Strips `userinfo@` credentials from the authority portion of a URL or DSN string.
+pub fn redact_url_userinfo(raw: &str) -> String {
+    let Some((scheme, rest)) = raw.split_once("://") else {
+        return raw.to_string();
+    };
+    let auth_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, suffix) = rest.split_at(auth_end);
+    let Some((_, host)) = authority.rsplit_once('@') else {
+        return raw.to_string();
+    };
+    format!("{scheme}://[REDACTED]@{host}{suffix}")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryTier {
