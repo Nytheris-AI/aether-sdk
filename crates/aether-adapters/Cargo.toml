@@ -45,3 +45,7 @@ required-features = ["sqlite", "contract-suite"]
 [[test]]
 name = "driver_redis"
 required-features = ["redis", "contract-suite"]
+
+[[test]]
+name = "driver_turbopuffer"
+required-features = ["turbopuffer", "contract-suite"]
