@@ -36,3 +36,8 @@ sqlx = { version = "0.9", default-features = false, features = ["postgres", "run
 aether-adapters = { path = ".", features = ["contract-suite"] }
 axum = "0.8"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+
+[[test]]
+name = "driver_sqlite"
+required-features = ["sqlite", "contract-suite"]
