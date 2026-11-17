@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" role="img" aria-label="Write path persists to L1 and L2 then flushes to L3; read path merges unflushed data with L3"><title>Write and read path</title><style>text{font-family:Inter,system-ui,sans-serif;fill:#1f2937}.t{font-size:15px;font-weight:600}.s{font-size:12px;fill:#6b7280}.h{font-size:11px;font-weight:700;letter-spacing:.08em;fill:#6b7280}.b{stroke-width:1.5;rx:10}.in{fill:#e0f2fe;stroke:#0284c7}.co{fill:#ede9fe;stroke:#7c3aed}.ou{fill:#dcfce7;stroke:#16a34a}.ln{stroke:#6b7280;stroke-width:1.5;fill:none;marker-end:url(#a)}.bg{fill:#fff;stroke:#e5e7eb;stroke-width:1.5}</style><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6b7280"/></marker></defs>
+<rect class="bg" width="760" height="330" rx="14"/>
+<text class="h" x="30" y="34">WRITE: remember()</text>
+<rect class="b in" x="30" y="46" width="120" height="56"/><text class="t" x="90" y="79" text-anchor="middle">remember</text>
+<rect class="b co" x="190" y="46" width="130" height="56"/><text class="t" x="255" y="70" text-anchor="middle">L1 + L2</text><text class="s" x="255" y="89" text-anchor="middle">cache + KV</text>
+<rect class="b co" x="360" y="46" width="150" height="56"/><text class="t" x="435" y="70" text-anchor="middle">IngestionBuffer</text><text class="s" x="435" y="89" text-anchor="middle">receipt: Buffered</text>
+<rect class="b ou" x="550" y="46" width="180" height="56"/><text class="t" x="640" y="70" text-anchor="middle">L3 Vector + Graph</text><text class="s" x="640" y="89" text-anchor="middle">receipt: Persisted</text>
+<path class="ln" d="M150 74H188"/><path class="ln" d="M320 74H358"/><path class="ln" d="M510 74H548"/>
+<text class="s" x="530" y="124" text-anchor="middle">async flush (WaitFlush blocks here)</text>
+<line x1="30" y1="150" x2="730" y2="150" stroke="#e5e7eb" stroke-width="1.5"/>
+<text class="h" x="30" y="184">READ: recall()</text>
+<rect class="b in" x="30" y="196" width="120" height="56"/><text class="t" x="90" y="229" text-anchor="middle">recall</text>
+<rect class="b co" x="190" y="196" width="130" height="56"/><text class="t" x="255" y="220" text-anchor="middle">QueryPlanner</text><text class="s" x="255" y="239" text-anchor="middle">plans the query</text>
+<rect class="b co" x="360" y="196" width="150" height="56"/><text class="t" x="435" y="220" text-anchor="middle">Unflushed data</text><text class="s" x="435" y="239" text-anchor="middle">L1 + L2 + buffer</text>
+<rect class="b ou" x="550" y="196" width="180" height="56"/><text class="t" x="640" y="220" text-anchor="middle">L3 Vector + Graph</text><text class="s" x="640" y="239" text-anchor="middle">durable results</text>
+<path class="ln" d="M150 224H188"/><path class="ln" d="M320 224H358"/><path class="ln" d="M510 224H548"/>
+<text class="s" x="380" y="284" text-anchor="middle">ReadYourWrites merges both sets. Eventual reads L3 only.</text>
+</svg>

@@ -47,6 +47,8 @@ crates/aether-adapters/
 
 ## 3. Shared Supertrait & Decorator Inheritance
 
+![Nested middleware around a driver](../assets/middleware_stack.svg)
+
 In Rust, shared driver behavior is composed via a base supertrait (`OutboundConnector`) plus generic decorator wrappers (`Traced<Resilient<Timeout<Batcher<T>>>>`):
 
 ```rust

@@ -9,32 +9,7 @@ The [pieces-first SDK design](./sdk-design.md) makes every component below usabl
 
 ## High-Level Architecture
 
-```mermaid
-graph TD
-    subgraph Inbound ["1. Inbound (aether-sdk)"]
-        MM[MemoryManager / MemoryInbound]
-    end
-
-    subgraph Core ["2. Gateway Core (aether-cortex)"]
-        PR[PolicyRouter]
-        HC["L1: HotContextCache"]
-        IB["IngestionBuffer (Write-Behind)"]
-        QP["QueryPlanner + PPR (petgraph)"]
-    end
-
-    subgraph Outbound ["3. Outbound (aether-adapters)"]
-        MW["Middleware: Traced<Resilient<Timeout<Batcher>>>"]
-        KV["L2 KvStore (Redis/Valkey, SQLite)"]
-        VEC["L3 VectorStore (Turbopuffer, Qdrant, Chroma, pgvector)"]
-        GRP["L3 GraphStore (Neo4j — provenance & temporal)"]
-    end
-
-    MM --> PR & QP
-    PR --> HC & KV & IB
-    IB --> MW
-    QP --> HC & KV & IB & MW
-    MW --> KV & VEC & GRP
-```
+![Aether layers: inbound, gateway core, outbound](../assets/architecture_layers.svg)
 
 ## Workspace Crates
 
