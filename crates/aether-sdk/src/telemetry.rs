@@ -1,6 +1,8 @@
 //! Opt-in OpenTelemetry OTLP trace & log initialization preset (enabled via `feature = "otel"`).
 
-use aether_core::{AetherError, Result};
+use std::fmt as std_fmt;
+
+use aether_core::{redact_url_userinfo, AetherError, Result};
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry::KeyValue;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
@@ -23,13 +25,26 @@ pub enum LogFormat {
 }
 
 /// Configuration for the one-line OpenTelemetry OTLP trace & log preset.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OtelConfig {
     pub service_name: String,
     pub otlp_endpoint: Option<String>,
     pub env_filter: Option<String>,
     pub log_format: LogFormat,
     pub otlp_logs: bool,
+}
+
+impl std_fmt::Debug for OtelConfig {
+    fn fmt(&self, f: &mut std_fmt::Formatter<'_>) -> std_fmt::Result {
+        let redacted_endpoint = self.otlp_endpoint.as_deref().map(redact_url_userinfo);
+        f.debug_struct("OtelConfig")
+            .field("service_name", &self.service_name)
+            .field("otlp_endpoint", &redacted_endpoint)
+            .field("env_filter", &self.env_filter)
+            .field("log_format", &self.log_format)
+            .field("otlp_logs", &self.otlp_logs)
+            .finish()
+    }
 }
 
 impl OtelConfig {
