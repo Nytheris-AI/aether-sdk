@@ -1,31 +1,30 @@
 # Contributing to Aether SDK
 
-Thank you for considering contributing to **Aether SDK**!
+Thank you for considering contributing to **Aether SDK**! Please also read [AGENTS.md](AGENTS.md) for commit and TDD conventions.
 
 ## Development Setup
 
-We use [`uv`](https://docs.astral.sh/uv/) for dependency management and Python 3.10+.
+Install a stable Rust toolchain with `rustfmt` and `clippy`:
 
 ```bash
 git clone https://github.com/Nytheris-AI/aether-sdk.git
 cd aether-sdk
-uv sync --group dev
+cargo test --workspace --all-features
 ```
 
 ## Running Checks
 
-Before opening a pull request, please run the linter, type checker, and unit tests:
+Before opening a pull request, verify the full workspace gate passes:
 
 ```bash
-uv run ruff check src tests
-uv run ruff format --check src tests
-uv run mypy src
-uv run pytest tests/unit
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
 ```
 
 ## Documentation
 
-Documentation is built with Docusaurus from `docs/` and `website/`:
+Documentation lives in `docs/` and is built with Docusaurus from `website/`:
 
 ```bash
 cd website
@@ -35,7 +34,7 @@ npm run start
 
 ## Pull Requests
 
-1. Fork the repository and create a feature branch from `main`.
-2. Add or update tests for any new functionality or bug fixes.
-3. Ensure all checks pass locally.
-4. Open a pull request with a clear description of the problem and solution.
+1. Create a focused branch from `main`.
+2. Follow TDD (Red - Green - Refactor) and keep commits small and atomic.
+3. Ensure formatting, clippy (`-D warnings`), and all workspace tests pass locally.
+4. Open a pull request with a clear description of the change and verification output.
