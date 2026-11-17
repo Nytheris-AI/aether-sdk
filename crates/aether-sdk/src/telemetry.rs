@@ -4,12 +4,10 @@ use std::fmt as std_fmt;
 
 use aether_core::{redact_url_userinfo, AetherError, Result};
 use opentelemetry::trace::TracerProvider as _;
-use opentelemetry::KeyValue;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::{LogExporter, SpanExporter, WithExportConfig};
-use opentelemetry_sdk::logs::LoggerProvider;
-use opentelemetry_sdk::runtime::Tokio;
-use opentelemetry_sdk::trace::TracerProvider;
+use opentelemetry_sdk::logs::SdkLoggerProvider;
+use opentelemetry_sdk::trace::SdkTracerProvider;
 use opentelemetry_sdk::Resource;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -81,10 +79,10 @@ impl OtelConfig {
     }
 }
 
-/// Guard that flushes and shuts down the OpenTelemetry `TracerProvider` and `LoggerProvider` on drop.
+/// Guard that flushes and shuts down the OpenTelemetry `SdkTracerProvider` and `SdkLoggerProvider` on drop.
 pub struct TelemetryGuard {
-    tracer_provider: Option<TracerProvider>,
-    logger_provider: Option<LoggerProvider>,
+    tracer_provider: Option<SdkTracerProvider>,
+    logger_provider: Option<SdkLoggerProvider>,
 }
 
 impl TelemetryGuard {
@@ -111,7 +109,9 @@ impl Drop for TelemetryGuard {
 /// Idempotent: if a global `tracing` subscriber is already installed by the host application,
 /// this returns `Ok(TelemetryGuard)` without panicking so SDK spans still flow into the host's pipeline.
 pub fn init_otel(config: OtelConfig) -> Result<TelemetryGuard> {
-    let resource = Resource::new(vec![KeyValue::new("service.name", config.service_name)]);
+    let resource = Resource::builder()
+        .with_service_name(config.service_name)
+        .build();
 
     let mut span_exporter = SpanExporter::builder().with_tonic();
     if let Some(endpoint) = &config.otlp_endpoint {
@@ -122,9 +122,9 @@ pub fn init_otel(config: OtelConfig) -> Result<TelemetryGuard> {
         message: format!("failed to build OTLP span exporter: {e}"),
     })?;
 
-    let tracer_provider = TracerProvider::builder()
+    let tracer_provider = SdkTracerProvider::builder()
         .with_resource(resource.clone())
-        .with_batch_exporter(span_exporter, Tokio)
+        .with_batch_exporter(span_exporter)
         .build();
     let tracer = tracer_provider.tracer("aether-sdk");
     let otel_trace_layer = tracing_opentelemetry::layer().with_tracer(tracer);
@@ -139,9 +139,9 @@ pub fn init_otel(config: OtelConfig) -> Result<TelemetryGuard> {
             message: format!("failed to build OTLP log exporter: {e}"),
         })?;
         Some(
-            LoggerProvider::builder()
+            SdkLoggerProvider::builder()
                 .with_resource(resource)
-                .with_batch_exporter(log_exporter, Tokio)
+                .with_batch_exporter(log_exporter)
                 .build(),
         )
     } else {
