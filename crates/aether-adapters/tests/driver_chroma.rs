@@ -621,4 +621,28 @@ async fn chroma_distance_metrics_filters_and_validation() {
 
     let empty_url_err = ChromaVectorStore::new(test_config("   ".into(), None));
     assert!(matches!(empty_url_err, Err(AetherError::InvalidInput(_))));
+
+    let ns_edge = ProjectId::new(format!("edge-{}", Uuid::new_v4())).unwrap();
+    store
+        .initialize(&ns_edge, 2, DistanceMetric::Cosine)
+        .await
+        .unwrap();
+    let nan_err = store
+        .upsert_batch(
+            &ns_edge,
+            &[VectorRecord {
+                id: MemoryId::new(),
+                vector: vec![f32::NAN, 1.0],
+                metadata: json!({}),
+            }],
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(nan_err, AetherError::InvalidInput(_)));
+
+    let empty_or_hits = store
+        .search(&ns_edge, &[1.0, 0.0], 5, Some(&FilterExpr::Or(vec![])))
+        .await
+        .unwrap();
+    assert!(empty_or_hits.is_empty());
 }

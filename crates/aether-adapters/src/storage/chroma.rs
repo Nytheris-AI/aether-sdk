@@ -135,7 +135,11 @@ impl ChromaVectorStore {
     }
 
     async fn decode_json<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
-        resp.json::<T>().await.map_err(|e| AetherError::Permanent {
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| http::map_transport_err(CONNECTOR, e))?;
+        serde_json::from_slice::<T>(&bytes).map_err(|e| AetherError::Permanent {
             connector: CONNECTOR,
             message: format!("failed to decode chroma response: {e}"),
         })
@@ -285,6 +289,12 @@ impl VectorStore for ChromaVectorStore {
                     rec.vector.len()
                 )));
             }
+            if rec.vector.iter().any(|x| !x.is_finite()) {
+                return Err(AetherError::InvalidInput(format!(
+                    "vector for record {} contains non-finite values",
+                    rec.id
+                )));
+            }
             let meta = match &rec.metadata {
                 Value::Object(_) => rec.metadata.clone(),
                 Value::Null => json!({}),
@@ -339,12 +349,21 @@ impl VectorStore for ChromaVectorStore {
                 query_vector.len()
             )));
         }
+        if query_vector.iter().any(|x| !x.is_finite()) {
+            return Err(AetherError::InvalidInput(
+                "query vector contains non-finite values".to_string(),
+            ));
+        }
         if top_k == 0 {
             return Ok(Vec::new());
         }
 
         let where_clause = match filter {
-            Some(expr) => translate_filter(expr)?,
+            Some(expr) => match translate_filter(expr)? {
+                TranslatedFilter::MatchAll => None,
+                TranslatedFilter::Unsatisfiable => return Ok(Vec::new()),
+                TranslatedFilter::Clause(clause) => Some(clause),
+            },
             None => None,
         };
 
@@ -422,18 +441,27 @@ fn parse_query_matches(resp: QueryResponse, metric: DistanceMetric) -> Result<Ve
     Ok(matches)
 }
 
-fn translate_filter(expr: &FilterExpr) -> Result<Option<Value>> {
+enum TranslatedFilter {
+    MatchAll,
+    Unsatisfiable,
+    Clause(Value),
+}
+
+fn translate_filter(expr: &FilterExpr) -> Result<TranslatedFilter> {
     match expr {
         FilterExpr::Eq { field, value } => {
             let v = filter_value_to_json(value)?;
-            Ok(Some(json!({ field: { "$eq": v } })))
+            Ok(TranslatedFilter::Clause(json!({ field: { "$eq": v } })))
         }
         FilterExpr::In { field, values } => {
+            if values.is_empty() {
+                return Ok(TranslatedFilter::Unsatisfiable);
+            }
             let list = values
                 .iter()
                 .map(filter_value_to_json)
                 .collect::<Result<Vec<_>>>()?;
-            Ok(Some(json!({ field: { "$in": list } })))
+            Ok(TranslatedFilter::Clause(json!({ field: { "$in": list } })))
         }
         FilterExpr::Range { field, gte, lte } => translate_range(field, *gte, *lte),
         FilterExpr::And(exprs) => translate_composite("$and", exprs, false),
@@ -441,7 +469,7 @@ fn translate_filter(expr: &FilterExpr) -> Result<Option<Value>> {
     }
 }
 
-fn translate_range(field: &str, gte: Option<f64>, lte: Option<f64>) -> Result<Option<Value>> {
+fn translate_range(field: &str, gte: Option<f64>, lte: Option<f64>) -> Result<TranslatedFilter> {
     let mut clauses = Vec::new();
     if let Some(min) = gte {
         if !min.is_finite() {
@@ -463,32 +491,39 @@ fn translate_range(field: &str, gte: Option<f64>, lte: Option<f64>) -> Result<Op
         0 => Err(AetherError::InvalidInput(
             "range filter must specify at least one of gte or lte".to_string(),
         )),
-        1 => Ok(clauses.into_iter().next()),
-        _ => Ok(Some(json!({ "$and": clauses }))),
+        1 => Ok(TranslatedFilter::Clause(
+            clauses.into_iter().next().unwrap(),
+        )),
+        _ => Ok(TranslatedFilter::Clause(json!({ "$and": clauses }))),
     }
 }
 
-fn translate_composite(op: &str, exprs: &[FilterExpr], is_or: bool) -> Result<Option<Value>> {
+fn translate_composite(op: &str, exprs: &[FilterExpr], is_or: bool) -> Result<TranslatedFilter> {
     let mut children = Vec::with_capacity(exprs.len());
     for expr in exprs {
         match translate_filter(expr)? {
-            Some(clause) => children.push(clause),
-            None if is_or => return Ok(None),
-            None => {}
+            TranslatedFilter::Clause(clause) => children.push(clause),
+            TranslatedFilter::MatchAll if is_or => return Ok(TranslatedFilter::MatchAll),
+            TranslatedFilter::MatchAll => {}
+            TranslatedFilter::Unsatisfiable if !is_or => {
+                return Ok(TranslatedFilter::Unsatisfiable);
+            }
+            TranslatedFilter::Unsatisfiable => {}
         }
     }
     if children.is_empty() {
-        if is_or {
-            return Err(AetherError::InvalidInput(
-                "empty Or filter is not supported".to_string(),
-            ));
-        }
-        return Ok(None);
+        return Ok(if is_or {
+            TranslatedFilter::Unsatisfiable
+        } else {
+            TranslatedFilter::MatchAll
+        });
     }
     if children.len() == 1 {
-        return Ok(children.into_iter().next());
+        return Ok(TranslatedFilter::Clause(
+            children.into_iter().next().unwrap(),
+        ));
     }
-    Ok(Some(json!({ op: children })))
+    Ok(TranslatedFilter::Clause(json!({ op: children })))
 }
 
 fn filter_value_to_json(val: &FilterValue) -> Result<Value> {
