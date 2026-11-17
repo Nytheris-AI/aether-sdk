@@ -32,6 +32,7 @@ tracing-opentelemetry = { version = "0.34", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"], optional = true }
 
 [dev-dependencies]
+serde.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [[example]]
