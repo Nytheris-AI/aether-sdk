@@ -758,11 +758,83 @@ async fn qdrant_connector_metadata_health_and_input_validation() {
             .lock()
             .unwrap()
             .collections
-            .get("meta_proj-euclid")
+            .values()
+            .next()
             .unwrap()
             .distance,
         "Euclid"
     );
+
+    let near = MemoryId::new();
+    let far = MemoryId::new();
+    store
+        .upsert_batch(
+            &ns,
+            &[
+                VectorRecord {
+                    id: near,
+                    vector: vec![1.0, 0.0],
+                    metadata: json!({"k": "near"}),
+                },
+                VectorRecord {
+                    id: far,
+                    vector: vec![10.0, 0.0],
+                    metadata: json!({"k": "far"}),
+                },
+            ],
+        )
+        .await
+        .unwrap();
+    let euclid_hits = store.search(&ns, &[1.0, 0.0], 2, None).await.unwrap();
+    assert_eq!(euclid_hits.len(), 2);
+    assert_eq!(euclid_hits[0].id, near);
+    assert!(
+        euclid_hits[0].score > euclid_hits[1].score,
+        "Euclidean closer hit must have higher score: {euclid_hits:?}"
+    );
+    assert!(euclid_hits[1].score <= 0.0);
+
+    // Distinct project IDs with punctuation must not collide onto the same collection.
+    let ns_slash = ProjectId::new("org/a").unwrap();
+    let ns_colon = ProjectId::new("org:a").unwrap();
+    store
+        .initialize(&ns_slash, 2, DistanceMetric::Cosine)
+        .await
+        .unwrap();
+    store
+        .initialize(&ns_colon, 2, DistanceMetric::Cosine)
+        .await
+        .unwrap();
+    let slash_id = MemoryId::new();
+    store
+        .upsert_batch(
+            &ns_slash,
+            &[VectorRecord {
+                id: slash_id,
+                vector: vec![1.0, 0.0],
+                metadata: json!({}),
+            }],
+        )
+        .await
+        .unwrap();
+    assert!(store
+        .search(&ns_colon, &[1.0, 0.0], 5, None)
+        .await
+        .unwrap()
+        .is_empty());
+
+    let nan_err = store
+        .upsert_batch(
+            &ns,
+            &[VectorRecord {
+                id: MemoryId::new(),
+                vector: vec![f32::NAN, 0.0],
+                metadata: json!({}),
+            }],
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(nan_err, AetherError::InvalidInput(_)));
 
     let zero_dim = store
         .initialize(&ns, 0, DistanceMetric::Cosine)

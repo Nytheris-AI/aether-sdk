@@ -80,11 +80,12 @@ impl QdrantVectorStore {
                 }
             })
             .collect();
+        let hash = fnv1a_64(ns.as_str().as_bytes());
         let prefix = self.collection_prefix.trim_end_matches(['_', '-']);
         if prefix.is_empty() {
-            sanitized
+            format!("{sanitized}_{hash:016x}")
         } else {
-            format!("{prefix}_{sanitized}")
+            format!("{prefix}_{sanitized}_{hash:016x}")
         }
     }
 
@@ -231,6 +232,12 @@ impl VectorStore for QdrantVectorStore {
                     rec.id
                 )));
             }
+            if rec.vector.iter().any(|x| !x.is_finite()) {
+                return Err(AetherError::InvalidInput(format!(
+                    "vector for record {} contains non-finite values",
+                    rec.id
+                )));
+            }
             if let Some(dim) = expected_dim {
                 if rec.vector.len() != dim {
                     return Err(AetherError::InvalidInput(format!(
@@ -300,7 +307,13 @@ impl VectorStore for QdrantVectorStore {
                 "query_vector must not be empty".into(),
             ));
         }
-        if let Some(spec) = self.spec_for(ns) {
+        if query_vector.iter().any(|x| !x.is_finite()) {
+            return Err(AetherError::InvalidInput(
+                "query_vector contains non-finite values".into(),
+            ));
+        }
+        let spec = self.spec_for(ns);
+        if let Some(spec) = spec {
             if query_vector.len() != spec.dimensions {
                 return Err(AetherError::InvalidInput(format!(
                     "query vector dimension mismatch: expected {}, got {}",
@@ -337,13 +350,18 @@ impl VectorStore for QdrantVectorStore {
             .await
             .map_err(|err| map_transport_err(CONNECTOR, err))?;
         let parsed: SearchResponse = serde_json::from_slice(&bytes)?;
+        let metric = spec.map_or(DistanceMetric::Cosine, |s| s.metric);
 
         Ok(parsed
             .result
             .into_iter()
             .map(|hit| VectorMatch {
                 id: hit.id,
-                score: hit.score,
+                score: if metric == DistanceMetric::Euclidean {
+                    -hit.score
+                } else {
+                    hit.score
+                },
                 metadata: hit.payload.unwrap_or_else(|| json!({})),
             })
             .collect())
@@ -355,6 +373,15 @@ enum QdrantDistance {
     Cosine,
     Dot,
     Euclid,
+}
+
+fn fnv1a_64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    hash
 }
 
 impl From<DistanceMetric> for QdrantDistance {
