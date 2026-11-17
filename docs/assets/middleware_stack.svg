@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 330" role="img" aria-label="Nested decorators around a connector driver"><title>Middleware stack</title><style>text{font-family:Inter,system-ui,sans-serif;fill:#1f2937}.t{font-size:15px;font-weight:600}.s{font-size:12px;fill:#6b7280}.h{font-size:11px;font-weight:700;letter-spacing:.08em;fill:#6b7280}.b{stroke-width:1.5;rx:10}.in{fill:#e0f2fe;stroke:#0284c7}.co{fill:#ede9fe;stroke:#7c3aed}.ou{fill:#dcfce7;stroke:#16a34a}.ln{stroke:#6b7280;stroke-width:1.5;fill:none;marker-end:url(#a)}.bg{fill:#fff;stroke:#e5e7eb;stroke-width:1.5}</style><defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6b7280"/></marker></defs>
+<rect class="bg" width="760" height="330" rx="14"/>
+<rect class="b in" x="30" y="30" width="460" height="270"/><text class="t" x="50" y="58">Traced</text><text class="s" x="120" y="58">spans + latency metrics</text>
+<rect class="b co" x="55" y="76" width="410" height="205"/><text class="t" x="75" y="104">Resilient</text><text class="s" x="160" y="104">retry + backoff, circuit breaker</text>
+<rect class="b ou" x="80" y="122" width="360" height="144"/><text class="t" x="100" y="150">Timeout</text><text class="s" x="175" y="150">per-operation deadline</text>
+<rect class="b" style="fill:#fef9c3;stroke:#ca8a04" x="105" y="166" width="310" height="86"/><text class="t" x="125" y="194">Batcher</text><text class="s" x="195" y="194">chunks by max_batch_size</text>
+<rect class="b" style="fill:#fff;stroke:#6b7280" x="135" y="208" width="250" height="32"/><text class="t" x="260" y="229" text-anchor="middle">driver (Qdrant, Redis, ...)</text>
+<path class="ln" d="M530 165H492"/>
+<text class="t" x="550" y="150">OutboundConnector</text><text class="s" x="550" y="172">same trait in, same trait out</text><text class="s" x="550" y="192">write each layer once,</text><text class="s" x="550" y="210">apply to every backend</text>
+</svg>
