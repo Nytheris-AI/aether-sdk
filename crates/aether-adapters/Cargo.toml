@@ -41,3 +41,7 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 [[test]]
 name = "driver_sqlite"
 required-features = ["sqlite", "contract-suite"]
+
+[[test]]
+name = "driver_redis"
+required-features = ["redis", "contract-suite"]
