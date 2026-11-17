@@ -6,8 +6,8 @@ use std::time::Duration;
 use aether_adapters::{InMemoryBackend, Resilient, RetryPolicy, Timeout, Traced};
 use aether_core::{
     AetherError, ConsistencyMode, DistanceMetric, Entity, EntityId, FilterExpr, FilterValue,
-    MemoryId, MemoryInbound, MemoryInput, MemoryScope, MemoryTier, MemoryUpdate, ProjectId,
-    RecallMode, RecallQuery, ReceiptState, Relation, TemporalFilter, VectorStore, WriteDurability,
+    MemoryId, MemoryInput, MemoryScope, MemoryTier, MemoryUpdate, ProjectId, RecallMode,
+    RecallQuery, ReceiptState, Relation, TemporalFilter, VectorStore, WriteDurability,
 };
 use aether_sdk::MemoryManager;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
@@ -148,7 +148,12 @@ fn build_resilient_manager() -> (Arc<InMemoryBackend>, Arc<MemoryManager>) {
         Timeout::new(raw.clone(), Duration::from_secs(2)),
         RetryPolicy::default(),
     )));
-    let manager = Arc::new(MemoryManager::new(record_store, vec_store, graph_store));
+    let manager = Arc::new(
+        MemoryManager::builder(record_store)
+            .vector(vec_store)
+            .graph(graph_store)
+            .build(),
+    );
     (raw, manager)
 }
 

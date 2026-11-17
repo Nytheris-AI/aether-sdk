@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use aether_adapters::InMemoryBackend;
 use aether_core::{
-    DistanceMetric, Entity, EntityId, MemoryInbound, MemoryInput, MemoryUpdate, ProjectId,
-    RecallMode, RecallQuery, Relation, VectorStore, WriteDurability,
+    DistanceMetric, Entity, EntityId, MemoryInput, MemoryUpdate, ProjectId, RecallMode,
+    RecallQuery, Relation, VectorStore, WriteDurability,
 };
 use aether_sdk::telemetry::{init_otel, LogFormat, OtelConfig};
 use aether_sdk::MemoryManager;
@@ -20,9 +20,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pid = ProjectId::new("demo-project")?;
     backend.initialize(&pid, 3, DistanceMetric::Cosine).await?;
 
-    let manager = MemoryManager::new(backend.clone(), backend.clone(), backend.clone());
+    let manager = MemoryManager::builder(backend.clone())
+        .vector(backend.clone())
+        .graph(backend)
+        .build();
 
-    // 3. Remember (WaitFlush -> exercises RecordStore + IngestionBuffer + VectorStore + GraphStore)
+    // 3. Remember (WaitFlush -> exercises RecordStore + Indexer + VectorStore + GraphStore)
     let mut input = MemoryInput::new(pid.clone(), "Alice uses Aether SDK with OpenTelemetry.");
     input.embedding = Some(vec![1.0, 0.0, 0.0]);
     input.durability = WriteDurability::WaitFlush;

@@ -34,6 +34,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"]
 [dev-dependencies]
 serde.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+uuid.workspace = true
 
 [[example]]
 name = "otel_demo"

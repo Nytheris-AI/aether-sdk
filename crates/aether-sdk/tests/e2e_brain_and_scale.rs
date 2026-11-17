@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use aether_adapters::{InMemoryBackend, Resilient, RetryPolicy, Timeout, Traced};
 use aether_core::{
-    DistanceMetric, MemoryInbound, MemoryInput, ProjectId, RecallMode, RecallQuery, VectorStore,
-    WriteDurability,
+    DistanceMetric, MemoryInput, ProjectId, RecallMode, RecallQuery, VectorStore, WriteDurability,
 };
 use aether_sdk::MemoryManager;
 use std::time::Duration;
@@ -35,7 +34,12 @@ async fn e2e_concurrent_multi_tenant_ingestion_with_resilient_middleware() {
         .await
         .unwrap();
 
-    let manager = Arc::new(MemoryManager::new(record_store, vec_store, graph_store));
+    let manager = Arc::new(
+        MemoryManager::builder(record_store)
+            .vector(vec_store)
+            .graph(graph_store)
+            .build(),
+    );
 
     let mut handles = Vec::new();
     for i in 0..20 {

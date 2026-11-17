@@ -888,22 +888,6 @@ pub trait GraphStore: OutboundConnector {
     ) -> Result<Subgraph>;
 }
 
-/// Primary inbound gateway contract implemented by `MemoryManager`.
-#[async_trait]
-pub trait MemoryInbound: Send + Sync {
-    async fn remember(&self, input: MemoryInput) -> Result<MemoryReceipt>;
-    async fn recall(&self, query: RecallQuery) -> Result<RecallResult>;
-    async fn update(
-        &self,
-        project_id: &ProjectId,
-        memory_id: MemoryId,
-        patch: MemoryUpdate,
-    ) -> Result<MemoryReceipt>;
-    async fn forget(&self, project_id: &ProjectId, memory_id: MemoryId) -> Result<()>;
-    async fn flush(&self) -> Result<()>;
-    async fn shutdown(&self) -> Result<()>;
-}
-
 #[async_trait]
 impl<T: OutboundConnector + ?Sized> OutboundConnector for Arc<T> {
     fn name(&self) -> &'static str {
