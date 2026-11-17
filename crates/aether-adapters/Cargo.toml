@@ -53,3 +53,7 @@ required-features = ["turbopuffer", "contract-suite"]
 [[test]]
 name = "driver_qdrant"
 required-features = ["qdrant", "contract-suite"]
+
+[[test]]
+name = "driver_chroma"
+required-features = ["chroma", "contract-suite"]
