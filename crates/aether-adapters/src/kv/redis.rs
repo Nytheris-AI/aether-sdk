@@ -32,8 +32,12 @@ if ARGV[1] ~= '' then
     end
 end
 local pttl = redis.call('PTTL', KEYS[1])
-if pttl > 0 then
-    redis.call('SET', KEYS[1], ARGV[2], 'PX', pttl)
+if pttl >= 0 then
+    local px = pttl
+    if px < 1 then
+        px = 1
+    end
+    redis.call('SET', KEYS[1], ARGV[2], 'PX', px)
 else
     redis.call('SET', KEYS[1], ARGV[2])
 end
@@ -321,12 +325,17 @@ impl RecordStore for RedisRecordStore {
         receipt: &MemoryReceipt,
         ttl: Option<Duration>,
     ) -> Result<Option<MemoryReceipt>> {
-        if matches!(ttl, Some(d) if d.is_zero()) {
-            return Ok(None);
-        }
-
         let mut conn = self.manager.clone();
         let key = self.keys.idempotency_key(ns, idempotency_key);
+
+        if matches!(ttl, Some(d) if d.is_zero()) {
+            let existing: Option<String> = conn.get(&key).await.map_err(map_redis_error)?;
+            return existing
+                .map(|raw| serde_json::from_str::<MemoryReceipt>(&raw))
+                .transpose()
+                .map_err(AetherError::from);
+        }
+
         let payload = serde_json::to_string(receipt)?;
 
         let mut opts = SetOptions::default()

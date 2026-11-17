@@ -275,5 +275,22 @@ async fn live_redis_contract_record_store() {
         }) if memory_id == session_item.id
     ));
 
+    // Zero-TTL put_if_absent must still detect an existing unexpired idempotency key.
+    let receipt = aether_core::MemoryReceipt {
+        memory_id: session_item.id,
+        state: aether_core::ReceiptState::Buffered,
+        version: 1,
+    };
+    assert!(store
+        .put_if_absent(&ns, "idem-zero-ttl", &receipt, None)
+        .await
+        .unwrap()
+        .is_none());
+    let dup = store
+        .put_if_absent(&ns, "idem-zero-ttl", &receipt, Some(Duration::ZERO))
+        .await
+        .unwrap();
+    assert_eq!(dup, Some(receipt));
+
     store.close().await.unwrap();
 }
