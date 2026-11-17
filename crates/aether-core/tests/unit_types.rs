@@ -94,7 +94,7 @@ fn memory_input_validation_and_receipt_states() {
         "Alice prefers Turbopuffer for low-latency vector recall.",
     );
     input.tier = MemoryTier::Semantic;
-    input.scope = MemoryScope::User;
+    input.scope = MemoryScope::User(aether_core::UserId::new("u-1").unwrap());
     input.durability = WriteDurability::WaitFlush;
     input.embedding = Some(vec![0.1, 0.2, 0.3]);
     input.entities = vec![Entity {
@@ -145,6 +145,7 @@ fn recall_query_and_connector_types_roundtrip_and_traits_are_object_safe() {
         per_node_limit: 20,
         temporal: TemporalFilter::default(),
         filters: None,
+        scopes: vec![MemoryScope::Project],
         consistency: ConsistencyMode::ReadYourWrites,
     };
     let q_json = serde_json::to_string(&query).unwrap();
@@ -318,4 +319,28 @@ fn recall_query_validation() {
         nan_vec.validate(),
         Err(AetherError::InvalidInput(_))
     ));
+}
+
+#[test]
+fn memory_scope_serde_and_index_key() {
+    assert!(aether_core::UserId::new(" ").is_err());
+    assert!(aether_core::SessionId::new("").is_err());
+
+    let user_scope = MemoryScope::User(aether_core::UserId::new("u1").unwrap());
+    let user_json = serde_json::to_value(&user_scope).unwrap();
+    assert_eq!(user_json, serde_json::json!({"kind": "user", "id": "u1"}));
+    assert_eq!(user_scope.index_key().as_deref(), Some("user:u1"));
+
+    let proj_json = serde_json::to_value(MemoryScope::Project).unwrap();
+    assert_eq!(proj_json, serde_json::json!({"kind": "project"}));
+    assert_eq!(MemoryScope::Project.index_key().as_deref(), Some("project"));
+
+    let sess_scope = MemoryScope::Session(aether_core::SessionId::new("s1").unwrap());
+    assert_eq!(sess_scope.index_key(), None);
+
+    let mut q = RecallQuery::new(ProjectId::new("proj-scope").unwrap(), "q");
+    q.mode = RecallMode::Vector;
+    q.query_vector = Some(vec![1.0]);
+    q.scopes = vec![];
+    assert!(matches!(q.validate(), Err(AetherError::InvalidInput(_))));
 }

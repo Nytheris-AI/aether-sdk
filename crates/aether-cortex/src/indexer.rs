@@ -5,14 +5,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aether_core::{
-    GraphStore, MemoryId, MemoryItem, PendingRecord, RecordStore, Result, VectorRecord, VectorStore,
+    GraphStore, MemoryId, MemoryItem, MemoryScope, PendingRecord, RecordStore, Result,
+    VectorRecord, VectorStore,
 };
 use chrono::Utc;
 use serde_json::Value;
 use tokio::sync::Notify;
 use tracing::Instrument;
 
-/// Metadata written to the vector index: caller metadata object plus `_aether_tier`.
+/// Metadata written to the vector index: caller metadata object plus `_aether_tier` and `_aether_scope`.
 pub fn index_metadata(item: &MemoryItem) -> Value {
     let mut meta = match &item.metadata {
         Value::Object(map) => map.clone(),
@@ -20,6 +21,9 @@ pub fn index_metadata(item: &MemoryItem) -> Value {
     };
     if let Ok(tier_val) = serde_json::to_value(item.tier) {
         meta.insert("_aether_tier".into(), tier_val);
+    }
+    if let Some(scope_key) = item.scope.index_key() {
+        meta.insert("_aether_scope".into(), Value::String(scope_key));
     }
     Value::Object(meta)
 }
@@ -86,7 +90,7 @@ impl Indexer {
                         .retract_memory_facts(&item.project_id, item.id, Utc::now())
                         .await?;
                 }
-            } else {
+            } else if !matches!(item.scope, MemoryScope::Session(_)) {
                 if let Some(vector) = &self.vector {
                     if let Some(vec) = &item.embedding {
                         let rec = VectorRecord {

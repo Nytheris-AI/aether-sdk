@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use aether_core::{
     redact_url_userinfo, AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome,
     MemoryId, MemoryItem, MemoryReceipt, MemoryScope, OutboundConnector, PendingRecord, ProjectId,
-    RecordStore, Result, SecretString,
+    RecordStore, Result, SecretString, SessionId,
 };
 use async_trait::async_trait;
 use redis::aio::ConnectionManager;
@@ -470,7 +470,7 @@ impl RecordStore for RedisRecordStore {
                 match maybe_raw {
                     Some(raw) => {
                         let item: MemoryItem = serde_json::from_str(&raw)?;
-                        if scope.is_none_or(|s| item.scope == s) {
+                        if scope.as_ref().is_none_or(|s| &item.scope == s) {
                             results.push(item);
                             if results.len() == limit {
                                 break;
@@ -526,6 +526,15 @@ impl RecordStore for RedisRecordStore {
 
     async fn pending_for(&self, _ns: &ProjectId, _limit: usize) -> Result<Vec<MemoryItem>> {
         Err(AetherError::NotImplemented("redis::pending_for"))
+    }
+
+    async fn session_items(
+        &self,
+        _ns: &ProjectId,
+        _session: &SessionId,
+        _limit: usize,
+    ) -> Result<Vec<MemoryItem>> {
+        Err(AetherError::NotImplemented("redis::session_items"))
     }
 
     async fn mark_indexed(&self, _ns: &ProjectId, _id: MemoryId, _version: u64) -> Result<()> {

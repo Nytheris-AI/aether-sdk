@@ -116,10 +116,10 @@ impl MemoryManager {
         Self::builder(record_store, vector_store, graph_store).build()
     }
 
-    fn ttl_for(&self, scope: MemoryScope) -> Option<Duration> {
+    fn ttl_for(&self, scope: &MemoryScope) -> Option<Duration> {
         match scope {
-            MemoryScope::Session => self.session_ttl,
-            MemoryScope::Project | MemoryScope::User | MemoryScope::Global => None,
+            MemoryScope::Session(_) => self.session_ttl,
+            MemoryScope::Project | MemoryScope::User(_) => None,
         }
     }
 }
@@ -157,7 +157,7 @@ impl MemoryInbound for MemoryManager {
             let durability = input.durability;
             let item = match self.policy.evaluate(&input)? {
                 PolicyDecision::Duplicate(receipt) => return Ok(receipt),
-                PolicyDecision::Accept(item) => item,
+                PolicyDecision::Accept(item) => *item,
             };
 
             // Distributed atomic idempotency check via L2 RecordStore.
@@ -169,7 +169,7 @@ impl MemoryInbound for MemoryManager {
                 };
                 if let Some(existing) = self
                     .record_store
-                    .put_if_absent(&item.project_id, key, &candidate, self.ttl_for(item.scope))
+                    .put_if_absent(&item.project_id, key, &candidate, self.ttl_for(&item.scope))
                     .await?
                 {
                     return Ok(existing);
@@ -177,7 +177,7 @@ impl MemoryInbound for MemoryManager {
             }
 
             self.record_store
-                .put(&item.project_id, &item, self.ttl_for(item.scope))
+                .put(&item.project_id, &item, self.ttl_for(&item.scope))
                 .await?;
             self.hot_cache.insert(item.clone());
             self.buffer.enqueue(item, durability).await

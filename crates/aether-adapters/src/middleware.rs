@@ -6,8 +6,8 @@ use std::time::Duration;
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome, DistanceMetric, Entity,
     EntityId, FilterExpr, GraphStore, IndexSpec, MemoryId, MemoryItem, MemoryReceipt, MemoryScope,
-    OutboundConnector, PendingRecord, ProjectId, RecordStore, Relation, Result, Subgraph,
-    TemporalFilter, VectorMatch, VectorRecord, VectorStore,
+    OutboundConnector, PendingRecord, ProjectId, RecordStore, Relation, Result, SessionId,
+    Subgraph, TemporalFilter, VectorMatch, VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -145,6 +145,15 @@ impl<T: RecordStore> RecordStore for Resilient<T> {
         retry_transient(self.policy, || self.inner.pending_for(ns, limit)).await
     }
 
+    async fn session_items(
+        &self,
+        ns: &ProjectId,
+        session: &SessionId,
+        limit: usize,
+    ) -> Result<Vec<MemoryItem>> {
+        retry_transient(self.policy, || self.inner.session_items(ns, session, limit)).await
+    }
+
     async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()> {
         retry_transient(self.policy, || self.inner.mark_indexed(ns, id, version)).await
     }
@@ -155,7 +164,7 @@ impl<T: RecordStore> RecordStore for Resilient<T> {
         scope: Option<MemoryScope>,
         limit: usize,
     ) -> Result<Vec<MemoryItem>> {
-        retry_transient(self.policy, || self.inner.recent(ns, scope, limit)).await
+        retry_transient(self.policy, || self.inner.recent(ns, scope.clone(), limit)).await
     }
 
     async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
@@ -365,6 +374,19 @@ impl<T: RecordStore> RecordStore for Timeout<T> {
     async fn pending_for(&self, ns: &ProjectId, limit: usize) -> Result<Vec<MemoryItem>> {
         self.run(self.inner.name(), self.inner.pending_for(ns, limit))
             .await
+    }
+
+    async fn session_items(
+        &self,
+        ns: &ProjectId,
+        session: &SessionId,
+        limit: usize,
+    ) -> Result<Vec<MemoryItem>> {
+        self.run(
+            self.inner.name(),
+            self.inner.session_items(ns, session, limit),
+        )
+        .await
     }
 
     async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()> {
@@ -753,6 +775,25 @@ impl<T: RecordStore> RecordStore for Traced<T> {
             otel.status_code = tracing::field::Empty,
         );
         run_connector_span(span, self.inner.pending_for(ns, limit)).await
+    }
+
+    async fn session_items(
+        &self,
+        ns: &ProjectId,
+        session: &SessionId,
+        limit: usize,
+    ) -> Result<Vec<MemoryItem>> {
+        let span = tracing::info_span!(
+            "connector_op",
+            otel.kind = "client",
+            db.system = self.inner.name(),
+            connector = self.inner.name(),
+            project_id = %ns,
+            op = "record_session_items",
+            limit,
+            otel.status_code = tracing::field::Empty,
+        );
+        run_connector_span(span, self.inner.session_items(ns, session, limit)).await
     }
 
     async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()> {

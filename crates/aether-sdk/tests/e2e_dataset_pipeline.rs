@@ -436,7 +436,7 @@ async fn e2e_knowledge_lifecycle_cas_temporal_and_forget() {
             let mut input = MemoryInput::new(pid.clone(), rec.content.clone());
             input.embedding = Some(embed_text(&rec.content));
             input.tier = rec.tier;
-            input.scope = rec.scope;
+            input.scope = rec.scope.clone();
             input.durability = WriteDurability::WaitFlush;
             input.idempotency_key = Some(rec.idempotency_key.clone());
             input.entities = rec.entities.clone();

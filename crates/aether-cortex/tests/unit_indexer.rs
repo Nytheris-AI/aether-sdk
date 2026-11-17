@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use aether_adapters::{FaultPoint, InMemoryBackend};
 use aether_core::{
-    DistanceMetric, Entity, EntityId, GraphStore, MemoryInput, MemoryItem, MemoryTier,
-    PendingRecord, ProjectId, RecordStore, Relation, TemporalFilter, VectorStore,
+    DistanceMetric, Entity, EntityId, GraphStore, MemoryInput, MemoryItem, MemoryScope, MemoryTier,
+    PendingRecord, ProjectId, RecordStore, Relation, SessionId, TemporalFilter, VectorStore,
 };
 use aether_cortex::indexer::{index_metadata, Indexer};
 use chrono::Utc;
@@ -160,7 +160,59 @@ fn index_metadata_adds_tier_and_omits_content() {
     let meta = index_metadata(&item);
     assert_eq!(meta.get("tag"), Some(&json!("ops")));
     assert_eq!(meta.get("_aether_tier"), Some(&json!("procedural")));
+    assert_eq!(meta.get("_aether_scope"), Some(&json!("project")));
     assert!(meta.get("content").is_none());
+}
+
+#[tokio::test]
+async fn session_items_are_marked_indexed_without_writing_to_vector_or_graph() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let ns = test_ns();
+    backend
+        .initialize(&ns, 2, DistanceMetric::Cosine)
+        .await
+        .unwrap();
+
+    let alice = Entity {
+        id: EntityId::new("person:alice").unwrap(),
+        name: "Alice".into(),
+        entity_type: "Person".into(),
+    };
+    let db = Entity {
+        id: EntityId::new("db:sqlite").unwrap(),
+        name: "SQLite".into(),
+        entity_type: "Database".into(),
+    };
+    let mut input = MemoryInput::new(ns.clone(), "session turn");
+    input.scope = MemoryScope::Session(SessionId::new("sess-1").unwrap());
+    input.embedding = Some(vec![1.0, 0.0]);
+    input.entities = vec![alice.clone(), db.clone()];
+    input.relations = vec![Relation {
+        source: alice.id.clone(),
+        target: db.id.clone(),
+        relation_type: "USES".into(),
+        valid_at: Utc::now(),
+        invalid_at: None,
+    }];
+    let item = MemoryItem::from_input(input, 1);
+    backend
+        .create(&ns, &item, Some(Duration::from_secs(60)))
+        .await
+        .unwrap();
+
+    let indexer = Indexer::new(backend.clone())
+        .with_vector(backend.clone())
+        .with_graph(backend.clone());
+    let report = indexer.run_pass().await.unwrap();
+    assert_eq!(report.indexed, 1);
+    assert!(!backend.has_vector(&ns, item.id));
+    assert!(backend.pending(10).await.unwrap().is_empty());
+
+    let sub = backend
+        .neighborhood(&ns, &[alice.id], 1, 10, &TemporalFilter::default())
+        .await
+        .unwrap();
+    assert!(sub.edges.is_empty());
 }
 
 #[tokio::test]

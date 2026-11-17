@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome, MemoryId, MemoryItem,
     MemoryReceipt, MemoryScope, OutboundConnector, PendingRecord, ProjectId, RecordStore, Result,
+    SessionId,
 };
 use async_trait::async_trait;
 use rusqlite::{
@@ -222,7 +223,7 @@ impl RecordStore for SqliteRecordStore {
     async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
         let ns_str = ns.as_str().to_string();
         let id_str = item.id.to_string();
-        let scope = scope_as_str(item.scope);
+        let scope = scope_as_str(&item.scope);
         let version = item.version as i64;
         let payload = serde_json::to_string(item)?;
         let now_us = now_epoch_us();
@@ -311,7 +312,7 @@ impl RecordStore for SqliteRecordStore {
     ) -> Result<()> {
         let ns_str = ns.as_str().to_string();
         let id_str = id.to_string();
-        let scope = scope_as_str(new_item.scope);
+        let scope = scope_as_str(&new_item.scope);
         let new_version = new_item.version as i64;
         let payload = serde_json::to_string(new_item)?;
         let now_us = now_epoch_us();
@@ -377,7 +378,7 @@ impl RecordStore for SqliteRecordStore {
         let ns_str = ns.as_str().to_string();
         let now_us = now_epoch_us();
         let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
-        let scope_filter = scope.map(scope_as_str);
+        let scope_filter = scope.as_ref().map(scope_as_str);
 
         self.with_conn(move |conn| {
             let mut stmt = conn
@@ -437,6 +438,15 @@ impl RecordStore for SqliteRecordStore {
         Err(AetherError::NotImplemented("sqlite::pending_for"))
     }
 
+    async fn session_items(
+        &self,
+        _ns: &ProjectId,
+        _session: &SessionId,
+        _limit: usize,
+    ) -> Result<Vec<MemoryItem>> {
+        Err(AetherError::NotImplemented("sqlite::session_items"))
+    }
+
     async fn mark_indexed(&self, _ns: &ProjectId, _id: MemoryId, _version: u64) -> Result<()> {
         Err(AetherError::NotImplemented("sqlite::mark_indexed"))
     }
@@ -463,12 +473,11 @@ fn expires_at_us(now_us: i64, ttl: Option<Duration>) -> Option<i64> {
     })
 }
 
-fn scope_as_str(scope: MemoryScope) -> &'static str {
+fn scope_as_str(scope: &MemoryScope) -> String {
     match scope {
-        MemoryScope::Project => "project",
-        MemoryScope::User => "user",
-        MemoryScope::Session => "session",
-        MemoryScope::Global => "global",
+        MemoryScope::Project => "project".into(),
+        MemoryScope::User(u) => format!("user:{}", u.as_str()),
+        MemoryScope::Session(s) => format!("session:{}", s.as_str()),
     }
 }
 

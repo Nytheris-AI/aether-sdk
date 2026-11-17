@@ -6,7 +6,7 @@ use std::time::Duration;
 use aether_adapters::kv::redis::{map_redis_error, RedisConfig, RedisRecordStore};
 use aether_core::{
     AetherError, ConnectorHealth, MemoryId, MemoryInput, MemoryItem, MemoryReceipt, MemoryScope,
-    OutboundConnector, ProjectId, ReceiptState, RecordStore,
+    OutboundConnector, ProjectId, ReceiptState, RecordStore, SessionId,
 };
 use redis::{ErrorKind, RedisError};
 use uuid::Uuid;
@@ -216,8 +216,9 @@ async fn live_redis_contract_record_store() {
         .unwrap()
         .is_none());
 
+    let sess = SessionId::new("redis-sess").unwrap();
     let mut session_input = MemoryInput::new(ns.clone(), "older session item");
-    session_input.scope = MemoryScope::Session;
+    session_input.scope = MemoryScope::Session(sess.clone());
     let session_item = MemoryItem::from_input(session_input, 1);
     store.put(&ns, &session_item, None).await.unwrap();
     let single_recent = store.recent(&ns, None, 10).await.unwrap();
@@ -240,7 +241,7 @@ async fn live_redis_contract_record_store() {
     tokio::time::sleep(Duration::from_millis(45)).await;
 
     let session_only = store
-        .recent(&ns, Some(MemoryScope::Session), 1)
+        .recent(&ns, Some(MemoryScope::Session(sess)), 1)
         .await
         .unwrap();
     assert_eq!(session_only.len(), 1);

@@ -21,7 +21,7 @@ use tracing::Instrument;
 /// Result of deterministic inbound policy evaluation.
 #[derive(Debug, Clone)]
 pub enum PolicyDecision {
-    Accept(MemoryItem),
+    Accept(Box<MemoryItem>),
     Duplicate(MemoryReceipt),
 }
 
@@ -62,7 +62,7 @@ impl PolicyRouter {
             );
         }
 
-        Ok(PolicyDecision::Accept(item))
+        Ok(PolicyDecision::Accept(Box::new(item)))
     }
 }
 

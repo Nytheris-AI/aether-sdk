@@ -138,6 +138,62 @@ impl fmt::Display for EntityId {
     }
 }
 
+/// Strongly typed user identifier for user-scoped memories.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct UserId(String);
+
+impl UserId {
+    /// Validates and constructs a non-empty `UserId`.
+    pub fn new(id: impl Into<String>) -> Result<Self> {
+        let s = id.into();
+        if s.trim().is_empty() {
+            return Err(AetherError::InvalidInput(
+                "user_id must not be empty".into(),
+            ));
+        }
+        Ok(Self(s))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for UserId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Strongly typed session identifier for working-memory entries.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SessionId(String);
+
+impl SessionId {
+    /// Validates and constructs a non-empty `SessionId`.
+    pub fn new(id: impl Into<String>) -> Result<Self> {
+        let s = id.into();
+        if s.trim().is_empty() {
+            return Err(AetherError::InvalidInput(
+                "session_id must not be empty".into(),
+            ));
+        }
+        Ok(Self(s))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for SessionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Opaque credential wrapper whose `Debug` and `Display` implementations always redact the value.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SecretString(String);
@@ -199,14 +255,26 @@ pub enum MemoryTier {
     Profile,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
 pub enum MemoryScope {
     #[default]
     Project,
-    User,
-    Session,
-    Global,
+    User(UserId),
+    Session(SessionId),
+}
+
+impl MemoryScope {
+    /// Returns the index metadata key (`"project"` or `"user:<id>"`).
+    ///
+    /// Session memories are never written to derived vector/graph indexes, so this returns `None`.
+    pub fn index_key(&self) -> Option<String> {
+        match self {
+            MemoryScope::Project => Some("project".into()),
+            MemoryScope::User(uid) => Some(format!("user:{}", uid.as_str())),
+            MemoryScope::Session(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -591,6 +659,7 @@ pub struct RecallQuery {
     pub per_node_limit: usize,
     pub temporal: TemporalFilter,
     pub filters: Option<FilterExpr>,
+    pub scopes: Vec<MemoryScope>,
     pub consistency: ConsistencyMode,
 }
 
@@ -607,12 +676,16 @@ impl RecallQuery {
             per_node_limit: 25,
             temporal: TemporalFilter::default(),
             filters: None,
+            scopes: vec![MemoryScope::Project],
             consistency: ConsistencyMode::default(),
         }
     }
 
     /// Validates query requirements before dispatching to stores.
     pub fn validate(&self) -> Result<()> {
+        if self.scopes.is_empty() {
+            return Err(AetherError::InvalidInput("scopes must not be empty".into()));
+        }
         if let Some(vec) = &self.query_vector {
             validate_vector_values(vec, "query_vector")?;
         }
@@ -737,6 +810,13 @@ pub trait RecordStore: OutboundConnector {
     async fn pending(&self, limit: usize) -> Result<Vec<PendingRecord>>;
 
     async fn pending_for(&self, ns: &ProjectId, limit: usize) -> Result<Vec<MemoryItem>>;
+
+    async fn session_items(
+        &self,
+        ns: &ProjectId,
+        session: &SessionId,
+        limit: usize,
+    ) -> Result<Vec<MemoryItem>>;
 
     async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()>;
 
@@ -900,6 +980,15 @@ impl<T: RecordStore + ?Sized> RecordStore for Arc<T> {
 
     async fn pending_for(&self, ns: &ProjectId, limit: usize) -> Result<Vec<MemoryItem>> {
         (**self).pending_for(ns, limit).await
+    }
+
+    async fn session_items(
+        &self,
+        ns: &ProjectId,
+        session: &SessionId,
+        limit: usize,
+    ) -> Result<Vec<MemoryItem>> {
+        (**self).session_items(ns, session, limit).await
     }
 
     async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()> {

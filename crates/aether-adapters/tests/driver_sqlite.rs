@@ -7,7 +7,7 @@ use aether_adapters::kv::sqlite::{SqliteConfig, SqliteRecordStore};
 use aether_adapters::middleware::{Resilient, RetryPolicy, Timeout, Traced};
 use aether_core::{
     AetherError, ConnectorHealth, MemoryId, MemoryInput, MemoryItem, MemoryReceipt, MemoryScope,
-    OutboundConnector, ProjectId, ReceiptState, RecordStore,
+    OutboundConnector, ProjectId, ReceiptState, RecordStore, SessionId,
 };
 use uuid::Uuid;
 
@@ -101,12 +101,13 @@ async fn sqlite_persists_records_and_idempotency_across_reopen() {
     first_input.scope = MemoryScope::Project;
     let first = MemoryItem::from_input(first_input, 1);
 
+    let sess = SessionId::new("sqlite-sess").unwrap();
     let mut second_input = MemoryInput::new(ns.clone(), "second persisted memory");
-    second_input.scope = MemoryScope::Session;
+    second_input.scope = MemoryScope::Session(sess.clone());
     let second = MemoryItem::from_input(second_input, 1);
 
     let mut expiring_input = MemoryInput::new(ns.clone(), "short lived memory");
-    expiring_input.scope = MemoryScope::Session;
+    expiring_input.scope = MemoryScope::Session(sess);
     let expiring = MemoryItem::from_input(expiring_input, 1);
 
     let receipt = MemoryReceipt {

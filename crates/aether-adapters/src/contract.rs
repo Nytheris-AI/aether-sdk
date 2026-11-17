@@ -9,8 +9,8 @@ use std::time::Duration;
 use aether_core::{
     AetherError, CreateOutcome, DistanceMetric, Entity, EntityId, FilterExpr, FilterValue,
     GraphStore, IndexSpec, MemoryId, MemoryInput, MemoryItem, MemoryReceipt, MemoryScope,
-    PendingRecord, ProjectId, ReceiptState, RecordStore, Relation, TemporalFilter, VectorRecord,
-    VectorStore,
+    PendingRecord, ProjectId, ReceiptState, RecordStore, Relation, SessionId, TemporalFilter,
+    VectorRecord, VectorStore,
 };
 use chrono::{Duration as ChronoDuration, Utc};
 use serde_json::json;
@@ -25,8 +25,9 @@ pub async fn record_store<S: RecordStore>(store: &S) {
     let ns_a = fresh_project("rec-a");
     let ns_b = fresh_project("rec-b");
 
+    let sess_id = SessionId::new("sess-contract").unwrap();
     let mut input1 = MemoryInput::new(ns_a.clone(), "Session turn 1");
-    input1.scope = MemoryScope::Session;
+    input1.scope = MemoryScope::Session(sess_id.clone());
     let item1 = MemoryItem::from_input(input1, 1);
 
     // 1. Put with TTL and verify expiration + namespace isolation.
@@ -93,7 +94,7 @@ pub async fn record_store<S: RecordStore>(store: &S) {
     store.put(&ns_a, &proj_item, None).await.unwrap();
 
     let session_recent = store
-        .recent(&ns_a, Some(MemoryScope::Session), 10)
+        .recent(&ns_a, Some(MemoryScope::Session(sess_id)), 10)
         .await
         .unwrap();
     assert_eq!(session_recent.len(), 1);
@@ -244,6 +245,42 @@ pub async fn record_store_versioned<S: RecordStore>(store: &S) {
         .unwrap()
         .iter()
         .any(|p| p.item.id == exp_item.id));
+
+    // session_items returns only live, unexpired, non-tombstoned items for that session.
+    let s1 = SessionId::new("s-1").unwrap();
+    let s2 = SessionId::new("s-2").unwrap();
+    let mut s1_live_in = MemoryInput::new(ns_a.clone(), "s1 live");
+    s1_live_in.scope = MemoryScope::Session(s1.clone());
+    let s1_live = MemoryItem::from_input(s1_live_in, 1);
+
+    let mut s1_exp_in = MemoryInput::new(ns_a.clone(), "s1 expired");
+    s1_exp_in.scope = MemoryScope::Session(s1.clone());
+    let s1_exp = MemoryItem::from_input(s1_exp_in, 1);
+
+    let mut s1_tomb_in = MemoryInput::new(ns_a.clone(), "s1 tombstoned");
+    s1_tomb_in.scope = MemoryScope::Session(s1.clone());
+    let s1_tomb = MemoryItem::from_input(s1_tomb_in, 1);
+
+    let mut s2_in = MemoryInput::new(ns_a.clone(), "s2 live");
+    s2_in.scope = MemoryScope::Session(s2.clone());
+    let s2_live = MemoryItem::from_input(s2_in, 1);
+
+    let proj_only = MemoryItem::from_input(MemoryInput::new(ns_a.clone(), "proj"), 1);
+
+    store.create(&ns_a, &s1_live, None).await.unwrap();
+    store
+        .create(&ns_a, &s1_exp, Some(Duration::from_millis(20)))
+        .await
+        .unwrap();
+    store.create(&ns_a, &s1_tomb, None).await.unwrap();
+    store.create(&ns_a, &s2_live, None).await.unwrap();
+    store.create(&ns_a, &proj_only, None).await.unwrap();
+    store.tombstone(&ns_a, s1_tomb.id).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(35)).await;
+
+    let s1_items = store.session_items(&ns_a, &s1, 10).await.unwrap();
+    assert_eq!(s1_items.len(), 1);
+    assert_eq!(s1_items[0].id, s1_live.id);
 }
 
 /// Verifies concurrent `create` calls with one idempotency key produce exactly one record.

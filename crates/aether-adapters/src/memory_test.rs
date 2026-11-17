@@ -9,7 +9,7 @@ use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome, DistanceMetric, Entity,
     EntityId, FilterExpr, GraphEdge, GraphStore, IndexSpec, MemoryId, MemoryItem, MemoryReceipt,
     MemoryScope, OutboundConnector, PendingRecord, ProjectId, ReceiptState, RecordStore, Relation,
-    Result, Subgraph, TemporalFilter, VectorMatch, VectorRecord, VectorStore,
+    Result, SessionId, Subgraph, TemporalFilter, VectorMatch, VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -395,6 +395,34 @@ impl RecordStore for InMemoryBackend {
         Ok(())
     }
 
+    async fn session_items(
+        &self,
+        ns: &ProjectId,
+        session: &SessionId,
+        limit: usize,
+    ) -> Result<Vec<MemoryItem>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let now = Instant::now();
+        let guard = self.records.read().unwrap();
+        let Some(entry) = guard.get(ns) else {
+            return Ok(Vec::new());
+        };
+        let mut items: Vec<&RecordEntry> = entry
+            .items
+            .values()
+            .filter(|e| !e.tombstone && e.expires_at.is_none_or(|exp| now < exp))
+            .filter(|e| matches!(&e.item.scope, MemoryScope::Session(s) if s == session))
+            .collect();
+        items.sort_by_key(|b| std::cmp::Reverse(b.seq));
+        Ok(items
+            .into_iter()
+            .take(limit)
+            .map(|e| e.item.clone())
+            .collect())
+    }
+
     async fn recent(
         &self,
         ns: &ProjectId,
@@ -410,7 +438,7 @@ impl RecordStore for InMemoryBackend {
             .items
             .values()
             .filter(|e| !e.tombstone && e.expires_at.is_none_or(|exp| now < exp))
-            .filter(|e| scope.is_none_or(|s| e.item.scope == s))
+            .filter(|e| scope.as_ref().is_none_or(|s| &e.item.scope == s))
             .collect();
         items.sort_by_key(|b| std::cmp::Reverse(b.seq));
         Ok(items
