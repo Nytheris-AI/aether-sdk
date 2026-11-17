@@ -9,13 +9,10 @@ updates:
     commit-message:
       prefix: "chore(deps)"
     groups:
-      opentelemetry-minor-patch:
+      opentelemetry-lockstep:
         patterns:
           - "opentelemetry*"
           - "tracing-opentelemetry"
-        update-types:
-          - "minor"
-          - "patch"
       rust-minor-patch:
         patterns:
           - "*"
@@ -34,6 +31,11 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # @docusaurus/tsconfig@3.10.2 sets compilerOptions.baseUrl, removed in TypeScript 7 (TS5102).
+      - dependency-name: "typescript"
+        update-types:
+          - "version-update:semver-major"
     groups:
       docusaurus-minor-patch:
         patterns:
