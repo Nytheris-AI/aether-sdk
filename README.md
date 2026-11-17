@@ -1,77 +1,70 @@
 # Aether SDK
 
-**Production-ready AI Context Engineering SDK**
+**Model-free Rust memory SDK** for storing, indexing, and retrieving AI memory across record, vector, and graph stores.
 
-The **Aether SDK** is a protocol-based library designed to help you build "AI Brains" that are modular, scalable, and independent of specific infrastructure providers.
+Aether provides composable building blocks and an optional `MemoryManager` facade across four workspace crates:
 
-It provides a robust **Memory Manager** that orchestrates:
-*   **Ingestion**: Parsing -> Chunking -> Embedding -> Extraction -> Storage.
-*   **Recall**: Hybrid Search (Vector + Graph).
-*   **Intelligence**: Context Distillation and Q&A.
+- **`aether-core`** - Domain types, validation newtypes (`ProjectId`, `MemoryId`, `EntityId`), `AetherError` (`Transient` vs `Permanent`), and storage traits (`RecordStore`, `VectorStore`, `GraphStore`, `MemoryInbound`).
+- **`aether-cortex`** - L1 `HotContextCache`, `PolicyRouter`, `IngestionBuffer`, `QueryPlanner`, and Personalized PageRank (`personalized_page_rank`).
+- **`aether-adapters`** - `InMemoryBackend` (with `FaultPoint` injection), resilience middleware (`Traced`, `Resilient`, `Timeout`, `Batcher`), and a reusable `contract` test suite (`contract-suite` feature).
+- **`aether-sdk`** - Public `MemoryManager` / `MemoryManagerBuilder` facade and optional OpenTelemetry preset (`otel` feature).
 
-## 🚀 Features
+## Quickstart
 
-*   **Zero Vendor Lock-in**: Define your own adapters for LLMs, Vector DBs, and Graph DBs.
-*   **Protocol-First Architecture**: Strictly typed protocols (`LLMAdapterProtocol`, `VectorStoreProtocol`) ensure you own your stack.
-*   **Hybrid Search**: Semantically configured retrieval strategies.
-*   **Production Ready**: Heavy focus on type safety, clean interfaces, and testing.
-
-## 📦 Installation
+Run the full workspace test suite (uses zero-infra `InMemoryBackend`):
 
 ```bash
-uv add aether-sdk
-# or
-pip install aether-sdk
+cargo test --workspace --all-features
 ```
 
-## ⚡ Quickstart
+Run the OpenTelemetry example (`crates/aether-sdk/examples/otel_demo.rs`):
 
-Initialize the `MemoryManager` with your chosen adapters.
-
-```python
-import asyncio
-from aether_sdk.memory import MemoryManager
-from aether_sdk.adapters.openai import OpenAIAdapter
-from aether_sdk.adapters.qdrant import QdrantAdapter
-
-async def main():
-    # 1. Initialize Adapters
-    # You provide the drivers. We provide the logic.
-    llm = OpenAIAdapter(api_key="sk-...")
-    vectors = QdrantAdapter(url="http://localhost:6333", collection_name="memory")
-
-    # 2. Initialize Manager
-    brain = MemoryManager(
-        project_id="my-project",
-        llm_adapter=llm,
-        embedding_adapter=llm, # OpenAI handles both
-        vector_store=vectors
-    )
-
-    # 3. Ingest Data
-    await brain.ingest_text(
-        "Aether SDK allows you to swap database providers easily.",
-        filename="overview.txt"
-    )
-
-    # 4. Ask Questions
-    answer = await brain.ask("What is the benefit of Aether SDK?")
-    print(answer)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+```bash
+cargo run -p aether-sdk --example otel_demo --features otel
 ```
 
-## 🏗️ Architecture
+Use `MemoryManager` with `InMemoryBackend` in Rust:
 
-The SDK is built on a **Resources** layer that handles the complexity of context engineering:
+```rust
+use std::sync::Arc;
+use aether_adapters::InMemoryBackend;
+use aether_core::{DistanceMetric, MemoryInbound, MemoryInput, ProjectId, RecallQuery, VectorStore};
+use aether_sdk::MemoryManager;
 
-1.  **IngestionResource**: Handles document parsing (via `docling`), chunking, and graph extraction.
-2.  **RetrievalResource**: Manages vector similarity search and graph traversal.
-3.  **DistillationResource**: Synthesizes high-density answers from retrieved context.
+#[tokio::main]
+async fn main() -> aether_core::Result<()> {
+    let backend = Arc::new(InMemoryBackend::new());
+    let project_id = ProjectId::new("my-project")?;
+    backend.initialize(&project_id, 3, DistanceMetric::Cosine).await?;
 
-You simply inject the **Infrastructure Adapters**, and the **MemoryManager** wires these resources together.
+    let manager = MemoryManager::new(backend.clone(), backend.clone(), backend.clone());
 
-## 🛡️ License
+    let mut input = MemoryInput::new(project_id.clone(), "Aether SDK keeps stores consistent.");
+    input.embedding = Some(vec![1.0, 0.0, 0.0]);
+    manager.remember(input).await?;
 
-Apache 2.0
+    let mut query = RecallQuery::new(project_id, "consistent stores");
+    query.query_vector = Some(vec![1.0, 0.0, 0.0]);
+    let result = manager.recall(query).await?;
+    println!("Hits: {}", result.hits.len());
+    Ok(())
+}
+```
+
+## Development Gate
+
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+```
+
+## Documentation
+
+- Engineering rules: [AGENTS.md](AGENTS.md)
+- Contributing guide: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Architecture & guides: [docs/index.md](docs/index.md)
+
+## License
+
+Apache 2.0 - see [LICENSE](LICENSE).

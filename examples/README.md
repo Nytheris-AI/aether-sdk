@@ -1,23 +1,13 @@
 # Aether SDK Examples
 
-This directory contains examples demonstrating how to use the `aether-sdk`.
+Runnable Rust examples live in `crates/aether-sdk/examples/`.
 
-## Quickstart
+## OpenTelemetry Demo
 
-Run a full end-to-end memory cycle (Ingest -> Extract -> Recall) using:
+Run the end-to-end memory lifecycle with OpenTelemetry spans and logs enabled:
 
 ```bash
-uv run examples/quickstart.py
+cargo run -p aether-sdk --example otel_demo --features otel
 ```
 
-This example uses:
-*   **Mock Adapters**: To simulate LLM and Vector Store without real API keys.
-*   **In-Memory**: No external databases required.
-
-## Adapters
-
-The SDK is designed to be **Protocol-First**. You bring your own database drivers.
-See `quickstart.py` for how `QdrantAdapter` is passed to the `MemoryManager`.
-
-## Directories
-*   `quickstart.py`: The main entry point for learning the SDK.
+See [crates/aether-sdk/examples/otel_demo.rs](../crates/aether-sdk/examples/otel_demo.rs) for the source.
