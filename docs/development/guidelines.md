@@ -1,6 +1,6 @@
 # Development Guidelines
 
-Engineering conventions for working on the **Aether SDK** Rust workspace. See [AGENTS.md](../../AGENTS.md) for repository-wide micro-commit and TDD rules.
+Engineering conventions for working on the **Aether SDK** Rust workspace. See [`AGENTS.md`](https://github.com/Nytheris-AI/aether-sdk/blob/main/AGENTS.md) for repository-wide micro-commit and TDD rules.
 
 ## Workspace Layout
 
