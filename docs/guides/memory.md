@@ -22,6 +22,8 @@ See the [Roadmap](../about/roadmap.md) for the real status and the [Phase 5 desi
 
 ## Durability & Consistency
 
+![Write and read path across L1, L2 and L3](../assets/write_read_path.svg)
+
 ### `WriteDurability`
 - **`Buffered`** *(default)*: Enqueues writes to `IngestionBuffer` after L2 `KvStore` + L1 `HotContextCache` persistence and returns `ReceiptState::Buffered` immediately.
 - **`WaitFlush`**: Awaits the flush barrier to L3 (`VectorStore` + `GraphStore`) and returns `ReceiptState::Persisted`.
