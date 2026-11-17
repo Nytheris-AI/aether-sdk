@@ -49,3 +49,7 @@ required-features = ["redis", "contract-suite"]
 [[test]]
 name = "driver_turbopuffer"
 required-features = ["turbopuffer", "contract-suite"]
+
+[[test]]
+name = "driver_qdrant"
+required-features = ["qdrant", "contract-suite"]
