@@ -23,7 +23,8 @@ use crate::store::{to_memory_item, VaultStore};
 use crate::types::{
     Amu, AmuId, AmuKind, AmuStatus, CandidateId, ContentHash, DreamReport, InboxCheckbox,
     InboxEntry, InboxReconcileReport, RecallEntry, RecallRequest, RecallResponse, SourcePointer,
-    StageMemoryRequest, SyncReport, VaultConfig, VaultMeta, VaultPath, VAULT_SCHEMA_VERSION,
+    StageMemoryRequest, SyncReport, VaultConfig, VaultMeta, VaultPath, VaultStatusReport,
+    VAULT_SCHEMA_VERSION,
 };
 
 /// Single-owner orchestrator for Obsidian vault compilation, hybrid recall,
@@ -541,6 +542,100 @@ impl VaultEngine {
         }
 
         Ok(report)
+    }
+
+    /// Returns a live status snapshot for the vault engine, active embedder, HOT budget, and Inbox.
+    pub async fn status(&self) -> Result<VaultStatusReport> {
+        let active_amus = self.store.count_active_amus().await?;
+        let pending = self.store.list_pending_candidates().await?;
+        let approved = self.store.list_approved_candidates().await?;
+        let meta = self.store.get_vault_meta().await?;
+        let mut hot_req = RecallRequest::new("");
+        hot_req.include_hot_profile = true;
+        let hot_resp = self.recall(hot_req).await?;
+
+        Ok(VaultStatusReport {
+            status: "ok".to_string(),
+            schema_version: meta
+                .as_ref()
+                .map_or(VAULT_SCHEMA_VERSION, |m| m.schema_version),
+            embedder_id: self.embedder.id().to_string(),
+            embedding_dim: self.embedder.dimensions(),
+            active_amus,
+            pending_inbox_count: pending.len(),
+            approved_inbox_count: approved.len(),
+            hot_tokens_used: hot_resp.static_prefix_tokens,
+            hot_token_budget: self.config.hot_budget.get(),
+            prefix_hash: hot_resp.prefix_hash,
+        })
+    }
+
+    /// Lists currently pending candidates staged in `Aether/Inbox.md`.
+    pub async fn pending_inbox(&self) -> Result<Vec<InboxEntry>> {
+        self.store.list_pending_candidates().await
+    }
+
+    /// Approves (`[x]`) or rejects (`[-]`) a pending Inbox candidate by ID and immediately
+    /// updates SQLite, `Aether/Compiled/Approved.md`, and `Aether/Inbox.md`.
+    pub async fn decide_inbox_candidate(
+        &self,
+        candidate_id: &CandidateId,
+        approve: bool,
+    ) -> Result<InboxReconcileReport> {
+        let _guard = self.write_gate.lock().await;
+        let _ =
+            reconcile_inbox_inner(&self.vault_root, &self.store, self.embedder.as_ref()).await?;
+
+        let pending = self.store.list_pending_candidates().await?;
+        let mut found = false;
+        let mut updated_entries = Vec::with_capacity(pending.len());
+        let mut compiled_amus = Vec::new();
+        let mut remaining_pending = Vec::new();
+
+        for mut entry in pending {
+            if &entry.candidate_id == candidate_id {
+                found = true;
+                entry.checkbox = if approve {
+                    InboxCheckbox::Approved
+                } else {
+                    InboxCheckbox::Rejected
+                };
+                if approve {
+                    let (amu, emb) = build_compiled_amu(&entry, self.embedder.as_ref())?;
+                    compiled_amus.push((entry.clone(), amu, emb));
+                }
+                updated_entries.push(entry);
+            } else {
+                remaining_pending.push(entry.clone());
+                updated_entries.push(entry);
+            }
+        }
+
+        if !found {
+            return Err(AetherError::NotFound(format!(
+                "pending candidate `{candidate_id}` not found"
+            )));
+        }
+
+        let (compiled, rejected) = self
+            .store
+            .apply_inbox_decisions(&updated_entries, &compiled_amus)
+            .await?;
+
+        if compiled > 0 {
+            let approved = self.store.list_approved_candidates().await?;
+            if !approved.is_empty() {
+                write_approved_mirror_atomically(&self.vault_root, &self.store, &approved).await?;
+            }
+        }
+
+        write_inbox_atomically(&self.vault_root, &self.store, &remaining_pending).await?;
+
+        Ok(InboxReconcileReport {
+            compiled,
+            rejected,
+            remaining_pending: remaining_pending.len(),
+        })
     }
 
     /// Returns the exact verbatim Markdown section for `raw_pointer`, enforcing traversal and privacy guards.

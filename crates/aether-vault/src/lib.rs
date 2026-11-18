@@ -3,6 +3,7 @@
 mod dream;
 mod embedder;
 mod engine;
+mod http;
 mod inbox;
 mod mcp;
 mod parser;
@@ -16,12 +17,13 @@ pub use embedder::{
     LocalGpuEmbedder, DEFAULT_DENSE_EMBED_DIM, DEFAULT_EMBED_DIM,
 };
 pub use engine::VaultEngine;
+pub use http::ControlPlaneServer;
 pub use mcp::McpServer;
 pub use reranker::{CrossEncoderReranker, NoopReranker, Reranker, DEFAULT_RERANK_TOP_K};
 pub use types::{
     estimate_tokens, Amu, AmuId, AmuKind, AmuStatus, ApprovedMirrorEntry, CandidateId, ContentHash,
     DbTarget, DreamReport, InboxCheckbox, InboxEntry, InboxReconcileReport, RecallEntry,
     RecallRequest, RecallResponse, ScopeTag, SourcePointer, StageMemoryRequest, SyncReport,
-    TokenBudget, VaultConfig, VaultMeta, VaultPath, VaultTier, DEFAULT_SYNC_REINDEX_THRESHOLD,
-    HOT_PROFILE_MAX_TOKENS, VAULT_SCHEMA_VERSION,
+    TokenBudget, VaultConfig, VaultMeta, VaultPath, VaultStatusReport, VaultTier,
+    DEFAULT_SYNC_REINDEX_THRESHOLD, HOT_PROFILE_MAX_TOKENS, VAULT_SCHEMA_VERSION,
 };

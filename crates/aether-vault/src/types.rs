@@ -820,6 +820,20 @@ pub struct DreamReport {
     pub staged_candidate_ids: Vec<CandidateId>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaultStatusReport {
+    pub status: String,
+    pub schema_version: u32,
+    pub embedder_id: String,
+    pub embedding_dim: usize,
+    pub active_amus: usize,
+    pub pending_inbox_count: usize,
+    pub approved_inbox_count: usize,
+    pub hot_tokens_used: usize,
+    pub hot_token_budget: usize,
+    pub prefix_hash: ContentHash,
+}
+
 /// Deterministic token estimator used by prefix budgeting (`ceil(len / 4)`, `0` when empty).
 pub fn estimate_tokens(text: &str) -> usize {
     if text.is_empty() {
