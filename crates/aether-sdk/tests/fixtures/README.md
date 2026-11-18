@@ -20,5 +20,5 @@ This directory contains the collected datasets used to run end-to-end tests of `
 - **Contents:** Multi-tier (`semantic`, `procedural`, `episodic`), multi-scope (`project`, `session`) records with explicit entity-relation provenance, CAS `updates`, and `forget_targets`.
 - **What it tests in `aether-sdk`:**
   - **Transform:** Mapping structured JSON records into `MemoryInput` with typed entities, temporal relations, and rich filterable metadata.
-  - **Incorporate:** Atomic `put_if_absent` idempotency and `WaitFlush` durability.
+  - **Incorporate:** Atomic `create` idempotency and `WaitFlush` durability.
   - **Manage:** `FilterExpr` (`Eq`, `In`, `Range`, `And`), `TemporalFilter` point-in-time graph queries, CAS `update()` with `expected_version` and `AetherError::Conflict` on stale versions, and `forget()` removing both vector records and graph provenance edges.

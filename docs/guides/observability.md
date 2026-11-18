@@ -22,7 +22,7 @@ And for writes and background sync (`remember`, `update`, `forget`, `flush`):
 aether.remember (MemoryManager)                  [project_id, scope, durability, otel.status_code]
 ├── connector_op (Traced<RecordStore>)           [op="record_create", otel.kind="client", db.system, otel.status_code]
 └── aether.cortex.index_record (Indexer)         [project_id, memory_id, tombstone]
-    └── connector_op (Traced<Vector/Graph/Rec>)  [op="vector_upsert_batch" | "graph_upsert_relations" | "record_mark_indexed"]
+    └── connector_op (Traced<Vector/Graph/Rec>)  [op="upsert_batch" | "upsert_relations" | "record_mark_indexed"]
 
 aether.flush (MemoryManager)                     [otel.status_code]
 └── aether.cortex.index_pass (Indexer)           [indexed, failed]
@@ -33,7 +33,7 @@ aether.flush (MemoryManager)                     [otel.status_code]
 
 - **Root spans (`aether-sdk`)**: `aether.remember`, `aether.recall`, `aether.update`, `aether.forget`, `aether.flush`, `aether.shutdown` record `otel.status_code` (`"OK"` or `"ERROR"`) and emit `tracing::error!` on failure.
 - **Orchestration spans (`aether-cortex`)**: `aether.cortex.index_pass`, `aether.cortex.index_record`, `aether.cortex.vector_search`, `aether.cortex.graph_search`, `aether.cortex.ppr`.
-- **Connector client spans (`aether-adapters::Traced`)**: `connector_op` with `otel.kind = "client"`, `db.system`, `connector`, `project_id`, `op` (`record_create`, `record_get`, `record_get_many`, `record_cas_update`, `record_tombstone`, `record_pending`, `record_pending_for`, `record_session_items`, `record_mark_indexed`, `vector_*`, `graph_*`), and `otel.status_code`.
+- **Connector client spans (`aether-adapters::Traced`)**: `connector_op` with `otel.kind = "client"`, `db.system`, `connector`, `project_id`, `op` (`record_create`, `record_get`, `record_get_many`, `record_cas_update`, `record_tombstone`, `record_pending`, `record_pending_for`, `record_session_items`, `record_mark_indexed`, `initialize`, `describe`, `upsert_batch`, `delete`, `search`, `upsert_entities`, `upsert_relations`, `retract_memory_facts`, `neighborhood`), and `otel.status_code`.
 - **Resilience events (`aether-adapters`)**: `Resilient<T>` emits `tracing::warn!` on transient retry attempts; `Timeout<T>` emits `tracing::warn!` on timeout.
 
 ### Opting Out of Auto-Wrapping

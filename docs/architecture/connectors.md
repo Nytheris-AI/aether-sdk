@@ -8,8 +8,8 @@
 
 Aether separates the authoritative system of record from derived search indexes:
 
-- **`RecordStore: OutboundConnector`**: Authoritative durable store for `MemoryItem` records, atomic idempotency (`create`), batch lookup (`get_many`), optimistic CAS (`cas_update`), versioned tombstones (`tombstone`), indexing cursors (`pending`, `pending_for`, `mark_indexed`), and live TTL-backed `session_items`. Backed by **SQLite** (WAL mode) or **Redis/Valkey**.
-- **`VectorStore: OutboundConnector`**: Derived dense vector + metadata index (`initialize`, `describe`, `upsert_batch`, `delete`, `search`) backed by **Turbopuffer, Qdrant, Chroma, or pgvector**. `describe` reports `Option<IndexSpec>` (dimensions and distance metric) for boundary checks.
+- **`RecordStore: OutboundConnector`**: Authoritative durable store for `MemoryItem` records, atomic idempotency (`create`), batch lookup (`get_many`), optimistic CAS (`cas_update`), versioned tombstones (`tombstone`), indexing cursors (`pending`, `pending_for`, `mark_indexed`), and live TTL-backed `session_items`. Backed by **SQLite** (WAL mode) or **Redis/Valkey** (single-instance/shard Lua script atomicity across pending ZSETs).
+- **`VectorStore: OutboundConnector`**: Derived dense vector + metadata index (`initialize`, `describe`, `upsert_batch`, `delete`, `search`) backed by **Turbopuffer, Qdrant, Chroma, or pgvector**. `describe` reports `Option<IndexSpec>` (persisted across restarts on `Qdrant`, `Chroma`, and `pgvector`, and process-cached on REST v1 `Turbopuffer` after `initialize`).
 - **`GraphStore: OutboundConnector`**: Derived temporal knowledge graph (`upsert_entities`, `upsert_relations`, `retract_memory_facts`, `neighborhood`) backed by **Neo4j** Query API v2 with `source_memory_id` provenance and `valid_at` / `invalid_at` bounds.
 
 ---
