@@ -5,7 +5,47 @@ const sidebars: SidebarsConfig = {
     'index',
     {
       type: 'category',
-      label: 'Architecture',
+      label: 'Learning Series',
+      items: [
+        'series/01-quickstart-first-memory',
+        'series/02-five-composable-levels',
+        'series/03-production-storage-backends',
+        'series/04-obsidian-vault-and-mcp',
+        'series/05-team-git-auth-and-kv-warming',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Concepts',
+      items: [
+        'concepts/index',
+        'concepts/storage-and-consistency',
+        'concepts/scopes-tiers-and-forgetting',
+        'concepts/hybrid-recall-and-ppr',
+        'concepts/vault-amu-and-kv-cache',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'How-To Guides',
+      items: [
+        'guides/usage',
+        'guides/memory',
+        'guides/observability',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Developer Reference',
+      items: [
+        'reference/crates-and-apis',
+        'reference/storage-backends-and-flags',
+        'reference/aether-mcp-and-http-api',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Architecture & ADRs',
       items: [
         'architecture/index',
         'architecture/connectors',
@@ -13,15 +53,6 @@ const sidebars: SidebarsConfig = {
         'architecture/hardening-design',
         'architecture/m1-vault-mcp-rationale',
         'architecture/change-overview',
-      ],
-    },
-    {
-      type: 'category',
-      label: 'Guides',
-      items: [
-        'guides/usage',
-        'guides/memory',
-        'guides/observability',
       ],
     },
     {
