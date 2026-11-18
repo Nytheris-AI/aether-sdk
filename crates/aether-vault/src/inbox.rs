@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::types::{
     AmuId, ApprovedMirrorEntry, CandidateId, ContentHash, InboxCheckbox, InboxEntry, ScopeTag,
-    VaultTier,
+    SourcePointer, VaultTier,
 };
 
 pub(crate) const INBOX_REL_PATH: &str = "Aether/Inbox.md";
@@ -269,6 +269,161 @@ pub(crate) fn render_approved_mirror(entries: &[ApprovedMirrorEntry]) -> String 
     out
 }
 
+/// Parses `Aether/Compiled/Approved.md` sections (`## cand_<id>`) into `ApprovedMirrorEntry` items.
+/// Tolerates Git conflict marker lines (`<<<<<<<`, `=======`, `>>>>>>>`) when recovering snapshots.
+pub(crate) fn parse_approved_mirror(markdown: &str) -> Vec<ApprovedMirrorEntry> {
+    struct Builder {
+        candidate_id: CandidateId,
+        compiled_amu_id: Option<AmuId>,
+        tier: VaultTier,
+        scope: ScopeTag,
+        target_link: Option<String>,
+        proposed_by: String,
+        proposed_date: String,
+        supersedes_amu_id: Option<AmuId>,
+        fact_lines: Vec<String>,
+    }
+
+    impl Builder {
+        fn build(self) -> Option<ApprovedMirrorEntry> {
+            let proposed_fact = self.fact_lines.join("\n").trim().to_string();
+            if proposed_fact.is_empty() {
+                return None;
+            }
+            let compiled_amu_id = self.compiled_amu_id.unwrap_or_else(|| {
+                let ptr_raw = format!("{APPROVED_MIRROR_REL_PATH}#{}", self.candidate_id);
+                let ptr = SourcePointer::parse(&ptr_raw)
+                    .expect("APPROVED_MIRROR_REL_PATH and CandidateId form valid SourcePointer");
+                AmuId::from_pointer(&ptr)
+            });
+            Some(ApprovedMirrorEntry {
+                candidate_id: self.candidate_id,
+                compiled_amu_id,
+                tier: self.tier,
+                scope: self.scope,
+                proposed_fact,
+                target_link: self.target_link,
+                proposed_by: self.proposed_by,
+                proposed_date: self.proposed_date,
+                supersedes_amu_id: self.supersedes_amu_id,
+            })
+        }
+    }
+
+    let mut entries = Vec::new();
+    let mut current: Option<Builder> = None;
+
+    for raw_line in markdown.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.starts_with("<<<<<<<")
+            || trimmed.starts_with("=======")
+            || trimmed.starts_with(">>>>>>>")
+        {
+            continue;
+        }
+        if let Some(heading) = trimmed.strip_prefix("## ") {
+            if let Ok(candidate_id) = CandidateId::parse(heading.trim()) {
+                if let Some(prev) = current.take().and_then(Builder::build) {
+                    entries.push(prev);
+                }
+                current = Some(Builder {
+                    candidate_id,
+                    compiled_amu_id: None,
+                    tier: VaultTier::Warm,
+                    scope: ScopeTag::global(),
+                    target_link: None,
+                    proposed_by: "mcp-agent".into(),
+                    proposed_date: String::new(),
+                    supersedes_amu_id: None,
+                    fact_lines: Vec::new(),
+                });
+                continue;
+            }
+        }
+
+        let Some(builder) = current.as_mut() else {
+            continue;
+        };
+
+        if builder.fact_lines.is_empty() {
+            if let Some(bullet) = trimmed.strip_prefix("- ") {
+                if let Some((raw_key, raw_val)) = bullet.split_once(':') {
+                    let key = unquote_backticks(raw_key).to_ascii_lowercase();
+                    let val = raw_val.trim();
+                    match key.as_str() {
+                        "amu_id" | "compiled_amu_id" => {
+                            if let Ok(id) = AmuId::parse(&unquote_backticks(val)) {
+                                builder.compiled_amu_id = Some(id);
+                            }
+                            continue;
+                        }
+                        "tier" => {
+                            if let Some(t) = VaultTier::parse_str(&unquote_backticks(val)) {
+                                builder.tier = t;
+                            }
+                            continue;
+                        }
+                        "scope" => {
+                            if let Ok(s) = ScopeTag::new(unquote_backticks(val)) {
+                                builder.scope = s;
+                            }
+                            continue;
+                        }
+                        "target_link" | "target_note" => {
+                            let clean = val
+                                .trim()
+                                .trim_start_matches("[[")
+                                .trim_end_matches("]]")
+                                .trim();
+                            if !clean.is_empty() {
+                                builder.target_link = Some(clean.to_string());
+                            }
+                            continue;
+                        }
+                        "proposed_by" => {
+                            if let Some((who, date)) = val.split_once(" on ") {
+                                let agent = unquote_backticks(who);
+                                let dt = unquote_backticks(date);
+                                if !agent.is_empty() {
+                                    builder.proposed_by = agent;
+                                }
+                                if !dt.is_empty() {
+                                    builder.proposed_date = dt;
+                                }
+                            } else {
+                                let agent = unquote_backticks(val);
+                                if !agent.is_empty() {
+                                    builder.proposed_by = agent;
+                                }
+                            }
+                            continue;
+                        }
+                        "supersedes" | "supersedes_amu_id" => {
+                            if let Ok(id) = AmuId::parse(&unquote_backticks(val)) {
+                                builder.supersedes_amu_id = Some(id);
+                            }
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+            } else if trimmed.is_empty() {
+                continue;
+            }
+        }
+
+        if !trimmed.is_empty() || !builder.fact_lines.is_empty() {
+            builder.fact_lines.push(raw_line.trim_end().to_string());
+        }
+    }
+
+    if let Some(last) = current.take().and_then(Builder::build) {
+        entries.push(last);
+    }
+
+    entries
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,11 +517,14 @@ mod tests {
             proposed_date: "2026-05-01".into(),
             supersedes_amu_id: None,
         };
-        let rendered = render_approved_mirror(&[entry]);
+        let rendered = render_approved_mirror(std::slice::from_ref(&entry));
         assert!(rendered.contains("# Aether Compiled Approved Memory"));
         assert!(rendered.contains("## cand_9f82a1"));
         assert!(rendered.contains("- `amu_id`: `amu_0123456789abcdef0123456789abcdef`"));
         assert!(rendered.contains("- `target_link`: [[Arch/DB]]"));
         assert!(rendered.contains("Use SQLite WAL mode across vault readers."));
+
+        let parsed = parse_approved_mirror(&rendered);
+        assert_eq!(parsed, vec![entry]);
     }
 }

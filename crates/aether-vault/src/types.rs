@@ -17,7 +17,7 @@ use crate::reranker::Reranker;
 pub const HOT_PROFILE_MAX_TOKENS: usize = 2000;
 
 /// Current SQLite vault index schema version.
-pub const VAULT_SCHEMA_VERSION: u32 = 2;
+pub const VAULT_SCHEMA_VERSION: u32 = 3;
 
 /// Default maximum active AMUs re-embedded synchronously inside one startup transaction.
 pub const DEFAULT_SYNC_REINDEX_THRESHOLD: usize = 5_000;

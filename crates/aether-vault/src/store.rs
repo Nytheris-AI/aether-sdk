@@ -11,6 +11,9 @@ use rusqlite::{
     params, Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior,
 };
 
+use crate::auth::{
+    constant_time_eq, AgentId, AgentRole, AuthError, KeyId, ScopePolicy, ScopedApiKey,
+};
 use crate::embedder::{embed_amu_text, Embedder};
 use crate::parser::ParsedSection;
 use crate::types::{
@@ -113,6 +116,18 @@ CREATE TABLE IF NOT EXISTS dream_watermarks (
     processed_at_us   INTEGER NOT NULL,
     candidates_staged INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS agent_api_keys (
+    key_id       TEXT PRIMARY KEY,
+    agent_id     TEXT NOT NULL,
+    key_hash     TEXT NOT NULL UNIQUE,
+    role         TEXT NOT NULL,
+    scopes_json  TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    expires_at   TEXT,
+    revoked_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_api_keys_agent ON agent_api_keys (agent_id);
 ";
 
 #[derive(Clone)]
@@ -819,12 +834,12 @@ impl VaultStore {
         &self,
         query_text: &str,
         query_vec: &[f32],
-        scope: Option<&ScopeTag>,
+        scope_policy: &ScopePolicy,
         top_k: usize,
     ) -> Result<RecallBundle> {
         let query_text = query_text.to_string();
         let query_vec = query_vec.to_vec();
-        let scope = scope.cloned();
+        let scope_policy = scope_policy.clone();
         let project_id = self.project_id.clone();
 
         self.with_conn(move |conn| {
@@ -835,7 +850,7 @@ impl VaultStore {
             let mut vector_scored: Vec<(MemoryId, f32)> = Vec::new();
 
             for (amu, emb) in active_rows {
-                if !scope_matches(&amu.scopes, scope.as_ref()) {
+                if !scope_policy_matches(&amu.scopes, &scope_policy) {
                     continue;
                 }
                 let mem_id = amu.amu_id.to_memory_id();
@@ -883,12 +898,11 @@ impl VaultStore {
                          WHERE amus.status = 'active'
                            AND amus.tier != 'hot'
                            AND amus_fts MATCH ?1
-                         ORDER BY bm25(amus_fts) ASC
-                         LIMIT ?2",
+                         ORDER BY bm25(amus_fts) ASC",
                     )
                     .map_err(map_sqlite_err)?;
                 let rows = stmt
-                    .query_map(params![fts_query, top_k as i64], |row| {
+                    .query_map(params![fts_query], |row| {
                         Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
                     })
                     .map_err(map_sqlite_err)?;
@@ -900,6 +914,9 @@ impl VaultStore {
                             item: to_memory_item(amu, &project_id),
                             score: score as f32,
                         });
+                        if fts_candidates.len() >= top_k {
+                            break;
+                        }
                     }
                 }
             }
@@ -982,6 +999,223 @@ impl VaultStore {
         })
         .await
     }
+
+    pub(crate) async fn insert_api_key(
+        &self,
+        key: &ScopedApiKey,
+        key_hash: &ContentHash,
+    ) -> Result<()> {
+        let key = key.clone();
+        let hash = key_hash.as_str().to_string();
+        self.with_conn(move |conn| {
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(map_sqlite_err)?;
+            insert_api_key_tx(&tx, &key, &hash).map_err(map_sqlite_err)?;
+            tx.commit().map_err(map_sqlite_err)?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub(crate) async fn ensure_bootstrap_admin_key(
+        &self,
+        agent_id: &AgentId,
+        key_hash: &ContentHash,
+    ) -> Result<ScopedApiKey> {
+        let agent_id = agent_id.clone();
+        let hash = key_hash.as_str().to_string();
+        self.with_conn(move |conn| {
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(map_sqlite_err)?;
+
+            let mut stmt = tx
+                .prepare(
+                    "SELECT key_id, agent_id, key_hash, role, scopes_json, created_at, expires_at, revoked_at
+                     FROM agent_api_keys",
+                )
+                .map_err(map_sqlite_err)?;
+            let rows = stmt
+                .query_map([], read_api_key_row)
+                .map_err(map_sqlite_err)?;
+            let mut matched: Option<ScopedApiKey> = None;
+            for row in rows {
+                let (key, stored_hash) = row.map_err(map_sqlite_err)?;
+                if constant_time_eq(stored_hash.as_bytes(), hash.as_bytes()) {
+                    matched = Some(key);
+                }
+            }
+            drop(stmt);
+
+            if let Some(existing) = matched {
+                tx.commit().map_err(map_sqlite_err)?;
+                if existing.revoked_at.is_some() {
+                    return Err(AetherError::InvalidInput(format!(
+                        "bootstrap admin key `{}` is revoked",
+                        existing.key_id
+                    )));
+                }
+                return Ok(existing);
+            }
+
+            let key = ScopedApiKey::new(
+                KeyId::generate(),
+                agent_id,
+                AgentRole::Admin,
+                vec![ScopeTag::new("*")?],
+                Utc::now(),
+                None,
+                None,
+            )?;
+            insert_api_key_tx(&tx, &key, &hash).map_err(map_sqlite_err)?;
+            tx.commit().map_err(map_sqlite_err)?;
+            Ok(key)
+        })
+        .await
+    }
+
+    pub(crate) async fn authenticate_api_key(
+        &self,
+        key_hash: &ContentHash,
+        now: DateTime<Utc>,
+    ) -> std::result::Result<ScopedApiKey, AuthError> {
+        let hash = key_hash.as_str().to_string();
+        let lookup = self
+            .with_conn(move |conn| {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT key_id, agent_id, key_hash, role, scopes_json, created_at, expires_at, revoked_at
+                         FROM agent_api_keys",
+                    )
+                    .map_err(map_sqlite_err)?;
+                let rows = stmt
+                    .query_map([], read_api_key_row)
+                    .map_err(map_sqlite_err)?;
+                let mut matched: Option<ScopedApiKey> = None;
+                for row in rows {
+                    let (key, stored_hash) = row.map_err(map_sqlite_err)?;
+                    if constant_time_eq(stored_hash.as_bytes(), hash.as_bytes()) {
+                        matched = Some(key);
+                    }
+                }
+                Ok(matched)
+            })
+            .await;
+
+        let Ok(Some(key)) = lookup else {
+            return Err(AuthError::InvalidToken);
+        };
+        key.is_active_at(now)?;
+        Ok(key)
+    }
+
+    pub(crate) async fn list_api_keys(&self) -> Result<Vec<ScopedApiKey>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT key_id, agent_id, key_hash, role, scopes_json, created_at, expires_at, revoked_at
+                     FROM agent_api_keys
+                     ORDER BY created_at ASC, key_id ASC",
+                )
+                .map_err(map_sqlite_err)?;
+            let rows = stmt
+                .query_map([], read_api_key_row)
+                .map_err(map_sqlite_err)?;
+            let mut out = Vec::new();
+            for row in rows {
+                let (key, _) = row.map_err(map_sqlite_err)?;
+                out.push(key);
+            }
+            Ok(out)
+        })
+        .await
+    }
+
+    pub(crate) async fn revoke_api_key(&self, key_id: &KeyId, at: DateTime<Utc>) -> Result<bool> {
+        let kid = key_id.as_str().to_string();
+        let at_str = at.to_rfc3339();
+        self.with_conn(move |conn| {
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(map_sqlite_err)?;
+            let updated = tx
+                .execute(
+                    "UPDATE agent_api_keys SET revoked_at = ?1 WHERE key_id = ?2 AND revoked_at IS NULL",
+                    params![at_str, kid],
+                )
+                .map_err(map_sqlite_err)?;
+            tx.commit().map_err(map_sqlite_err)?;
+            Ok(updated > 0)
+        })
+        .await
+    }
+}
+
+fn insert_api_key_tx(
+    tx: &Transaction<'_>,
+    key: &ScopedApiKey,
+    key_hash: &str,
+) -> rusqlite::Result<()> {
+    let scope_strs: Vec<&str> = key.scopes().iter().map(ScopeTag::as_str).collect();
+    let scopes_json = serde_json::to_string(&scope_strs).unwrap_or_else(|_| "[]".into());
+    tx.execute(
+        "INSERT INTO agent_api_keys (
+             key_id, agent_id, key_hash, role, scopes_json, created_at, expires_at, revoked_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            key.key_id.as_str(),
+            key.agent_id.as_str(),
+            key_hash,
+            key.role.as_str(),
+            scopes_json,
+            key.created_at.to_rfc3339(),
+            key.expires_at.map(|dt| dt.to_rfc3339()),
+            key.revoked_at.map(|dt| dt.to_rfc3339()),
+        ],
+    )?;
+    Ok(())
+}
+
+fn read_api_key_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(ScopedApiKey, String)> {
+    let kid_s: String = row.get(0)?;
+    let aid_s: String = row.get(1)?;
+    let hash_s: String = row.get(2)?;
+    let role_s: String = row.get(3)?;
+    let scopes_s: String = row.get(4)?;
+    let created_s: String = row.get(5)?;
+    let expires_s: Option<String> = row.get(6)?;
+    let revoked_s: Option<String> = row.get(7)?;
+
+    let key_id = KeyId::parse(&kid_s).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(err))
+    })?;
+    let agent_id = AgentId::new(aid_s).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(err))
+    })?;
+    let role = AgentRole::parse_str(&role_s).unwrap_or(AgentRole::Reader);
+    let scope_strs: Vec<String> = serde_json::from_str(&scopes_s).unwrap_or_default();
+    let scopes: Vec<ScopeTag> = scope_strs
+        .into_iter()
+        .filter_map(|s| ScopeTag::new(s).ok())
+        .collect();
+    let created_at = DateTime::parse_from_rfc3339(&created_s)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now());
+    let expires_at = expires_s
+        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+        .map(|dt| dt.with_timezone(&Utc));
+    let revoked_at = revoked_s
+        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+        .map(|dt| dt.with_timezone(&Utc));
+
+    let key = ScopedApiKey::new(
+        key_id, agent_id, role, scopes, created_at, expires_at, revoked_at,
+    )
+    .map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(err))
+    })?;
+    Ok((key, hash_s))
 }
 
 fn upsert_vault_meta_tx(tx: &Transaction<'_>, meta: &VaultMeta) -> rusqlite::Result<()> {
@@ -1407,11 +1641,18 @@ fn note_entity_for_path(rel_path: &str) -> String {
     format!("note:{stem}")
 }
 
-fn scope_matches(scopes: &[ScopeTag], filter: Option<&ScopeTag>) -> bool {
-    let Some(target) = filter else {
-        return true;
-    };
-    scopes.iter().any(|s| s == target || s.as_str() == "global")
+fn scope_policy_matches(scopes: &[ScopeTag], policy: &ScopePolicy) -> bool {
+    match policy {
+        ScopePolicy::Unrestricted => true,
+        ScopePolicy::Allowed(allowed) => {
+            if allowed.iter().any(|s| s.as_str() == "*") {
+                return true;
+            }
+            scopes
+                .iter()
+                .any(|s| s.as_str() == "global" || allowed.contains(s))
+        }
+    }
 }
 
 fn build_fts5_query(query: &str) -> Option<String> {

@@ -1,5 +1,6 @@
 //! Obsidian-native memory compiler, hybrid recall engine, and stdio MCP server for Project Aether.
 
+mod auth;
 mod dream;
 mod embedder;
 mod engine;
@@ -11,6 +12,11 @@ mod prefix;
 mod reranker;
 mod store;
 mod types;
+
+pub use auth::{
+    AgentId, AgentRole, ApiKeySecret, AuthError, IssueApiKeyRequest, IssuedApiKey, KeyId,
+    ScopedApiKey,
+};
 
 pub use embedder::{
     ComputeDevice, DenseSubwordEmbedder, Embedder, GpuEmbedderConfig, HashedNgramEmbedder,

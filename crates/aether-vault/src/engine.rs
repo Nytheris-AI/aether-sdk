@@ -13,6 +13,10 @@ use tokio::sync::{watch, Mutex as AsyncMutex};
 use tokio::task::JoinHandle;
 use walkdir::WalkDir;
 
+use crate::auth::{
+    AgentId, AgentRole, ApiKeySecret, AuthError, IssueApiKeyRequest, IssuedApiKey, KeyId,
+    ScopePolicy, ScopedApiKey,
+};
 use crate::dream;
 use crate::embedder::{embed_amu_text, Embedder, HashedNgramEmbedder};
 use crate::inbox::{self, APPROVED_MIRROR_REL_PATH, INBOX_REL_PATH};
@@ -388,6 +392,18 @@ impl VaultEngine {
 
     /// Runs hybrid FTS5, cosine vector, and `PersonalizedPageRank` recall fused via RRF.
     pub async fn recall(&self, req: RecallRequest) -> Result<RecallResponse> {
+        let policy = match &req.scope {
+            Some(s) => ScopePolicy::Allowed(vec![s.clone()]),
+            None => ScopePolicy::Unrestricted,
+        };
+        self.recall_with_policy(&req, &policy).await
+    }
+
+    async fn recall_with_policy(
+        &self,
+        req: &RecallRequest,
+        scope_policy: &ScopePolicy,
+    ) -> Result<RecallResponse> {
         let query_trimmed = req.query.trim();
         if query_trimmed.is_empty() && !req.include_hot_profile {
             return Err(AetherError::InvalidInput(
@@ -403,7 +419,7 @@ impl VaultEngine {
 
         let bundle = self
             .store
-            .recall_bundle(query_trimmed, &query_vec, req.scope.as_ref(), 32)
+            .recall_bundle(query_trimmed, &query_vec, scope_policy, 32)
             .await?;
 
         if query_trimmed.is_empty() {
@@ -640,6 +656,14 @@ impl VaultEngine {
 
     /// Returns the exact verbatim Markdown section for `raw_pointer`, enforcing traversal and privacy guards.
     pub async fn inspect_source(&self, raw_pointer: &str) -> Result<String> {
+        self.inspect_source_inner(None, raw_pointer).await
+    }
+
+    async fn inspect_source_inner(
+        &self,
+        agent: Option<&ScopedApiKey>,
+        raw_pointer: &str,
+    ) -> Result<String> {
         let pointer = SourcePointer::parse(raw_pointer)?;
         let rules = IgnoreRules::load(&self.vault_root);
         if rules.is_ignored_for_inspect(pointer.relative_path()) {
@@ -670,7 +694,157 @@ impl VaultEngine {
             ))
         })?;
 
+        if let Some(scoped_agent) = agent {
+            if pointer
+                .relative_path()
+                .eq_ignore_ascii_case(APPROVED_MIRROR_REL_PATH)
+            {
+                let entries = inbox::parse_approved_mirror(&raw_md);
+                match pointer.heading_anchor() {
+                    Some(anchor) => {
+                        if let Some(entry) = entries
+                            .iter()
+                            .find(|e| e.candidate_id.as_str().eq_ignore_ascii_case(anchor))
+                        {
+                            if !scoped_agent
+                                .can_read_resource_scopes(std::slice::from_ref(&entry.scope))
+                            {
+                                return Err(AuthError::ScopeDenied {
+                                    agent_id: scoped_agent.agent_id.clone(),
+                                    requested: entry.scope.clone(),
+                                }
+                                .into());
+                            }
+                        }
+                    }
+                    None => {
+                        for entry in &entries {
+                            if !scoped_agent
+                                .can_read_resource_scopes(std::slice::from_ref(&entry.scope))
+                            {
+                                return Err(AuthError::ScopeDenied {
+                                    agent_id: scoped_agent.agent_id.clone(),
+                                    requested: entry.scope.clone(),
+                                }
+                                .into());
+                            }
+                        }
+                    }
+                }
+            } else {
+                if parser::is_private_note(&raw_md) {
+                    return Err(AetherError::InvalidInput(
+                        "cannot inspect source of a private note".into(),
+                    ));
+                }
+                let scopes = parser::inspect_note_scopes(pointer.relative_path(), &raw_md);
+                if !scoped_agent.can_read_resource_scopes(&scopes) {
+                    return Err(AuthError::ScopeDenied {
+                        agent_id: scoped_agent.agent_id.clone(),
+                        requested: scopes[0].clone(),
+                    }
+                    .into());
+                }
+            }
+        }
+
         parser::extract_verbatim_section(&raw_md, &pointer)
+    }
+
+    /// Issues a scoped API key persisted in SQLite (`agent_api_keys`) as SHA-256 only.
+    pub async fn issue_api_key(&self, req: IssueApiKeyRequest) -> Result<IssuedApiKey> {
+        let secret = ApiKeySecret::generate();
+        let key_hash = secret.digest();
+        let key = ScopedApiKey::new(
+            KeyId::generate(),
+            req.agent_id,
+            req.role,
+            req.scopes,
+            Utc::now(),
+            req.expires_at,
+            None,
+        )?;
+        self.store.insert_api_key(&key, &key_hash).await?;
+        Ok(IssuedApiKey { key, secret })
+    }
+
+    /// Ensures a bootstrap Admin key matching `secret` exists in SQLite (idempotent across restarts).
+    pub async fn ensure_bootstrap_admin_key(
+        &self,
+        agent_id: AgentId,
+        secret: &ApiKeySecret,
+    ) -> Result<ScopedApiKey> {
+        self.store
+            .ensure_bootstrap_admin_key(&agent_id, &secret.digest())
+            .await
+    }
+
+    /// Authenticates `secret` in constant time and verifies active status.
+    pub async fn authenticate_api_key(
+        &self,
+        secret: &ApiKeySecret,
+    ) -> std::result::Result<ScopedApiKey, AuthError> {
+        self.store
+            .authenticate_api_key(&secret.digest(), Utc::now())
+            .await
+    }
+
+    /// Lists all issued API keys without exposing secret hashes.
+    pub async fn list_api_keys(&self) -> Result<Vec<ScopedApiKey>> {
+        self.store.list_api_keys().await
+    }
+
+    /// Revokes an existing API key by `KeyId`.
+    pub async fn revoke_api_key(&self, key_id: &KeyId) -> Result<bool> {
+        self.store.revoke_api_key(key_id, Utc::now()).await
+    }
+
+    /// Executes scoped recall intersecting `agent.scopes()` with `req.scope`.
+    pub async fn recall_as(
+        &self,
+        agent: &ScopedApiKey,
+        req: RecallRequest,
+    ) -> Result<RecallResponse> {
+        agent.require_role(AgentRole::Reader)?;
+        let policy = if agent.has_wildcard_scope() && req.scope.is_none() {
+            ScopePolicy::Unrestricted
+        } else {
+            let effective = agent.intersect_scopes(req.scope.as_ref())?;
+            ScopePolicy::Allowed(effective)
+        };
+        self.recall_with_policy(&req, &policy).await
+    }
+
+    /// Executes scoped memory staging, auto-stamping `proposed_by` with `agent.agent_id`.
+    pub async fn stage_memory_as(
+        &self,
+        agent: &ScopedApiKey,
+        mut req: StageMemoryRequest,
+    ) -> Result<CandidateId> {
+        agent.require_role(AgentRole::Contributor)?;
+        agent.authorize_write_scope(&req.scope)?;
+        req.proposed_by = agent.agent_id.as_str().to_string();
+        self.stage_memory(req).await
+    }
+
+    /// Executes scoped source inspection, denying cross-scope vault notes and `Approved.md` entries.
+    pub async fn inspect_source_as(
+        &self,
+        agent: &ScopedApiKey,
+        raw_pointer: &str,
+    ) -> Result<String> {
+        agent.require_role(AgentRole::Reader)?;
+        self.inspect_source_inner(Some(agent), raw_pointer).await
+    }
+
+    /// Lists pending Inbox candidates readable by `agent`.
+    pub async fn pending_inbox_as(&self, agent: &ScopedApiKey) -> Result<Vec<InboxEntry>> {
+        agent.require_role(AgentRole::Reader)?;
+        let pending = self.pending_inbox().await?;
+        Ok(pending
+            .into_iter()
+            .filter(|entry| agent.can_read_resource_scopes(std::slice::from_ref(&entry.scope)))
+            .collect())
     }
 
     /// Stops any active background polling loop and closes the SQLite connection.
@@ -1395,6 +1569,166 @@ mod tests {
         assert!(!res
             .formatted_context
             .contains("Use Qdrant for local vector search."));
+
+        engine.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn scoped_api_keys_enforce_recall_stage_inspect_and_revocation() {
+        let vault = TempVault::new();
+        vault.write(
+            "Engineering/DB.md",
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# DB\nUse WAL mode in SQLite.\n",
+        );
+        vault.write(
+            "Ops/Runbook.md",
+            "---\naether_tier: warm\naether_scope:\n  - ops\n---\n# Failover\nSentinel quorum is 2.\n",
+        );
+        vault.write(
+            "HR/Compensation.md",
+            "---\naether_tier: warm\naether_scope:\n  - hr\n---\n# Bands\nExecutive compensation bands.\n",
+        );
+
+        let engine = VaultEngine::open(VaultConfig::in_memory(&vault.root))
+            .await
+            .unwrap();
+
+        let issued_eng_ops = engine
+            .issue_api_key(
+                IssueApiKeyRequest::new(
+                    AgentId::new("ci-platform").unwrap(),
+                    AgentRole::Contributor,
+                    vec![
+                        ScopeTag::new("engineering").unwrap(),
+                        ScopeTag::new("ops").unwrap(),
+                    ],
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let parsed_secret = ApiKeySecret::parse(issued_eng_ops.secret.expose_secret()).unwrap();
+        let authed = engine.authenticate_api_key(&parsed_secret).await.unwrap();
+        assert_eq!(authed.key_id, issued_eng_ops.key.key_id);
+
+        // Multi-scope recall without explicit `req.scope` fetches both `engineering` and `ops`,
+        // excluding `hr` before top-K truncation.
+        let multi_res = engine
+            .recall_as(&authed, RecallRequest::new("SQLite Sentinel Executive"))
+            .await
+            .unwrap();
+        assert!(multi_res.formatted_context.contains("WAL mode"));
+        assert!(multi_res.formatted_context.contains("Sentinel quorum"));
+        assert!(!multi_res
+            .formatted_context
+            .contains("Executive compensation"));
+
+        // Requesting unauthorized `hr` scope fails.
+        let mut bad_req = RecallRequest::new("Executive");
+        bad_req.scope = Some(ScopeTag::new("hr").unwrap());
+        assert!(engine.recall_as(&authed, bad_req).await.is_err());
+
+        // Scoped stage auto-stamps `proposed_by` and prevents staging into `hr`.
+        assert!(engine
+            .stage_memory_as(
+                &authed,
+                StageMemoryRequest::new("Unauthorized HR claim.", VaultTier::Warm)
+                    .with_scope("hr")
+                    .unwrap(),
+            )
+            .await
+            .is_err());
+
+        let eng_cand = engine
+            .stage_memory_as(
+                &authed,
+                StageMemoryRequest::new("Prefer connection pooling.", VaultTier::Warm)
+                    .with_scope("engineering")
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let pending = engine.pending_inbox_as(&authed).await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].proposed_by, "ci-platform");
+
+        // Approve a secret HR candidate directly and ensure `ci-platform` cannot inspect it in Approved.md.
+        let hr_cand = engine
+            .stage_memory(
+                StageMemoryRequest::new("HR bonus target is 15 percent.", VaultTier::Warm)
+                    .with_scope("hr")
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        engine
+            .decide_inbox_candidate(&eng_cand, true)
+            .await
+            .unwrap();
+        engine.decide_inbox_candidate(&hr_cand, true).await.unwrap();
+
+        assert!(engine
+            .inspect_source_as(&authed, "Engineering/DB.md#DB")
+            .await
+            .is_ok());
+        assert!(engine
+            .inspect_source_as(&authed, &format!("Aether/Compiled/Approved.md#{eng_cand}"))
+            .await
+            .is_ok());
+        assert!(engine
+            .inspect_source_as(&authed, "HR/Compensation.md#Bands")
+            .await
+            .is_err());
+        assert!(engine
+            .inspect_source_as(&authed, &format!("Aether/Compiled/Approved.md#{hr_cand}"))
+            .await
+            .is_err());
+
+        // Reader role cannot stage memory.
+        let reader = engine
+            .issue_api_key(
+                IssueApiKeyRequest::new(
+                    AgentId::new("readonly-bot").unwrap(),
+                    AgentRole::Reader,
+                    vec![ScopeTag::new("engineering").unwrap()],
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(engine
+            .stage_memory_as(
+                &reader.key,
+                StageMemoryRequest::new("Should be rejected.", VaultTier::Warm)
+                    .with_scope("engineering")
+                    .unwrap(),
+            )
+            .await
+            .is_err());
+
+        // Revocation takes effect immediately on next authentication.
+        assert!(engine
+            .revoke_api_key(&issued_eng_ops.key.key_id)
+            .await
+            .unwrap());
+        assert!(matches!(
+            engine.authenticate_api_key(&parsed_secret).await,
+            Err(AuthError::RevokedToken(_))
+        ));
+
+        // Bootstrap admin key creation is idempotent across calls.
+        let admin_secret = ApiKeySecret::generate();
+        let admin_a = engine
+            .ensure_bootstrap_admin_key(AgentId::new("bootstrap-admin").unwrap(), &admin_secret)
+            .await
+            .unwrap();
+        let admin_b = engine
+            .ensure_bootstrap_admin_key(AgentId::new("bootstrap-admin").unwrap(), &admin_secret)
+            .await
+            .unwrap();
+        assert_eq!(admin_a.key_id, admin_b.key_id);
+        assert_eq!(engine.list_api_keys().await.unwrap().len(), 3);
 
         engine.shutdown().await.unwrap();
     }
