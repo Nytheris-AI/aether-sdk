@@ -1,0 +1,10 @@
+{
+  "id": "nytheris-aether-companion",
+  "name": "Project Aether Companion",
+  "version": "0.2.0",
+  "minAppVersion": "1.5.0",
+  "description": "Status bar indicator, 1-click Inbox review pane, and Dream consolidation trigger for Project Aether.",
+  "author": "Nytheris AI",
+  "authorUrl": "https://github.com/Nytheris-AI/aether-sdk",
+  "isDesktopOnly": true
+}
