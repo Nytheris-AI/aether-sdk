@@ -1,11 +1,19 @@
 [package]
 name = "aether-cortex"
+description = "Composable indexer sync engine, PersonalizedPageRank, and hybrid recall primitives for Aether SDK"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/aether-cortex"
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
-aether-core = { path = "../aether-core" }
+aether-core = { path = "../aether-core", version = "0.1.0" }
 chrono.workspace = true
 petgraph.workspace = true
 serde.workspace = true

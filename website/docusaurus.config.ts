@@ -36,7 +36,6 @@ const config: Config = {
       {
         docs: {
           path: '../docs',
-          exclude: ['superpowers/**'],
           routeBasePath: '/docs',
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/Nytheris-AI/aether-sdk/tree/main/',

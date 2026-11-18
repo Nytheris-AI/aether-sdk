@@ -10,8 +10,13 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.89"
 license = "Apache-2.0"
 repository = "https://github.com/Nytheris-AI/aether-sdk"
+homepage = "https://nytheris-ai.github.io/aether-sdk/"
+readme = "README.md"
+keywords = ["ai", "memory", "agent", "vector", "graph"]
+categories = ["database", "science"]
 
 [workspace.dependencies]
 async-trait = "0.1"

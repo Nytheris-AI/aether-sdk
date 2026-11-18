@@ -1,4 +1,31 @@
 //! Public facade and composition root for Aether SDK.
+//!
+//! ```
+//! use std::sync::Arc;
+//! use aether_adapters::InMemoryBackend;
+//! use aether_core::{DistanceMetric, MemoryInput, ProjectId, RecallQuery, VectorStore, WriteDurability};
+//! use aether_sdk::MemoryManager;
+//!
+//! # #[tokio::main]
+//! # async fn main() -> aether_core::Result<()> {
+//! let backend = Arc::new(InMemoryBackend::new());
+//! let project = ProjectId::new("doctest")?;
+//! backend.initialize(&project, 2, DistanceMetric::Cosine).await?;
+//!
+//! let manager = MemoryManager::builder(backend.clone()).vector(backend).build();
+//! let mut input = MemoryInput::new(project.clone(), "Aether keeps stores consistent.");
+//! input.embedding = Some(vec![1.0, 0.0]);
+//! input.durability = WriteDurability::WaitFlush;
+//! manager.remember(input).await?;
+//!
+//! let mut query = RecallQuery::new(project, "consistency");
+//! query.query_vector = Some(vec![1.0, 0.0]);
+//! let res = manager.recall(query).await?;
+//! assert_eq!(res.hits.len(), 1);
+//! manager.shutdown().await?;
+//! # Ok(())
+//! # }
+//! ```
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};

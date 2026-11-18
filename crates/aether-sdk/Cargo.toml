@@ -1,8 +1,16 @@
 [package]
 name = "aether-sdk"
+description = "Model-free, pieces-first Rust memory SDK unifying record, vector, and graph stores"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/aether-sdk"
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [features]
 default = []
@@ -24,9 +32,9 @@ live-docker = [
 ]
 
 [dependencies]
-aether-core = { path = "../aether-core" }
-aether-cortex = { path = "../aether-cortex" }
-aether-adapters = { path = "../aether-adapters" }
+aether-core = { path = "../aether-core", version = "0.1.0" }
+aether-cortex = { path = "../aether-cortex", version = "0.1.0" }
+aether-adapters = { path = "../aether-adapters", version = "0.1.0" }
 async-trait.workspace = true
 chrono.workspace = true
 serde_json.workspace = true

@@ -189,7 +189,7 @@ These are removed in the last step of the work and **need explicit owner sign-of
 13. Documentation, including deleting `rust-migration.md`.
 14. Python removal (after sign-off).
 
-Steps 1 to 7 match tasks 1 to 7 of the existing plan at `docs/superpowers/plans/2026-11-16-gateway-hardening.md`.
+Steps 1 to 7 match tasks 1 to 7 of the earlier gateway-hardening plan.
 Steps 8 to 13 replace its tasks 8 to 13, which were written for the gateway shape and have not been revised yet.
 
 ## 10. Production Impact

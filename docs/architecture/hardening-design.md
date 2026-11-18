@@ -8,7 +8,6 @@ The [pieces-first SDK design](./sdk-design.md) now sets the overall shape, and i
 The record-store contract, indexer semantics, validation rules, scope rules, and ranking algorithm below remain the design of the consistency pieces.
 :::
 
-The step-by-step implementation plan is in the repository at `docs/superpowers/plans/2026-11-16-gateway-hardening.md` (not published on this site).
 This document resolves the open choices in [Roadmap Phase 5](../about/roadmap.md) into one design a builder can plan from.
 
 ## 1. Intent
