@@ -221,7 +221,7 @@ A pieces-first Rust API does not translate one-to-one into another language, so 
 
 ## 8. Effect on the Implementation Plan
 
-The plan at `docs/superpowers/plans/2026-11-16-gateway-hardening.md` was written before this document.
+The earlier gateway-hardening plan was written before this document.
 
 - Tasks 1 to 7 (CI, shared functions, rename, contract suite, versioned records, idempotent relations, `Indexer`) are unaffected, apart from `Indexer` taking optional stores.
 - Tasks 8 to 13 (facade switch, validation, recall, scopes, middleware, docs) change shape and must be revised against this document before anyone executes them.

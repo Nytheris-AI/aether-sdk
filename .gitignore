@@ -6,8 +6,10 @@ website/node_modules/
 website/build/
 website/.docusaurus/
 
-# Local dev state
+# Local dev state & AI session artifacts
 .aether/
+.audit/
+.superpowers/
 
 # Environments, secrets & logs
 .env
