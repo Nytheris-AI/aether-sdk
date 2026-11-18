@@ -446,15 +446,15 @@ fn maps_sqlx_errors_to_transient_or_permanent() {
 
 #[cfg(feature = "contract-suite")]
 #[tokio::test]
-#[ignore = "requires a running Postgres instance with pgvector (set PGVECTOR_DATABASE_URL)"]
+#[ignore = "requires a running Postgres instance with pgvector (PGVECTOR_DATABASE_URL or default local docker)"]
 async fn live_pgvector_contract_vector_store() {
     let url = std::env::var("PGVECTOR_DATABASE_URL")
-        .expect("PGVECTOR_DATABASE_URL must be set to run live pgvector contract test");
+        .unwrap_or_else(|_| "postgres://aether:aether@127.0.0.1:55433/aether".to_string());
     let table = std::env::var("PGVECTOR_TEST_TABLE")
-        .unwrap_or_else(|_| "aether_vectors_contract_test".to_string());
+        .unwrap_or_else(|_| format!("aether_vec_{}", uuid::Uuid::new_v4().simple()));
     let store = PgVectorStore::connect(PgVectorConfig {
-        database_url: SecretString::new(url),
-        table_name: table,
+        database_url: SecretString::new(url.clone()),
+        table_name: table.clone(),
         max_connections: 5,
     })
     .await
@@ -466,5 +466,37 @@ async fn live_pgvector_contract_vector_store() {
         aether_core::ConnectorHealth::Healthy
     );
     aether_adapters::contract::vector_store(&store).await;
+
+    let ns = ProjectId::new(format!("pg-desc-{}", uuid::Uuid::new_v4())).unwrap();
+    store
+        .initialize(&ns, 3, DistanceMetric::Euclidean)
+        .await
+        .unwrap();
+    let fresh = PgVectorStore::connect(PgVectorConfig {
+        database_url: SecretString::new(url),
+        table_name: table,
+        max_connections: 2,
+    })
+    .await
+    .expect("reconnect fresh pgvector");
+    assert_eq!(
+        fresh.describe(&ns).await.unwrap(),
+        Some(aether_core::IndexSpec {
+            dimensions: 3,
+            metric: DistanceMetric::Euclidean,
+        })
+    );
+    assert!(matches!(
+        fresh.initialize(&ns, 4, DistanceMetric::Euclidean).await,
+        Err(AetherError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        fresh.search(&ns, &[1.0, 0.0], 5, None).await,
+        Err(AetherError::InvalidInput(_))
+    ));
+    let missing = ProjectId::new("pg-missing").unwrap();
+    assert_eq!(fresh.describe(&missing).await.unwrap(), None);
+
+    fresh.close().await.expect("close fresh");
     store.close().await.expect("close");
 }

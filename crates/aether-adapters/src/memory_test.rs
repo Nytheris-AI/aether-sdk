@@ -38,15 +38,9 @@ struct RecordEntry {
     tombstone: bool,
 }
 
-struct IdemEntry {
-    receipt: MemoryReceipt,
-    expires_at: Option<Instant>,
-}
-
 #[derive(Default)]
 struct RecordNamespace {
     items: HashMap<MemoryId, RecordEntry>,
-    idempotency: HashMap<String, IdemEntry>,
     create_keys: HashMap<String, MemoryId>,
     next_seq: u64,
 }
@@ -215,50 +209,6 @@ impl RecordStore for InMemoryBackend {
         Ok(out)
     }
 
-    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
-        let now = Instant::now();
-        let mut guard = self.records.write().unwrap();
-        let entry = guard.entry(ns.clone()).or_default();
-        let gseq = self.global_seq.fetch_add(1, Ordering::SeqCst) + 1;
-        entry.next_seq = gseq;
-        entry.items.insert(
-            item.id,
-            RecordEntry {
-                item: item.clone(),
-                expires_at: ttl.map(|d| now + d),
-                seq: gseq,
-                indexed_version: 0,
-                tombstone: false,
-            },
-        );
-        Ok(())
-    }
-
-    async fn put_if_absent(
-        &self,
-        ns: &ProjectId,
-        idempotency_key: &str,
-        receipt: &MemoryReceipt,
-        ttl: Option<Duration>,
-    ) -> Result<Option<MemoryReceipt>> {
-        let now = Instant::now();
-        let mut guard = self.records.write().unwrap();
-        let entry = guard.entry(ns.clone()).or_default();
-        if let Some(existing) = entry.idempotency.get(idempotency_key) {
-            if existing.expires_at.is_none_or(|exp| now < exp) {
-                return Ok(Some(existing.receipt.clone()));
-            }
-        }
-        entry.idempotency.insert(
-            idempotency_key.to_string(),
-            IdemEntry {
-                receipt: receipt.clone(),
-                expires_at: ttl.map(|d| now + d),
-            },
-        );
-        Ok(None)
-    }
-
     async fn cas_update(
         &self,
         ns: &ProjectId,
@@ -421,39 +371,6 @@ impl RecordStore for InMemoryBackend {
             .take(limit)
             .map(|e| e.item.clone())
             .collect())
-    }
-
-    async fn recent(
-        &self,
-        ns: &ProjectId,
-        scope: Option<MemoryScope>,
-        limit: usize,
-    ) -> Result<Vec<MemoryItem>> {
-        let now = Instant::now();
-        let guard = self.records.read().unwrap();
-        let Some(entry) = guard.get(ns) else {
-            return Ok(Vec::new());
-        };
-        let mut items: Vec<&RecordEntry> = entry
-            .items
-            .values()
-            .filter(|e| !e.tombstone && e.expires_at.is_none_or(|exp| now < exp))
-            .filter(|e| scope.as_ref().is_none_or(|s| &e.item.scope == s))
-            .collect();
-        items.sort_by_key(|b| std::cmp::Reverse(b.seq));
-        Ok(items
-            .into_iter()
-            .take(limit)
-            .map(|e| e.item.clone())
-            .collect())
-    }
-
-    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
-        let mut guard = self.records.write().unwrap();
-        if let Some(entry) = guard.get_mut(ns) {
-            entry.items.remove(&id);
-        }
-        Ok(())
     }
 }
 

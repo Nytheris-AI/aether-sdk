@@ -34,7 +34,6 @@ async fn contract_record_store_in_memory_through_middleware() {
         RetryPolicy::default(),
     ));
     contract::record_store(&store).await;
-    contract::record_store_versioned(&store).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

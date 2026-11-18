@@ -20,104 +20,29 @@ fn fresh_project(prefix: &str) -> ProjectId {
     ProjectId::new(format!("{prefix}-{}", Uuid::new_v4())).expect("valid generated project id")
 }
 
-/// Verifies `RecordStore` contract: TTL expiration, idempotency, CAS updates, recent window, and delete.
+/// Verifies `RecordStore` contract: `create`, idempotency, namespace isolation, CAS conflict, `pending`, `mark_indexed`, `get_many`, `session_items`, and `tombstone`.
 pub async fn record_store<S: RecordStore>(store: &S) {
-    let ns_a = fresh_project("rec-a");
-    let ns_b = fresh_project("rec-b");
-
-    let sess_id = SessionId::new("sess-contract").unwrap();
-    let mut input1 = MemoryInput::new(ns_a.clone(), "Session turn 1");
-    input1.scope = MemoryScope::Session(sess_id.clone());
-    let item1 = MemoryItem::from_input(input1, 1);
-
-    // 1. Put with TTL and verify expiration + namespace isolation.
-    store
-        .put(&ns_a, &item1, Some(Duration::from_millis(25)))
-        .await
-        .unwrap();
-    assert!(store.get(&ns_a, item1.id).await.unwrap().is_some());
-    assert!(store.get(&ns_b, item1.id).await.unwrap().is_none());
-
-    tokio::time::sleep(Duration::from_millis(40)).await;
-    assert!(store.get(&ns_a, item1.id).await.unwrap().is_none());
-
-    // 2. Atomic idempotency claim (put_if_absent).
-    let receipt = MemoryReceipt {
-        memory_id: item1.id,
-        state: ReceiptState::Buffered,
-        version: 1,
-    };
-    assert!(store
-        .put_if_absent(&ns_a, "idem-1", &receipt, None)
-        .await
-        .unwrap()
-        .is_none());
-    let dup = store
-        .put_if_absent(&ns_a, "idem-1", &receipt, None)
-        .await
-        .unwrap();
-    assert_eq!(dup, Some(receipt));
-    assert!(store
-        .put_if_absent(
-            &ns_b,
-            "idem-1",
-            &MemoryReceipt {
-                memory_id: MemoryId::new(),
-                state: ReceiptState::Buffered,
-                version: 1,
-            },
-            None
-        )
-        .await
-        .unwrap()
-        .is_none());
-
-    // 3. CAS update + Conflict on stale expected_version.
-    store.put(&ns_a, &item1, None).await.unwrap();
-    let mut v2 = item1.clone();
-    v2.content = "Session turn 1 updated".into();
-    v2.version = 2;
-    store
-        .cas_update(&ns_a, item1.id, Some(1), &v2)
-        .await
-        .unwrap();
-
-    let mut stale = item1.clone();
-    stale.version = 2;
-    let conflict = store.cas_update(&ns_a, item1.id, Some(1), &stale).await;
-    assert!(matches!(conflict, Err(AetherError::Conflict { .. })));
-
-    // 4. Recent sliding window & scope filter.
-    let mut proj_input = MemoryInput::new(ns_a.clone(), "Project fact");
-    proj_input.scope = MemoryScope::Project;
-    let proj_item = MemoryItem::from_input(proj_input, 1);
-    store.put(&ns_a, &proj_item, None).await.unwrap();
-
-    let session_recent = store
-        .recent(&ns_a, Some(MemoryScope::Session(sess_id)), 10)
-        .await
-        .unwrap();
-    assert_eq!(session_recent.len(), 1);
-    assert_eq!(session_recent[0].id, item1.id);
-
-    let all_recent = store.recent(&ns_a, None, 10).await.unwrap();
-    assert_eq!(all_recent.len(), 2);
-
-    store.delete(&ns_a, item1.id).await.unwrap();
-    assert!(store.get(&ns_a, item1.id).await.unwrap().is_none());
-}
-
-/// Verifies versioned `RecordStore` contract: `create`, `pending`, `mark_indexed`, `get_many`, `tombstone`.
-pub async fn record_store_versioned<S: RecordStore>(store: &S) {
     let ns_a = fresh_project("recv-a");
+    let ns_b = fresh_project("recv-b");
 
-    // Versioned records: create, pending/pending_for, mark_indexed, get_many, tombstone.
+    // Versioned records: create, namespace isolation, pending/pending_for, mark_indexed, get_many, tombstone.
     let mut v_input = MemoryInput::new(ns_a.clone(), "Versioned record");
     v_input.idempotency_key = Some("v-idem-1".into());
     let v_item = MemoryItem::from_input(v_input, 1);
 
     let out1 = store.create(&ns_a, &v_item, None).await.unwrap();
     assert_eq!(out1, CreateOutcome::Created);
+    assert!(store.get(&ns_b, v_item.id).await.unwrap().is_none());
+
+    // Same idempotency key in a different namespace is NOT a duplicate.
+    let mut ns_b_input = MemoryInput::new(ns_b.clone(), "Other tenant");
+    ns_b_input.idempotency_key = Some("v-idem-1".into());
+    let ns_b_item = MemoryItem::from_input(ns_b_input, 1);
+    assert_eq!(
+        store.create(&ns_b, &ns_b_item, None).await.unwrap(),
+        CreateOutcome::Created
+    );
+    store.mark_indexed(&ns_b, ns_b_item.id, 1).await.unwrap();
 
     // Duplicate idempotency key returns Duplicate(Buffered) before indexing.
     let mut dup_input = MemoryInput::new(ns_a.clone(), "Different body");
@@ -175,7 +100,7 @@ pub async fn record_store_versioned<S: RecordStore>(store: &S) {
         })
     );
 
-    // CAS update puts the record back in pending_for.
+    // CAS update puts the record back in pending_for; stale expected_version conflicts.
     let mut v_item_2 = v_item.clone();
     v_item_2.content = "Versioned record v2".into();
     v_item_2.version = 2;
@@ -183,6 +108,8 @@ pub async fn record_store_versioned<S: RecordStore>(store: &S) {
         .cas_update(&ns_a, v_item.id, Some(1), &v_item_2)
         .await
         .unwrap();
+    let stale_conflict = store.cas_update(&ns_a, v_item.id, Some(1), &v_item_2).await;
+    assert!(matches!(stale_conflict, Err(AetherError::Conflict { .. })));
     assert!(store
         .pending_for(&ns_a, 100)
         .await

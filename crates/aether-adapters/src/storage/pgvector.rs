@@ -152,12 +152,57 @@ impl PgVectorStore {
         &self.pool
     }
 
+    fn specs_table(&self) -> String {
+        format!("{}_specs", self.table_name)
+    }
+
     fn namespace_spec(&self, ns: &ProjectId) -> Option<NamespaceSpec> {
         self.specs
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .get(ns)
             .copied()
+    }
+
+    async fn resolve_spec(&self, ns: &ProjectId) -> Result<Option<NamespaceSpec>> {
+        if let Some(spec) = self.namespace_spec(ns) {
+            return Ok(Some(spec));
+        }
+        let sql = format!(
+            "SELECT dimensions, metric FROM {} WHERE ns = $1",
+            self.specs_table()
+        );
+        let row = match sqlx::query(AssertSqlSafe(sql))
+            .bind(ns.as_str())
+            .fetch_optional(&self.pool)
+            .await
+        {
+            Ok(r) => r,
+            Err(sqlx::Error::Database(ref db_err)) if db_err.code().as_deref() == Some("42P01") => {
+                return Ok(None);
+            }
+            Err(err) => return Err(map_sqlx_error(err)),
+        };
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let dims_i32: i32 = row.try_get("dimensions").map_err(map_sqlx_error)?;
+        let dimensions = usize::try_from(dims_i32).map_err(|_| AetherError::Permanent {
+            connector: CONNECTOR_NAME,
+            message: format!("invalid persisted vector dimensions: {dims_i32}"),
+        })?;
+        let metric_str: String = row.try_get("metric").map_err(map_sqlx_error)?;
+        let metric = str_to_metric(&metric_str).ok_or_else(|| AetherError::Permanent {
+            connector: CONNECTOR_NAME,
+            message: format!("unknown persisted distance metric `{metric_str}`"),
+        })?;
+        let spec = NamespaceSpec { dimensions, metric };
+        self.specs
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(ns.clone(), spec);
+        Ok(Some(spec))
     }
 
     async fn upsert_chunk<'e, E>(
@@ -255,13 +300,59 @@ impl VectorStore for PgVectorStore {
             .await
             .map_err(map_sqlx_error)?;
 
+        let create_specs = format!(
+            "CREATE TABLE IF NOT EXISTS {} (\
+                 ns TEXT PRIMARY KEY, \
+                 dimensions INTEGER NOT NULL, \
+                 metric TEXT NOT NULL\
+             )",
+            self.specs_table()
+        );
+        sqlx::query(AssertSqlSafe(create_specs))
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let metric_str = metric_to_str(metric);
+        let dims_i32 = i32::try_from(dimensions).map_err(|_| {
+            AetherError::InvalidInput(format!("vector dimensions {dimensions} exceed i32 limit"))
+        })?;
+        let insert_spec = format!(
+            "INSERT INTO {} (ns, dimensions, metric) VALUES ($1, $2, $3) ON CONFLICT (ns) DO NOTHING",
+            self.specs_table()
+        );
+        sqlx::query(AssertSqlSafe(insert_spec))
+            .bind(ns.as_str())
+            .bind(dims_i32)
+            .bind(metric_str)
+            .execute(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+
+        let select_spec = format!(
+            "SELECT dimensions, metric FROM {} WHERE ns = $1",
+            self.specs_table()
+        );
+        let row = sqlx::query(AssertSqlSafe(select_spec))
+            .bind(ns.as_str())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx_error)?;
+        let existing_dims: i32 = row.try_get("dimensions").map_err(map_sqlx_error)?;
+        let existing_metric_str: String = row.try_get("metric").map_err(map_sqlx_error)?;
+        if existing_dims != dims_i32 || existing_metric_str != metric_str {
+            return Err(AetherError::InvalidInput(format!(
+                "namespace `{ns}` already initialized with dimensions={existing_dims}, metric={existing_metric_str}; requested dimensions={dimensions}, metric={metric_str}"
+            )));
+        }
+
         let mut guard = self.specs.write().unwrap_or_else(|e| e.into_inner());
         guard.insert(ns.clone(), NamespaceSpec { dimensions, metric });
         Ok(())
     }
 
     async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
-        Ok(self.namespace_spec(ns).map(|s| IndexSpec {
+        Ok(self.resolve_spec(ns).await?.map(|s| IndexSpec {
             dimensions: s.dimensions,
             metric: s.metric,
         }))
@@ -272,7 +363,10 @@ impl VectorStore for PgVectorStore {
             return Ok(());
         }
 
-        let expected_dim = self.namespace_spec(ns).map(|s| s.dimensions);
+        for rec in records {
+            validate_vector(&rec.vector, None)?;
+        }
+        let expected_dim = self.resolve_spec(ns).await?.map(|s| s.dimensions);
         for rec in records {
             validate_vector(&rec.vector, expected_dim)?;
         }
@@ -316,7 +410,8 @@ impl VectorStore for PgVectorStore {
         top_k: usize,
         filter: Option<&FilterExpr>,
     ) -> Result<Vec<VectorMatch>> {
-        let spec = self.namespace_spec(ns);
+        validate_vector(query_vector, None)?;
+        let spec = self.resolve_spec(ns).await?;
         validate_vector(query_vector, spec.map(|s| s.dimensions))?;
         let metric = spec.map_or(DistanceMetric::Cosine, |s| s.metric);
 
@@ -344,6 +439,23 @@ impl VectorStore for PgVectorStore {
             });
         }
         Ok(matches)
+    }
+}
+
+fn metric_to_str(metric: DistanceMetric) -> &'static str {
+    match metric {
+        DistanceMetric::Cosine => "cosine",
+        DistanceMetric::Dot => "dot",
+        DistanceMetric::Euclidean => "euclidean",
+    }
+}
+
+fn str_to_metric(raw: &str) -> Option<DistanceMetric> {
+    match raw {
+        "cosine" => Some(DistanceMetric::Cosine),
+        "dot" => Some(DistanceMetric::Dot),
+        "euclidean" => Some(DistanceMetric::Euclidean),
+        _ => None,
     }
 }
 

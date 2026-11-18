@@ -102,6 +102,34 @@ impl QdrantVectorStore {
         self.collections.read().unwrap().get(ns).copied()
     }
 
+    async fn resolve_spec(&self, ns: &ProjectId) -> Result<Option<CollectionSpec>> {
+        if let Some(spec) = self.spec_for(ns) {
+            return Ok(Some(spec));
+        }
+        let collection = self.collection_name(ns);
+        let resp = self
+            .request(Method::GET, &format!("/collections/{collection}"))
+            .send()
+            .await
+            .map_err(|err| map_transport_err(CONNECTOR, err))?;
+        if resp.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let resp = ensure_success(CONNECTOR, resp).await?;
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|err| map_transport_err(CONNECTOR, err))?;
+        let info: CollectionInfoResponse = serde_json::from_slice(&bytes)?;
+        let existing = info.result.config.params.vectors;
+        let spec = CollectionSpec {
+            dimensions: existing.size,
+            metric: DistanceMetric::from(existing.distance),
+        };
+        self.collections.write().unwrap().insert(ns.clone(), spec);
+        Ok(Some(spec))
+    }
+
     async fn verify_existing_collection(
         &self,
         ns: &ProjectId,
@@ -220,7 +248,7 @@ impl VectorStore for QdrantVectorStore {
     }
 
     async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
-        Ok(self.spec_for(ns).map(|s| IndexSpec {
+        Ok(self.resolve_spec(ns).await?.map(|s| IndexSpec {
             dimensions: s.dimensions,
             metric: s.metric,
         }))
@@ -231,7 +259,7 @@ impl VectorStore for QdrantVectorStore {
             return Ok(());
         }
 
-        let expected_dim = self.spec_for(ns).map(|spec| spec.dimensions);
+        let expected_dim = self.resolve_spec(ns).await?.map(|spec| spec.dimensions);
         for rec in records {
             if rec.vector.is_empty() {
                 return Err(AetherError::InvalidInput(format!(
@@ -319,7 +347,7 @@ impl VectorStore for QdrantVectorStore {
                 "query_vector contains non-finite values".into(),
             ));
         }
-        let spec = self.spec_for(ns);
+        let spec = self.resolve_spec(ns).await?;
         if let Some(spec) = spec {
             if query_vector.len() != spec.dimensions {
                 return Err(AetherError::InvalidInput(format!(
@@ -397,6 +425,16 @@ impl From<DistanceMetric> for QdrantDistance {
             DistanceMetric::Cosine => Self::Cosine,
             DistanceMetric::Dot => Self::Dot,
             DistanceMetric::Euclidean => Self::Euclid,
+        }
+    }
+}
+
+impl From<QdrantDistance> for DistanceMetric {
+    fn from(distance: QdrantDistance) -> Self {
+        match distance {
+            QdrantDistance::Cosine => Self::Cosine,
+            QdrantDistance::Dot => Self::Dot,
+            QdrantDistance::Euclid => Self::Euclidean,
         }
     }
 }

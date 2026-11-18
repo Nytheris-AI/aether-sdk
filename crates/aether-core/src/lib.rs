@@ -787,16 +787,6 @@ pub trait RecordStore: OutboundConnector {
 
     async fn get_many(&self, ns: &ProjectId, ids: &[MemoryId]) -> Result<Vec<MemoryItem>>;
 
-    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()>;
-
-    async fn put_if_absent(
-        &self,
-        ns: &ProjectId,
-        idempotency_key: &str,
-        receipt: &MemoryReceipt,
-        ttl: Option<Duration>,
-    ) -> Result<Option<MemoryReceipt>>;
-
     async fn cas_update(
         &self,
         ns: &ProjectId,
@@ -819,15 +809,6 @@ pub trait RecordStore: OutboundConnector {
     ) -> Result<Vec<MemoryItem>>;
 
     async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()>;
-
-    async fn recent(
-        &self,
-        ns: &ProjectId,
-        scope: Option<MemoryScope>,
-        limit: usize,
-    ) -> Result<Vec<MemoryItem>>;
-
-    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()>;
 }
 
 /// Unified vector storage contract (Turbopuffer, Qdrant, Chroma, pgvector, etc.).
@@ -926,22 +907,6 @@ impl<T: RecordStore + ?Sized> RecordStore for Arc<T> {
         (**self).get_many(ns, ids).await
     }
 
-    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
-        (**self).put(ns, item, ttl).await
-    }
-
-    async fn put_if_absent(
-        &self,
-        ns: &ProjectId,
-        idempotency_key: &str,
-        receipt: &MemoryReceipt,
-        ttl: Option<Duration>,
-    ) -> Result<Option<MemoryReceipt>> {
-        (**self)
-            .put_if_absent(ns, idempotency_key, receipt, ttl)
-            .await
-    }
-
     async fn cas_update(
         &self,
         ns: &ProjectId,
@@ -977,19 +942,6 @@ impl<T: RecordStore + ?Sized> RecordStore for Arc<T> {
 
     async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()> {
         (**self).mark_indexed(ns, id, version).await
-    }
-
-    async fn recent(
-        &self,
-        ns: &ProjectId,
-        scope: Option<MemoryScope>,
-        limit: usize,
-    ) -> Result<Vec<MemoryItem>> {
-        (**self).recent(ns, scope, limit).await
-    }
-
-    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
-        (**self).delete(ns, id).await
     }
 }
 

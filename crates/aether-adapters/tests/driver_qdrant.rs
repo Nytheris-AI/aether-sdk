@@ -852,3 +852,76 @@ async fn qdrant_connector_metadata_health_and_input_validation() {
 
     store.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn qdrant_describe_resolves_across_fresh_clients() {
+    let (base_url, _state) = spawn_mock_qdrant(None).await;
+    let ns = ProjectId::new("proj-desc").unwrap();
+    let missing = ProjectId::new("proj-missing").unwrap();
+
+    let store_a = QdrantVectorStore::new(QdrantConfig {
+        base_url: base_url.clone(),
+        api_key: None,
+        collection_prefix: "desc".into(),
+    })
+    .unwrap();
+    store_a
+        .initialize(&ns, 3, DistanceMetric::Euclidean)
+        .await
+        .unwrap();
+
+    let store_b = QdrantVectorStore::new(QdrantConfig {
+        base_url,
+        api_key: None,
+        collection_prefix: "desc".into(),
+    })
+    .unwrap();
+    let spec = store_b.describe(&ns).await.unwrap();
+    assert_eq!(
+        spec,
+        Some(aether_core::IndexSpec {
+            dimensions: 3,
+            metric: DistanceMetric::Euclidean,
+        })
+    );
+    assert_eq!(store_b.describe(&missing).await.unwrap(), None);
+}
+
+#[tokio::test]
+#[ignore = "requires live Qdrant (default http://127.0.0.1:16333)"]
+async fn live_qdrant_contract_vector_store() {
+    let base_url =
+        std::env::var("QDRANT_URL").unwrap_or_else(|_| "http://127.0.0.1:16333".to_string());
+    let prefix = format!("live-{}", uuid::Uuid::new_v4().simple());
+    let store = QdrantVectorStore::new(QdrantConfig {
+        base_url: base_url.clone(),
+        api_key: None,
+        collection_prefix: prefix.clone(),
+    })
+    .unwrap();
+
+    assert_eq!(
+        store.health_check().await.unwrap(),
+        ConnectorHealth::Healthy
+    );
+    contract::vector_store(&store).await;
+
+    let ns = ProjectId::new(format!("live-desc-{}", uuid::Uuid::new_v4())).unwrap();
+    store
+        .initialize(&ns, 3, DistanceMetric::Euclidean)
+        .await
+        .unwrap();
+    let fresh = QdrantVectorStore::new(QdrantConfig {
+        base_url,
+        api_key: None,
+        collection_prefix: prefix,
+    })
+    .unwrap();
+    assert_eq!(
+        fresh.describe(&ns).await.unwrap(),
+        Some(aether_core::IndexSpec {
+            dimensions: 3,
+            metric: DistanceMetric::Euclidean,
+        })
+    );
+}

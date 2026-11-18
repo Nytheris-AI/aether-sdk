@@ -1049,3 +1049,28 @@ async fn neo4j_multi_seed_per_node_limit_does_not_drop_unvisited_edges() {
         .unwrap();
     assert_eq!(sub.edges.len(), 2);
 }
+
+#[tokio::test]
+#[ignore = "requires live Neo4j (NEO4J_URL or default http://127.0.0.1:17474)"]
+async fn live_neo4j_contract_graph_store() {
+    let base_url =
+        std::env::var("NEO4J_URL").unwrap_or_else(|_| "http://127.0.0.1:17474".to_string());
+    let database = std::env::var("NEO4J_DATABASE").unwrap_or_else(|_| "neo4j".to_string());
+    let username = std::env::var("NEO4J_USER").unwrap_or_else(|_| "neo4j".to_string());
+    let password = std::env::var("NEO4J_PASSWORD").unwrap_or_else(|_| "testpassword".to_string());
+
+    let store = Neo4jGraphStore::new(Neo4jConfig {
+        base_url,
+        database,
+        username,
+        password: SecretString::new(password),
+    })
+    .unwrap();
+
+    assert_eq!(
+        store.health_check().await.unwrap(),
+        ConnectorHealth::Healthy
+    );
+    contract::graph_store(&store).await;
+    store.close().await.unwrap();
+}

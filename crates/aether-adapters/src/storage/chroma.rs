@@ -107,6 +107,13 @@ impl ChromaVectorStore {
         )
     }
 
+    fn collection_by_name_url(&self, name: &str) -> String {
+        format!(
+            "{}/api/v2/tenants/{}/databases/{}/collections/{name}",
+            self.base_url, self.tenant, self.database
+        )
+    }
+
     fn collection_op_url(&self, collection_id: &str, op: &str) -> String {
         format!(
             "{}/api/v2/tenants/{}/databases/{}/collections/{collection_id}/{op}",
@@ -145,12 +152,61 @@ impl ChromaVectorStore {
         })
     }
 
-    fn cached_spec(&self, ns: &ProjectId) -> Result<CollectionSpec> {
-        let guard = self
+    async fn resolve_spec(&self, ns: &ProjectId) -> Result<Option<CollectionSpec>> {
+        if let Some(spec) = self
             .collections
             .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.get(ns).cloned().ok_or_else(|| {
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(ns)
+            .cloned()
+        {
+            return Ok(Some(spec));
+        }
+
+        let name = self.collection_name(ns);
+        let url = self.collection_by_name_url(&name);
+        let resp = self
+            .apply_auth(self.client.get(&url))
+            .send()
+            .await
+            .map_err(|e| http::map_transport_err(CONNECTOR, e))?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let resp = http::ensure_success(CONNECTOR, resp).await?;
+        let col: CollectionResponse = Self::decode_json(resp).await?;
+
+        let meta = col.metadata.as_ref().and_then(|m| m.as_object());
+        let dimensions = meta
+            .and_then(|m| m.get("_aether_dimensions"))
+            .and_then(|v| v.as_u64())
+            .and_then(|d| usize::try_from(d).ok())
+            .filter(|&d| d > 0)
+            .ok_or_else(|| {
+                AetherError::InvalidInput(format!(
+                    "chroma collection `{name}` is missing valid `_aether_dimensions` metadata"
+                ))
+            })?;
+        let metric = meta
+            .and_then(|m| m.get("hnsw:space"))
+            .and_then(|v| v.as_str())
+            .and_then(hnsw_space_to_metric)
+            .unwrap_or(DistanceMetric::Euclidean);
+
+        let spec = CollectionSpec {
+            id: col.id,
+            dimensions,
+            metric,
+        };
+        self.collections
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(ns.clone(), spec.clone());
+        Ok(Some(spec))
+    }
+
+    async fn require_spec(&self, ns: &ProjectId) -> Result<CollectionSpec> {
+        self.resolve_spec(ns).await?.ok_or_else(|| {
             AetherError::InvalidInput(format!(
                 "collection for project `{ns}` is not initialized; call initialize first"
             ))
@@ -168,6 +224,8 @@ struct CreateCollectionRequest<'a> {
 #[derive(Deserialize)]
 struct CollectionResponse {
     id: String,
+    #[serde(default)]
+    metadata: Option<Value>,
 }
 
 #[derive(Serialize)]
@@ -249,7 +307,10 @@ impl VectorStore for ChromaVectorStore {
         let req = CreateCollectionRequest {
             name: &name,
             get_or_create: true,
-            metadata: json!({ "hnsw:space": metric_to_hnsw_space(metric) }),
+            metadata: json!({
+                "hnsw:space": metric_to_hnsw_space(metric),
+                "_aether_dimensions": dimensions,
+            }),
         };
 
         let resp = self.post_json(&self.collections_url(), &req).await?;
@@ -271,18 +332,14 @@ impl VectorStore for ChromaVectorStore {
     }
 
     async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
-        let guard = self
-            .collections
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        Ok(guard.get(ns).map(|s| IndexSpec {
+        Ok(self.resolve_spec(ns).await?.map(|s| IndexSpec {
             dimensions: s.dimensions,
             metric: s.metric,
         }))
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {
-        let spec = self.cached_spec(ns)?;
+        let spec = self.require_spec(ns).await?;
         if records.is_empty() {
             return Ok(());
         }
@@ -332,7 +389,7 @@ impl VectorStore for ChromaVectorStore {
     }
 
     async fn delete(&self, ns: &ProjectId, ids: &[MemoryId]) -> Result<()> {
-        let spec = self.cached_spec(ns)?;
+        let spec = self.require_spec(ns).await?;
         if ids.is_empty() {
             return Ok(());
         }
@@ -352,7 +409,7 @@ impl VectorStore for ChromaVectorStore {
         top_k: usize,
         filter: Option<&FilterExpr>,
     ) -> Result<Vec<VectorMatch>> {
-        let spec = self.cached_spec(ns)?;
+        let spec = self.require_spec(ns).await?;
         if query_vector.len() != spec.dimensions {
             return Err(AetherError::InvalidInput(format!(
                 "query vector dimension mismatch: expected {}, got {}",
@@ -397,6 +454,15 @@ fn metric_to_hnsw_space(metric: DistanceMetric) -> &'static str {
         DistanceMetric::Cosine => "cosine",
         DistanceMetric::Dot => "ip",
         DistanceMetric::Euclidean => "l2",
+    }
+}
+
+fn hnsw_space_to_metric(space: &str) -> Option<DistanceMetric> {
+    match space {
+        "cosine" => Some(DistanceMetric::Cosine),
+        "ip" => Some(DistanceMetric::Dot),
+        "l2" => Some(DistanceMetric::Euclidean),
+        _ => None,
     }
 }
 

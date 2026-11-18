@@ -28,6 +28,7 @@ struct StoredCollection {
     id: String,
     name: String,
     space: String,
+    metadata: Value,
     records: HashMap<String, (Vec<f32>, Value)>,
 }
 
@@ -174,10 +175,11 @@ async fn create_collection(
         return Err((StatusCode::CONFLICT, "collection already exists".into()));
     }
 
-    let space = req
+    let meta = req
         .metadata
-        .as_ref()
-        .and_then(|m| m.get("hnsw:space"))
+        .unwrap_or_else(|| json!({ "hnsw:space": "l2" }));
+    let space = meta
+        .get("hnsw:space")
         .and_then(|v| v.as_str())
         .unwrap_or("l2")
         .to_string();
@@ -186,7 +188,8 @@ async fn create_collection(
     let stored = StoredCollection {
         id: id.clone(),
         name: req.name.clone(),
-        space: space.clone(),
+        space,
+        metadata: meta.clone(),
         records: HashMap::new(),
     };
     cols.insert(key.clone(), stored);
@@ -197,7 +200,26 @@ async fn create_collection(
         name: req.name,
         tenant,
         database,
-        metadata: json!({ "hnsw:space": space }),
+        metadata: meta,
+    }))
+}
+
+async fn get_collection(
+    State(state): State<Arc<MockChromaState>>,
+    Path((tenant, database, name)): Path<(String, String, String)>,
+    headers: HeaderMap,
+) -> Result<Json<CollectionResp>, (StatusCode, String)> {
+    state.check_auth_and_faults(&headers)?;
+    let cols = state.collections.lock().unwrap();
+    let col = cols
+        .get(&(tenant.clone(), database.clone(), name))
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "collection not found".into()))?;
+    Ok(Json(CollectionResp {
+        id: col.id.clone(),
+        name: col.name.clone(),
+        tenant,
+        database,
+        metadata: col.metadata.clone(),
     }))
 }
 
@@ -376,6 +398,10 @@ async fn spawn_mock_chroma(state: Arc<MockChromaState>) -> String {
             post(create_collection),
         )
         .route(
+            "/api/v2/tenants/{tenant}/databases/{database}/collections/{name}",
+            get(get_collection),
+        )
+        .route(
             "/api/v2/tenants/{tenant}/databases/{database}/collections/{id}/upsert",
             post(upsert),
         )
@@ -411,7 +437,7 @@ fn test_config(base_url: String, auth_token: Option<SecretString>) -> ChromaConf
 async fn chroma_contract_vector_store() {
     let state = Arc::new(MockChromaState::new(None));
     let base_url = spawn_mock_chroma(state).await;
-    let store = ChromaVectorStore::new(test_config(base_url, None)).unwrap();
+    let store = ChromaVectorStore::new(test_config(base_url.clone(), None)).unwrap();
 
     assert_eq!(store.name(), "chroma");
     assert!(store.capabilities().supports_filter_expr);
@@ -544,7 +570,7 @@ async fn chroma_auth_token_and_collection_caching() {
 async fn chroma_distance_metrics_filters_and_validation() {
     let state = Arc::new(MockChromaState::new(None));
     let base_url = spawn_mock_chroma(state).await;
-    let store = ChromaVectorStore::new(test_config(base_url, None)).unwrap();
+    let store = ChromaVectorStore::new(test_config(base_url.clone(), None)).unwrap();
 
     for metric in [
         DistanceMetric::Cosine,
@@ -645,4 +671,45 @@ async fn chroma_distance_metrics_filters_and_validation() {
         .await
         .unwrap();
     assert!(empty_or_hits.is_empty());
+
+    let fresh = ChromaVectorStore::new(test_config(base_url, None)).unwrap();
+    assert_eq!(
+        fresh.describe(&ns_edge).await.unwrap(),
+        Some(aether_core::IndexSpec {
+            dimensions: 2,
+            metric: DistanceMetric::Cosine,
+        })
+    );
+    let missing = ProjectId::new("missing-chroma-proj").unwrap();
+    assert_eq!(fresh.describe(&missing).await.unwrap(), None);
+}
+
+#[tokio::test]
+#[ignore = "requires live Chroma (default http://127.0.0.1:18000)"]
+async fn live_chroma_contract_vector_store() {
+    let base_url =
+        std::env::var("CHROMA_URL").unwrap_or_else(|_| "http://127.0.0.1:18000".to_string());
+    let mut cfg = test_config(base_url, None);
+    cfg.collection_prefix = format!("live_{}", Uuid::new_v4().simple());
+
+    let store = ChromaVectorStore::new(cfg.clone()).unwrap();
+    assert_eq!(
+        store.health_check().await.unwrap(),
+        ConnectorHealth::Healthy
+    );
+    contract::vector_store(&store).await;
+
+    let ns = ProjectId::new(format!("live-desc-{}", Uuid::new_v4())).unwrap();
+    store
+        .initialize(&ns, 3, DistanceMetric::Euclidean)
+        .await
+        .unwrap();
+    let fresh = ChromaVectorStore::new(cfg).unwrap();
+    assert_eq!(
+        fresh.describe(&ns).await.unwrap(),
+        Some(aether_core::IndexSpec {
+            dimensions: 3,
+            metric: DistanceMetric::Euclidean,
+        })
+    );
 }

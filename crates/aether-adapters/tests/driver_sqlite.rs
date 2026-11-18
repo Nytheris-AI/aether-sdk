@@ -6,8 +6,8 @@ use aether_adapters::contract;
 use aether_adapters::kv::sqlite::{SqliteConfig, SqliteRecordStore};
 use aether_adapters::middleware::{Resilient, RetryPolicy, Timeout, Traced};
 use aether_core::{
-    AetherError, ConnectorHealth, MemoryId, MemoryInput, MemoryItem, MemoryReceipt, MemoryScope,
-    OutboundConnector, ProjectId, ReceiptState, RecordStore, SessionId,
+    AetherError, ConnectorHealth, CreateOutcome, MemoryId, MemoryInput, MemoryItem, MemoryReceipt,
+    MemoryScope, OutboundConnector, ProjectId, ReceiptState, RecordStore, SessionId,
 };
 use uuid::Uuid;
 
@@ -99,6 +99,7 @@ async fn sqlite_persists_records_and_idempotency_across_reopen() {
 
     let mut first_input = MemoryInput::new(ns.clone(), "first persisted memory");
     first_input.scope = MemoryScope::Project;
+    first_input.idempotency_key = Some("idem-persist".into());
     let first = MemoryItem::from_input(first_input, 1);
 
     let sess = SessionId::new("sqlite-sess").unwrap();
@@ -107,30 +108,35 @@ async fn sqlite_persists_records_and_idempotency_across_reopen() {
     let second = MemoryItem::from_input(second_input, 1);
 
     let mut expiring_input = MemoryInput::new(ns.clone(), "short lived memory");
-    expiring_input.scope = MemoryScope::Session(sess);
+    expiring_input.scope = MemoryScope::Session(sess.clone());
     let expiring = MemoryItem::from_input(expiring_input, 1);
-
-    let receipt = MemoryReceipt {
-        memory_id: first.id,
-        state: ReceiptState::Persisted,
-        version: 1,
-    };
 
     {
         let store = SqliteRecordStore::open(SqliteConfig::from_path(db.path_str()))
             .await
             .expect("open initial store");
-        store.put(&ns, &first, None).await.expect("put first");
-        store.put(&ns, &second, None).await.expect("put second");
+        assert_eq!(
+            store.create(&ns, &first, None).await.expect("create first"),
+            CreateOutcome::Created
+        );
         store
-            .put(&ns, &expiring, Some(Duration::from_millis(20)))
+            .mark_indexed(&ns, first.id, 1)
             .await
-            .expect("put expiring");
-        assert!(store
-            .put_if_absent(&ns, "idem-persist", &receipt, None)
-            .await
-            .expect("claim idempotency key")
-            .is_none());
+            .expect("mark first indexed");
+        assert_eq!(
+            store
+                .create(&ns, &second, None)
+                .await
+                .expect("create second"),
+            CreateOutcome::Created
+        );
+        assert_eq!(
+            store
+                .create(&ns, &expiring, Some(Duration::from_millis(20)))
+                .await
+                .expect("create expiring"),
+            CreateOutcome::Created
+        );
         store.close().await.expect("close initial store");
     }
 
@@ -153,29 +159,36 @@ async fn sqlite_persists_records_and_idempotency_across_reopen() {
         None
     );
 
+    let mut dup_input = MemoryInput::new(ns.clone(), "duplicate payload");
+    dup_input.idempotency_key = Some("idem-persist".into());
+    let dup_item = MemoryItem::from_input(dup_input, 1);
     let dup = reopened
-        .put_if_absent(
-            &ns,
-            "idem-persist",
-            &MemoryReceipt {
-                memory_id: MemoryId::new(),
-                state: ReceiptState::Buffered,
-                version: 9,
-            },
-            None,
-        )
+        .create(&ns, &dup_item, None)
         .await
         .expect("re-check idempotency key");
-    assert_eq!(dup, Some(receipt));
+    assert_eq!(
+        dup,
+        CreateOutcome::Duplicate(MemoryReceipt {
+            memory_id: first.id,
+            state: ReceiptState::Persisted,
+            version: 1,
+        })
+    );
 
     let mut third_input = MemoryInput::new(ns.clone(), "third post-reopen memory");
-    third_input.scope = MemoryScope::Project;
+    third_input.scope = MemoryScope::Session(sess.clone());
     let third = MemoryItem::from_input(third_input, 1);
-    reopened.put(&ns, &third, None).await.expect("put third");
+    reopened
+        .create(&ns, &third, None)
+        .await
+        .expect("create third");
 
-    let recent_all = reopened.recent(&ns, None, 10).await.expect("recent all");
-    let recent_ids: Vec<MemoryId> = recent_all.into_iter().map(|item| item.id).collect();
-    assert_eq!(recent_ids, vec![third.id, second.id, first.id]);
+    let sess_all = reopened
+        .session_items(&ns, &sess, 10)
+        .await
+        .expect("session items");
+    let sess_ids: Vec<MemoryId> = sess_all.into_iter().map(|item| item.id).collect();
+    assert_eq!(sess_ids, vec![third.id, second.id]);
 
     let mut updated_first = first.clone();
     updated_first.content = "updated after reopen".into();
@@ -191,6 +204,12 @@ async fn sqlite_persists_records_and_idempotency_across_reopen() {
             .expect("get updated first"),
         Some(updated_first)
     );
+    assert!(reopened
+        .pending_for(&ns, 10)
+        .await
+        .expect("pending_for updated")
+        .iter()
+        .any(|item| item.id == first.id && item.version == 2));
 
     reopened.close().await.expect("close reopened store");
 }
@@ -212,15 +231,19 @@ async fn sqlite_error_paths_and_edge_cases() {
         .await;
     assert!(matches!(not_found, Err(AetherError::NotFound(_))));
 
-    // Idempotent delete on missing record succeeds.
-    store.delete(&ns, missing_id).await.expect("delete missing");
+    // Idempotent tombstone on missing record returns None.
+    assert!(store
+        .tombstone(&ns, missing_id)
+        .await
+        .expect("tombstone missing")
+        .is_none());
 
     // Expired record cannot be CAS-updated.
     let ttl_item = MemoryItem::from_input(MemoryInput::new(ns.clone(), "ephemeral"), 1);
     store
-        .put(&ns, &ttl_item, Some(Duration::from_millis(15)))
+        .create(&ns, &ttl_item, Some(Duration::from_millis(15)))
         .await
-        .expect("put ephemeral");
+        .expect("create ephemeral");
     tokio::time::sleep(Duration::from_millis(30)).await;
     let mut ttl_v2 = ttl_item.clone();
     ttl_v2.version = 2;
@@ -229,7 +252,7 @@ async fn sqlite_error_paths_and_edge_cases() {
 
     // Conflict reports expected and actual versions; expected_version=None skips version check.
     let item = MemoryItem::from_input(MemoryInput::new(ns.clone(), "v1"), 1);
-    store.put(&ns, &item, None).await.expect("put v1");
+    store.create(&ns, &item, None).await.expect("create v1");
     let mut v2 = item.clone();
     v2.version = 2;
     v2.content = "v2".into();
@@ -257,41 +280,50 @@ async fn sqlite_error_paths_and_edge_cases() {
     );
 
     // Expired idempotency key can be re-claimed.
-    let r1 = MemoryReceipt {
-        memory_id: MemoryId::new(),
-        state: ReceiptState::Buffered,
-        version: 1,
-    };
-    let r2 = MemoryReceipt {
-        memory_id: MemoryId::new(),
-        state: ReceiptState::Persisted,
-        version: 1,
-    };
-    assert!(store
-        .put_if_absent(&ns, "idem-ttl", &r1, Some(Duration::from_millis(15)))
-        .await
-        .expect("claim r1")
-        .is_none());
-    tokio::time::sleep(Duration::from_millis(30)).await;
-    assert!(store
-        .put_if_absent(&ns, "idem-ttl", &r2, None)
-        .await
-        .expect("re-claim after expiry")
-        .is_none());
+    let mut r1_in = MemoryInput::new(ns.clone(), "expiring key 1");
+    r1_in.idempotency_key = Some("idem-ttl".into());
+    let r1 = MemoryItem::from_input(r1_in, 1);
+
+    let mut r2_in = MemoryInput::new(ns.clone(), "reclaimed key 2");
+    r2_in.idempotency_key = Some("idem-ttl".into());
+    let r2 = MemoryItem::from_input(r2_in, 1);
+
     assert_eq!(
         store
-            .put_if_absent(&ns, "idem-ttl", &r1, None)
+            .create(&ns, &r1, Some(Duration::from_millis(15)))
             .await
-            .expect("read r2")
-            .as_ref(),
-        Some(&r2)
+            .expect("claim r1"),
+        CreateOutcome::Created
+    );
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(
+        store
+            .create(&ns, &r2, None)
+            .await
+            .expect("re-claim after expiry"),
+        CreateOutcome::Created
+    );
+    assert_eq!(
+        store.create(&ns, &r1, None).await.expect("read r2"),
+        CreateOutcome::Duplicate(MemoryReceipt {
+            memory_id: r2.id,
+            state: ReceiptState::Buffered,
+            version: 1,
+        })
     );
 
     // Zero limit returns empty vec without error.
+    assert!(store.pending(0).await.expect("pending limit 0").is_empty());
     assert!(store
-        .recent(&ns, None, 0)
+        .pending_for(&ns, 0)
         .await
-        .expect("recent limit 0")
+        .expect("pending_for limit 0")
+        .is_empty());
+    let s0 = SessionId::new("s0").unwrap();
+    assert!(store
+        .session_items(&ns, &s0, 0)
+        .await
+        .expect("session_items limit 0")
         .is_empty());
 
     // Closing makes subsequent operations fail cleanly and health_check report Unhealthy.
@@ -311,52 +343,18 @@ async fn sqlite_error_paths_and_edge_cases() {
 }
 
 #[tokio::test]
-async fn sqlite_concurrent_put_if_absent_and_cas_are_atomic() {
+async fn sqlite_concurrent_create_and_cas_are_atomic() {
     let db = TempDb::new("concurrent");
     let store = Arc::new(
         SqliteRecordStore::open(SqliteConfig::from_path(db.path_str()))
             .await
             .expect("open sqlite store"),
     );
-    let ns = fresh_project("concurrent");
+    contract::record_store_concurrent_idempotency(Arc::clone(&store)).await;
 
-    let mut idem_handles = Vec::new();
-    for _ in 0..8 {
-        let store = Arc::clone(&store);
-        let ns = ns.clone();
-        let candidate = MemoryReceipt {
-            memory_id: MemoryId::new(),
-            state: ReceiptState::Buffered,
-            version: 1,
-        };
-        idem_handles.push(tokio::spawn(async move {
-            (
-                candidate.memory_id,
-                store
-                    .put_if_absent(&ns, "race-key", &candidate, None)
-                    .await
-                    .expect("put_if_absent"),
-            )
-        }));
-    }
-
-    let mut claimed = 0usize;
-    let mut observed_ids = Vec::new();
-    for handle in idem_handles {
-        let (candidate_id, existing) = handle.await.expect("join idem task");
-        match existing {
-            None => {
-                claimed += 1;
-                observed_ids.push(candidate_id);
-            }
-            Some(receipt) => observed_ids.push(receipt.memory_id),
-        }
-    }
-    assert_eq!(claimed, 1);
-    assert!(observed_ids.windows(2).all(|w| w[0] == w[1]));
-
+    let ns = fresh_project("concurrent-cas");
     let base = MemoryItem::from_input(MemoryInput::new(ns.clone(), "initial"), 1);
-    store.put(&ns, &base, None).await.expect("put base");
+    store.create(&ns, &base, None).await.expect("create base");
 
     let mut cas_handles = Vec::new();
     for idx in 0..8u64 {

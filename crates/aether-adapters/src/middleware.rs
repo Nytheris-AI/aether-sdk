@@ -5,9 +5,9 @@ use std::time::Duration;
 
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome, DistanceMetric, Entity,
-    EntityId, FilterExpr, GraphStore, IndexSpec, MemoryId, MemoryItem, MemoryReceipt, MemoryScope,
-    OutboundConnector, PendingRecord, ProjectId, RecordStore, Relation, Result, SessionId,
-    Subgraph, TemporalFilter, VectorMatch, VectorRecord, VectorStore,
+    EntityId, FilterExpr, GraphStore, IndexSpec, MemoryId, MemoryItem, OutboundConnector,
+    PendingRecord, ProjectId, RecordStore, Relation, Result, SessionId, Subgraph, TemporalFilter,
+    VectorMatch, VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -117,23 +117,6 @@ impl<T: RecordStore> RecordStore for Resilient<T> {
         retry_transient(self.policy, || self.inner.get_many(ns, ids)).await
     }
 
-    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
-        retry_transient(self.policy, || self.inner.put(ns, item, ttl)).await
-    }
-
-    async fn put_if_absent(
-        &self,
-        ns: &ProjectId,
-        idempotency_key: &str,
-        receipt: &MemoryReceipt,
-        ttl: Option<Duration>,
-    ) -> Result<Option<MemoryReceipt>> {
-        retry_transient(self.policy, || {
-            self.inner.put_if_absent(ns, idempotency_key, receipt, ttl)
-        })
-        .await
-    }
-
     async fn cas_update(
         &self,
         ns: &ProjectId,
@@ -170,19 +153,6 @@ impl<T: RecordStore> RecordStore for Resilient<T> {
 
     async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()> {
         retry_transient(self.policy, || self.inner.mark_indexed(ns, id, version)).await
-    }
-
-    async fn recent(
-        &self,
-        ns: &ProjectId,
-        scope: Option<MemoryScope>,
-        limit: usize,
-    ) -> Result<Vec<MemoryItem>> {
-        retry_transient(self.policy, || self.inner.recent(ns, scope.clone(), limit)).await
-    }
-
-    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
-        retry_transient(self.policy, || self.inner.delete(ns, id)).await
     }
 }
 
@@ -343,25 +313,6 @@ impl<T: RecordStore> RecordStore for Timeout<T> {
             .await
     }
 
-    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
-        self.run(self.inner.name(), self.inner.put(ns, item, ttl))
-            .await
-    }
-
-    async fn put_if_absent(
-        &self,
-        ns: &ProjectId,
-        idempotency_key: &str,
-        receipt: &MemoryReceipt,
-        ttl: Option<Duration>,
-    ) -> Result<Option<MemoryReceipt>> {
-        self.run(
-            self.inner.name(),
-            self.inner.put_if_absent(ns, idempotency_key, receipt, ttl),
-        )
-        .await
-    }
-
     async fn cas_update(
         &self,
         ns: &ProjectId,
@@ -406,20 +357,6 @@ impl<T: RecordStore> RecordStore for Timeout<T> {
     async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()> {
         self.run(self.inner.name(), self.inner.mark_indexed(ns, id, version))
             .await
-    }
-
-    async fn recent(
-        &self,
-        ns: &ProjectId,
-        scope: Option<MemoryScope>,
-        limit: usize,
-    ) -> Result<Vec<MemoryItem>> {
-        self.run(self.inner.name(), self.inner.recent(ns, scope, limit))
-            .await
-    }
-
-    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
-        self.run(self.inner.name(), self.inner.delete(ns, id)).await
     }
 }
 
@@ -692,42 +629,6 @@ impl<T: RecordStore> RecordStore for Traced<T> {
         run_connector_span(span, self.inner.get_many(ns, ids)).await
     }
 
-    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
-        let span = tracing::info_span!(
-            "connector_op",
-            otel.kind = "client",
-            db.system = self.inner.name(),
-            connector = self.inner.name(),
-            project_id = %ns,
-            op = "record_put",
-            otel.status_code = tracing::field::Empty,
-        );
-        run_connector_span(span, self.inner.put(ns, item, ttl)).await
-    }
-
-    async fn put_if_absent(
-        &self,
-        ns: &ProjectId,
-        idempotency_key: &str,
-        receipt: &MemoryReceipt,
-        ttl: Option<Duration>,
-    ) -> Result<Option<MemoryReceipt>> {
-        let span = tracing::info_span!(
-            "connector_op",
-            otel.kind = "client",
-            db.system = self.inner.name(),
-            connector = self.inner.name(),
-            project_id = %ns,
-            op = "record_put_if_absent",
-            otel.status_code = tracing::field::Empty,
-        );
-        run_connector_span(
-            span,
-            self.inner.put_if_absent(ns, idempotency_key, receipt, ttl),
-        )
-        .await
-    }
-
     async fn cas_update(
         &self,
         ns: &ProjectId,
@@ -821,38 +722,6 @@ impl<T: RecordStore> RecordStore for Traced<T> {
             otel.status_code = tracing::field::Empty,
         );
         run_connector_span(span, self.inner.mark_indexed(ns, id, version)).await
-    }
-
-    async fn recent(
-        &self,
-        ns: &ProjectId,
-        scope: Option<MemoryScope>,
-        limit: usize,
-    ) -> Result<Vec<MemoryItem>> {
-        let span = tracing::info_span!(
-            "connector_op",
-            otel.kind = "client",
-            db.system = self.inner.name(),
-            connector = self.inner.name(),
-            project_id = %ns,
-            op = "record_recent",
-            limit,
-            otel.status_code = tracing::field::Empty,
-        );
-        run_connector_span(span, self.inner.recent(ns, scope, limit)).await
-    }
-
-    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
-        let span = tracing::info_span!(
-            "connector_op",
-            otel.kind = "client",
-            db.system = self.inner.name(),
-            connector = self.inner.name(),
-            project_id = %ns,
-            op = "record_delete",
-            otel.status_code = tracing::field::Empty,
-        );
-        run_connector_span(span, self.inner.delete(ns, id)).await
     }
 }
 
