@@ -11,10 +11,10 @@ use rusqlite::{
     params, Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior,
 };
 
-use crate::parser::ParsedSection;
+use crate::parser::{embed_amu_text, Embedder, ParsedSection};
 use crate::types::{
-    Amu, AmuId, AmuKind, AmuStatus, CandidateId, ContentHash, DbTarget, InboxCheckbox, InboxEntry,
-    ScopeTag, SourcePointer, VaultPath, VaultTier,
+    Amu, AmuId, AmuKind, AmuStatus, ApprovedMirrorEntry, CandidateId, ContentHash, DbTarget,
+    InboxCheckbox, InboxEntry, ScopeTag, SourcePointer, VaultMeta, VaultPath, VaultTier,
 };
 
 const CONNECTOR_NAME: &str = "sqlite-vault";
@@ -91,6 +91,19 @@ CREATE TABLE IF NOT EXISTS staged_candidates (
     supersedes_amu_id  TEXT,
     status             TEXT NOT NULL,
     compiled_amu_id    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS vault_meta (
+    singleton_id    INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+    schema_version  INTEGER NOT NULL,
+    embedder_id     TEXT NOT NULL,
+    embedding_dim   INTEGER NOT NULL,
+    updated_at      TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS amus_shadow_embeddings (
+    amu_id     TEXT PRIMARY KEY,
+    embedding  BLOB NOT NULL
 );
 ";
 
@@ -412,6 +425,264 @@ impl VaultStore {
         .await
     }
 
+    pub(crate) async fn list_approved_candidates(&self) -> Result<Vec<ApprovedMirrorEntry>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT candidate_id, compiled_amu_id, tier, scope, proposed_fact, target_link,
+                            proposed_by, proposed_date, supersedes_amu_id
+                     FROM staged_candidates
+                     WHERE status = 'approved' AND compiled_amu_id IS NOT NULL
+                     ORDER BY rowid ASC",
+                )
+                .map_err(map_sqlite_err)?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, Option<String>>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, Option<String>>(8)?,
+                    ))
+                })
+                .map_err(map_sqlite_err)?;
+
+            let mut out = Vec::new();
+            for row in rows {
+                let (cid, aid, tier, scope, fact, target, by, date, sup) =
+                    row.map_err(map_sqlite_err)?;
+                let Ok(candidate_id) = CandidateId::parse(&cid) else {
+                    continue;
+                };
+                let Ok(compiled_amu_id) = AmuId::parse(&aid) else {
+                    continue;
+                };
+                out.push(ApprovedMirrorEntry {
+                    candidate_id,
+                    compiled_amu_id,
+                    tier: VaultTier::parse_str(&tier).unwrap_or_default(),
+                    scope: ScopeTag::new(scope).unwrap_or_default(),
+                    proposed_fact: fact,
+                    target_link: target,
+                    proposed_by: by,
+                    proposed_date: date,
+                    supersedes_amu_id: sup.and_then(|s| AmuId::parse(&s).ok()),
+                });
+            }
+            Ok(out)
+        })
+        .await
+    }
+
+    pub(crate) async fn get_vault_meta(&self) -> Result<Option<VaultMeta>> {
+        self.with_conn(|conn| {
+            let row: Option<(u32, String, i64, String)> = conn
+                .query_row(
+                    "SELECT schema_version, embedder_id, embedding_dim, updated_at
+                     FROM vault_meta WHERE singleton_id = 1",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .optional()
+                .map_err(map_sqlite_err)?;
+            let Some((schema_version, embedder_id, dim_i64, updated_raw)) = row else {
+                return Ok(None);
+            };
+            let embedding_dim = usize::try_from(dim_i64).unwrap_or(0);
+            let updated_at = DateTime::parse_from_rfc3339(&updated_raw)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+            Ok(Some(VaultMeta {
+                schema_version,
+                embedder_id,
+                embedding_dim,
+                updated_at,
+            }))
+        })
+        .await
+    }
+
+    pub(crate) async fn set_vault_meta(&self, meta: &VaultMeta) -> Result<()> {
+        let meta = meta.clone();
+        self.with_conn(move |conn| {
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(map_sqlite_err)?;
+            upsert_vault_meta_tx(&tx, &meta).map_err(map_sqlite_err)?;
+            tx.commit().map_err(map_sqlite_err)?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub(crate) async fn count_active_amus(&self) -> Result<usize> {
+        self.with_conn(|conn| {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM amus WHERE status = 'active'",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(map_sqlite_err)?;
+            Ok(usize::try_from(count).unwrap_or(0))
+        })
+        .await
+    }
+
+    pub(crate) async fn active_embedding_dim(&self) -> Result<Option<usize>> {
+        self.with_conn(|conn| {
+            let len_bytes: Option<i64> = conn
+                .query_row(
+                    "SELECT length(embedding) FROM amus WHERE status = 'active' LIMIT 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(map_sqlite_err)?;
+            Ok(len_bytes
+                .and_then(|b| usize::try_from(b).ok())
+                .map(|b| b / 4))
+        })
+        .await
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) async fn shadow_table_row_count(&self) -> Result<usize> {
+        self.with_conn(|conn| {
+            let count: i64 = conn
+                .query_row("SELECT COUNT(*) FROM amus_shadow_embeddings", [], |r| {
+                    r.get(0)
+                })
+                .map_err(map_sqlite_err)?;
+            Ok(usize::try_from(count).unwrap_or(0))
+        })
+        .await
+    }
+
+    pub(crate) async fn reembed_active_sync(
+        &self,
+        embedder: Arc<dyn Embedder>,
+        schema_version: u32,
+    ) -> Result<usize> {
+        self.with_conn(move |conn| {
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(map_sqlite_err)?;
+            let rows = load_active_embed_inputs(&tx).map_err(map_sqlite_err)?;
+            let count = rows.len();
+            for (amu_id, heading_path, distilled_fact) in rows {
+                let emb = embedder.embed(&embed_amu_text(&heading_path, &distilled_fact));
+                let blob = encode_embedding(&emb);
+                tx.execute(
+                    "UPDATE amus SET embedding = ?1 WHERE amu_id = ?2",
+                    params![blob, amu_id],
+                )
+                .map_err(map_sqlite_err)?;
+            }
+            tx.execute("DELETE FROM amus_shadow_embeddings", [])
+                .map_err(map_sqlite_err)?;
+            let meta = VaultMeta {
+                schema_version,
+                embedder_id: embedder.id().to_string(),
+                embedding_dim: embedder.dimensions(),
+                updated_at: Utc::now(),
+            };
+            upsert_vault_meta_tx(&tx, &meta).map_err(map_sqlite_err)?;
+            tx.commit().map_err(map_sqlite_err)?;
+            Ok(count)
+        })
+        .await
+    }
+
+    pub(crate) async fn reembed_active_shadow_swap(
+        &self,
+        embedder: Arc<dyn Embedder>,
+        schema_version: u32,
+    ) -> Result<usize> {
+        let rows = self
+            .with_conn(|conn| {
+                let tx = conn
+                    .transaction_with_behavior(TransactionBehavior::Deferred)
+                    .map_err(map_sqlite_err)?;
+                load_active_embed_inputs(&tx).map_err(map_sqlite_err)
+            })
+            .await?;
+
+        let embedder_for_compute = Arc::clone(&embedder);
+        let computed: Vec<(String, Vec<u8>)> = tokio::task::spawn_blocking(move || {
+            rows.into_iter()
+                .map(|(amu_id, heading_path, distilled_fact)| {
+                    let vec =
+                        embedder_for_compute.embed(&embed_amu_text(&heading_path, &distilled_fact));
+                    (amu_id, encode_embedding(&vec))
+                })
+                .collect()
+        })
+        .await
+        .map_err(|err| permanent_err(format!("shadow reembed compute join error: {err}")))?;
+
+        let total = computed.len();
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM amus_shadow_embeddings", [])
+                .map_err(map_sqlite_err)?;
+            Ok(())
+        })
+        .await?;
+
+        for chunk in computed.chunks(256) {
+            let chunk_owned = chunk.to_vec();
+            self.with_conn(move |conn| {
+                let tx = conn
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(map_sqlite_err)?;
+                for (amu_id, blob) in chunk_owned {
+                    tx.execute(
+                        "INSERT OR REPLACE INTO amus_shadow_embeddings (amu_id, embedding)
+                         VALUES (?1, ?2)",
+                        params![amu_id, blob],
+                    )
+                    .map_err(map_sqlite_err)?;
+                }
+                tx.commit().map_err(map_sqlite_err)?;
+                Ok(())
+            })
+            .await?;
+            tokio::task::yield_now().await;
+        }
+
+        let meta = VaultMeta {
+            schema_version,
+            embedder_id: embedder.id().to_string(),
+            embedding_dim: embedder.dimensions(),
+            updated_at: Utc::now(),
+        };
+        self.with_conn(move |conn| {
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(map_sqlite_err)?;
+            tx.execute(
+                "UPDATE amus
+                 SET embedding = (
+                     SELECT s.embedding FROM amus_shadow_embeddings s WHERE s.amu_id = amus.amu_id
+                 )
+                 WHERE amu_id IN (SELECT amu_id FROM amus_shadow_embeddings)",
+                [],
+            )
+            .map_err(map_sqlite_err)?;
+            tx.execute("DELETE FROM amus_shadow_embeddings", [])
+                .map_err(map_sqlite_err)?;
+            upsert_vault_meta_tx(&tx, &meta).map_err(map_sqlite_err)?;
+            tx.commit().map_err(map_sqlite_err)?;
+            Ok(total)
+        })
+        .await
+    }
+
     pub(crate) async fn apply_inbox_decisions(
         &self,
         entries: &[InboxEntry],
@@ -648,6 +919,39 @@ impl VaultStore {
         })
         .await
     }
+}
+
+fn upsert_vault_meta_tx(tx: &Transaction<'_>, meta: &VaultMeta) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO vault_meta (
+             singleton_id, schema_version, embedder_id, embedding_dim, updated_at
+         ) VALUES (1, ?1, ?2, ?3, ?4)
+         ON CONFLICT(singleton_id) DO UPDATE SET
+             schema_version = excluded.schema_version,
+             embedder_id = excluded.embedder_id,
+             embedding_dim = excluded.embedding_dim,
+             updated_at = excluded.updated_at",
+        params![
+            meta.schema_version,
+            meta.embedder_id,
+            meta.embedding_dim as i64,
+            meta.updated_at.to_rfc3339(),
+        ],
+    )?;
+    Ok(())
+}
+
+fn load_active_embed_inputs(
+    tx: &Transaction<'_>,
+) -> rusqlite::Result<Vec<(String, String, String)>> {
+    let mut stmt = tx
+        .prepare("SELECT amu_id, heading_path, distilled_fact FROM amus WHERE status = 'active'")?;
+    let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
 }
 
 fn delete_amus_for_rel_path(tx: &Transaction<'_>, rel_path: &str) -> rusqlite::Result<usize> {

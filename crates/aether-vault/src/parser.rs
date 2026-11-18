@@ -36,24 +36,38 @@ pub(crate) struct ParsedSection {
 
 /// Pluggable local embedding seam (Milestone 1 uses `HashedNgramEmbedder`).
 pub(crate) trait Embedder: Send + Sync {
+    fn id(&self) -> &str;
     fn dimensions(&self) -> usize;
     fn embed(&self, text: &str) -> Vec<f32>;
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct HashedNgramEmbedder {
+    id: String,
     dims: usize,
 }
 
-impl Default for HashedNgramEmbedder {
-    fn default() -> Self {
+impl HashedNgramEmbedder {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn with_dimensions(dims: usize) -> Self {
         Self {
-            dims: DEFAULT_EMBED_DIM,
+            id: format!("hashed-ngram-{dims}-v1"),
+            dims,
         }
     }
 }
 
+impl Default for HashedNgramEmbedder {
+    fn default() -> Self {
+        Self::with_dimensions(DEFAULT_EMBED_DIM)
+    }
+}
+
 impl Embedder for HashedNgramEmbedder {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
     fn dimensions(&self) -> usize {
         self.dims
     }
@@ -127,6 +141,29 @@ impl IgnoreRules {
         }
         let lower = rel.to_ascii_lowercase();
 
+        if BUILTIN_IGNORED_PREFIXES
+            .iter()
+            .any(|prefix| path_matches_prefix(&lower, prefix))
+        {
+            return true;
+        }
+
+        self.matches_user_patterns_or_dirs_or_exts(&rel, &lower)
+    }
+
+    pub(crate) fn is_ignored_for_inspect(&self, relative_path: &str) -> bool {
+        let rel = normalize_rel_path(relative_path);
+        if rel.is_empty() {
+            return true;
+        }
+        if rel.eq_ignore_ascii_case(crate::inbox::APPROVED_MIRROR_REL_PATH) {
+            let lower = rel.to_ascii_lowercase();
+            return self.matches_user_patterns_or_dirs_or_exts(&rel, &lower);
+        }
+        self.is_ignored(&rel)
+    }
+
+    fn matches_user_patterns_or_dirs_or_exts(&self, rel: &str, lower: &str) -> bool {
         if BUILTIN_IGNORED_EXTENSIONS
             .iter()
             .any(|ext| lower.ends_with(ext))
@@ -141,16 +178,9 @@ impl IgnoreRules {
             return true;
         }
 
-        if BUILTIN_IGNORED_PREFIXES
-            .iter()
-            .any(|prefix| path_matches_prefix(&lower, prefix))
-        {
-            return true;
-        }
-
         self.patterns
             .iter()
-            .any(|pat| matches_ignore_pattern(&rel, pat))
+            .any(|pat| matches_ignore_pattern(rel, pat))
     }
 }
 
@@ -320,7 +350,7 @@ pub(crate) fn parse_note(
         let graph_edges = extract_graph_edges(&verbatim, &note_tags);
         let authority_weight = compute_authority_weight(fm.kind, &verbatim);
         let distilled_fact = distill_section(&heading_path, &verbatim);
-        let embed_input = format!("{heading_path}\n{distilled_fact}");
+        let embed_input = embed_amu_text(&heading_path, &distilled_fact);
         let embedding = embedder.embed(&embed_input);
         let content_hash = ContentHash::compute(verbatim.as_bytes());
 
@@ -868,6 +898,10 @@ fn distill_section(heading_path: &str, verbatim: &str) -> String {
         format!("{heading_path}: {}", body_parts.join(" "))
     };
     truncate_chars(&joined, 400)
+}
+
+pub(crate) fn embed_amu_text(heading_path: &str, distilled_fact: &str) -> String {
+    format!("{heading_path}\n{distilled_fact}")
 }
 
 fn truncate_chars(text: &str, max_chars: usize) -> String {

@@ -5,12 +5,15 @@ use nytheris_aether_core::{AetherError, Result};
 use uuid::Uuid;
 
 use crate::types::{
-    AmuId, CandidateId, ContentHash, InboxCheckbox, InboxEntry, ScopeTag, VaultTier,
+    AmuId, ApprovedMirrorEntry, CandidateId, ContentHash, InboxCheckbox, InboxEntry, ScopeTag,
+    VaultTier,
 };
 
 pub(crate) const INBOX_REL_PATH: &str = "Aether/Inbox.md";
+pub(crate) const APPROVED_MIRROR_REL_PATH: &str = "Aether/Compiled/Approved.md";
 
 const INBOX_HEADER: &str = "# Aether Memory Inbox\n> Check `[x]` to approve and compile into active vault memory. Delete or mark `[-]` to reject.\n";
+const APPROVED_MIRROR_HEADER: &str = "# Aether Compiled Approved Memory\n> Read-only mirror materialized by Project Aether from approved Inbox items.\n";
 
 /// Atomically replaces `path` via a sibling temp file, `sync_all`, and `rename`.
 pub(crate) fn atomic_write_file(path: &Path, bytes: &[u8]) -> Result<ContentHash> {
@@ -229,6 +232,43 @@ pub(crate) fn render_inbox(entries: &[InboxEntry]) -> String {
     out
 }
 
+/// Renders `Aether/Compiled/Approved.md` with deterministic `## cand_<id>` sections.
+pub(crate) fn render_approved_mirror(entries: &[ApprovedMirrorEntry]) -> String {
+    let mut out = String::from(APPROVED_MIRROR_HEADER);
+    for entry in entries {
+        out.push('\n');
+        out.push_str(&format!("## {}\n", entry.candidate_id));
+        out.push_str(&format!("- `amu_id`: `{}`\n", entry.compiled_amu_id));
+        out.push_str(&format!("- `tier`: `{}`\n", entry.tier));
+        out.push_str(&format!("- `scope`: `{}`\n", entry.scope));
+        if let Some(target) = &entry.target_link {
+            let trimmed = target
+                .trim()
+                .trim_start_matches("[[")
+                .trim_end_matches("]]");
+            if !trimmed.is_empty() {
+                out.push_str(&format!("- `target_link`: [[{trimmed}]]\n"));
+            }
+        }
+        let date = if entry.proposed_date.trim().is_empty() {
+            "unknown"
+        } else {
+            entry.proposed_date.trim()
+        };
+        out.push_str(&format!(
+            "- `proposed_by`: `{}` on `{date}`\n",
+            entry.proposed_by.trim()
+        ));
+        if let Some(sup) = entry.supersedes_amu_id {
+            out.push_str(&format!("- `supersedes`: `{sup}`\n"));
+        }
+        out.push('\n');
+        out.push_str(entry.proposed_fact.trim());
+        out.push('\n');
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,5 +347,26 @@ mod tests {
         assert!(leftovers.is_empty());
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn renders_approved_mirror_with_deterministic_cand_headings() {
+        let entry = ApprovedMirrorEntry {
+            candidate_id: CandidateId::parse("cand_9f82a1").unwrap(),
+            compiled_amu_id: AmuId::parse("amu_0123456789abcdef0123456789abcdef").unwrap(),
+            tier: VaultTier::Warm,
+            scope: ScopeTag::new("engineering").unwrap(),
+            proposed_fact: "Use SQLite WAL mode across vault readers.".into(),
+            target_link: Some("Arch/DB".into()),
+            proposed_by: "claude".into(),
+            proposed_date: "2026-05-01".into(),
+            supersedes_amu_id: None,
+        };
+        let rendered = render_approved_mirror(&[entry]);
+        assert!(rendered.contains("# Aether Compiled Approved Memory"));
+        assert!(rendered.contains("## cand_9f82a1"));
+        assert!(rendered.contains("- `amu_id`: `amu_0123456789abcdef0123456789abcdef`"));
+        assert!(rendered.contains("- `target_link`: [[Arch/DB]]"));
+        assert!(rendered.contains("Use SQLite WAL mode across vault readers."));
     }
 }

@@ -1,6 +1,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -9,8 +10,16 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use crate::parser::Embedder;
+
 /// Hard token ceiling for the byte-stable static `HOT` prefix block.
 pub const HOT_PROFILE_MAX_TOKENS: usize = 2000;
+
+/// Current SQLite vault index schema version.
+pub const VAULT_SCHEMA_VERSION: u32 = 2;
+
+/// Default maximum active AMUs re-embedded synchronously inside one startup transaction.
+pub const DEFAULT_SYNC_REINDEX_THRESHOLD: usize = 5_000;
 
 /// Validated vault-relative POSIX Markdown path (`Architecture/Storage.md`).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -571,13 +580,32 @@ pub enum DbTarget {
     InMemory,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct VaultConfig {
     pub vault_root: PathBuf,
     pub db_target: DbTarget,
     pub project_id: ProjectId,
     pub watch_interval: Option<Duration>,
     pub hot_budget: TokenBudget,
+    pub sync_reindex_threshold: usize,
+    pub(crate) embedder_override: Option<Arc<dyn Embedder>>,
+}
+
+impl fmt::Debug for VaultConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VaultConfig")
+            .field("vault_root", &self.vault_root)
+            .field("db_target", &self.db_target)
+            .field("project_id", &self.project_id)
+            .field("watch_interval", &self.watch_interval)
+            .field("hot_budget", &self.hot_budget)
+            .field("sync_reindex_threshold", &self.sync_reindex_threshold)
+            .field(
+                "embedder_id",
+                &self.embedder_override.as_ref().map(|e| e.id()),
+            )
+            .finish()
+    }
 }
 
 impl VaultConfig {
@@ -590,6 +618,8 @@ impl VaultConfig {
             project_id: ProjectId::new("obsidian-vault").expect("static project id is valid"),
             watch_interval: None,
             hot_budget: TokenBudget(HOT_PROFILE_MAX_TOKENS),
+            sync_reindex_threshold: DEFAULT_SYNC_REINDEX_THRESHOLD,
+            embedder_override: None,
         }
     }
 
@@ -612,6 +642,17 @@ impl VaultConfig {
 
     pub fn with_hot_budget(mut self, budget: TokenBudget) -> Self {
         self.hot_budget = budget;
+        self
+    }
+
+    pub fn with_sync_reindex_threshold(mut self, threshold: usize) -> Self {
+        self.sync_reindex_threshold = threshold;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_embedder(mut self, embedder: Arc<dyn Embedder>) -> Self {
+        self.embedder_override = Some(embedder);
         self
     }
 }
@@ -714,6 +755,27 @@ pub struct InboxEntry {
     pub supersedes_amu_id: Option<AmuId>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaultMeta {
+    pub schema_version: u32,
+    pub embedder_id: String,
+    pub embedding_dim: usize,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApprovedMirrorEntry {
+    pub candidate_id: CandidateId,
+    pub compiled_amu_id: AmuId,
+    pub tier: VaultTier,
+    pub scope: ScopeTag,
+    pub proposed_fact: String,
+    pub target_link: Option<String>,
+    pub proposed_by: String,
+    pub proposed_date: String,
+    pub supersedes_amu_id: Option<AmuId>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SyncReport {
     pub files_scanned: usize,
@@ -725,6 +787,7 @@ pub struct SyncReport {
     pub amus_indexed: usize,
     pub inbox_approved: usize,
     pub inbox_rejected: usize,
+    pub reindexed_amus: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

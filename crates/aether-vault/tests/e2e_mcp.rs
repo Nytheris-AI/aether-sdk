@@ -244,3 +244,97 @@ async fn mcp_rejects_malformed_json_unknown_methods_and_private_stage_tier() {
 
     engine.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn mcp_approved_inbox_materializes_mirror_and_inspects_verbatim() {
+    let vault = TempVault::new();
+    vault.write(
+        "Arch/Storage.md",
+        "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Engine\nInitial storage overview.\n",
+    );
+
+    let engine = Arc::new(
+        VaultEngine::open(VaultConfig::in_memory(&vault.root))
+            .await
+            .unwrap(),
+    );
+    let server = McpServer::new(Arc::clone(&engine));
+
+    let stage_req = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "aether_stage_memory",
+            "arguments": {
+                "proposed_fact": "Approved mirror stores durable candidate provenance.",
+                "suggested_tier": "warm",
+                "target_note": "Arch/Storage"
+            }
+        }
+    });
+    let mut out = Vec::new();
+    server
+        .serve_streams(
+            BufReader::new(format!("{stage_req}\n").as_bytes()),
+            &mut out,
+        )
+        .await
+        .unwrap();
+    let stage_resp: Value = serde_json::from_slice(&out).unwrap();
+    let stage_payload: Value =
+        serde_json::from_str(stage_resp["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    let cand_id = stage_payload["candidate_id"].as_str().unwrap().to_string();
+
+    let inbox_path = vault.root.join("Aether/Inbox.md");
+    let inbox_raw = fs::read_to_string(&inbox_path).unwrap();
+    fs::write(&inbox_path, inbox_raw.replace("- [ ] ", "- [x] ")).unwrap();
+
+    let sync_report = engine.sync_vault().await.unwrap();
+    assert_eq!(sync_report.inbox_approved, 1);
+
+    let approved_path = vault.root.join("Aether/Compiled/Approved.md");
+    assert!(approved_path.exists(), "Approved.md mirror must exist");
+    let approved_md = fs::read_to_string(&approved_path).unwrap();
+    assert!(approved_md.contains(&format!("## {cand_id}")));
+    assert!(approved_md.contains("Approved mirror stores durable candidate provenance."));
+
+    let pointer = format!("Aether/Compiled/Approved.md#{cand_id}");
+    let inspect_req = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "aether_inspect_source",
+            "arguments": { "source_pointer": pointer }
+        }
+    });
+    let recall_req = json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": "aether_recall",
+            "arguments": { "query": "durable candidate provenance" }
+        }
+    });
+    let mut out2 = Vec::new();
+    let batch = format!("{inspect_req}\n{recall_req}\n");
+    server
+        .serve_streams(BufReader::new(batch.as_bytes()), &mut out2)
+        .await
+        .unwrap();
+    let resps: Vec<Value> = String::from_utf8(out2)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_ne!(resps[0]["result"]["isError"], true);
+    let inspected = resps[0]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(inspected.contains("Approved mirror stores durable candidate provenance."));
+
+    let recalled = resps[1]["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(recalled.contains(&pointer));
+
+    engine.shutdown().await.unwrap();
+}

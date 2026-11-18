@@ -13,14 +13,16 @@ use tokio::sync::{watch, Mutex as AsyncMutex};
 use tokio::task::JoinHandle;
 use walkdir::WalkDir;
 
-use crate::inbox::{self, INBOX_REL_PATH};
-use crate::parser::{self, Embedder, HashedNgramEmbedder, IgnoreRules, ParsedNote, ParsedSection};
+use crate::inbox::{self, APPROVED_MIRROR_REL_PATH, INBOX_REL_PATH};
+use crate::parser::{
+    self, embed_amu_text, Embedder, HashedNgramEmbedder, IgnoreRules, ParsedNote, ParsedSection,
+};
 use crate::prefix;
 use crate::store::{to_memory_item, VaultStore};
 use crate::types::{
     Amu, AmuId, AmuKind, AmuStatus, CandidateId, ContentHash, InboxCheckbox, InboxEntry,
     InboxReconcileReport, RecallEntry, RecallRequest, RecallResponse, SourcePointer,
-    StageMemoryRequest, SyncReport, VaultConfig, VaultPath,
+    StageMemoryRequest, SyncReport, VaultConfig, VaultMeta, VaultPath, VAULT_SCHEMA_VERSION,
 };
 
 /// Single-owner orchestrator for Obsidian vault compilation, hybrid recall,
@@ -33,6 +35,7 @@ pub struct VaultEngine {
     write_gate: Arc<AsyncMutex<()>>,
     shutdown_tx: watch::Sender<bool>,
     watcher_handle: Mutex<Option<JoinHandle<()>>>,
+    reindex_handle: Mutex<Option<JoinHandle<Result<usize>>>>,
 }
 
 impl VaultEngine {
@@ -47,8 +50,12 @@ impl VaultEngine {
         let store = VaultStore::open(config.db_target.clone(), config.project_id.clone()).await?;
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-        let embedder: Arc<dyn Embedder> = Arc::new(HashedNgramEmbedder::default());
+        let embedder: Arc<dyn Embedder> = config
+            .embedder_override
+            .clone()
+            .unwrap_or_else(|| Arc::new(HashedNgramEmbedder::default()));
         tracing::debug!(
+            embedder_id = embedder.id(),
             embed_dims = embedder.dimensions(),
             "initialized vault engine"
         );
@@ -60,11 +67,99 @@ impl VaultEngine {
             write_gate: Arc::new(AsyncMutex::new(())),
             shutdown_tx,
             watcher_handle: Mutex::new(None),
+            reindex_handle: Mutex::new(None),
         };
 
+        let _ = engine.reconcile_embedder_meta().await?;
         engine.sync_vault().await?;
         engine.maybe_spawn_watcher(shutdown_rx)?;
         Ok(engine)
+    }
+
+    pub async fn vault_meta(&self) -> Result<Option<VaultMeta>> {
+        self.store.get_vault_meta().await
+    }
+
+    pub async fn wait_for_reindex(&self) -> Result<usize> {
+        let handle = self
+            .reindex_handle
+            .lock()
+            .map_err(|_| AetherError::Permanent {
+                connector: "vault-engine",
+                message: "reindex mutex poisoned".into(),
+            })?
+            .take();
+        match handle {
+            Some(h) => h.await.map_err(|err| AetherError::Permanent {
+                connector: "vault-engine",
+                message: format!("reindex task join error: {err}"),
+            })?,
+            None => Ok(0),
+        }
+    }
+
+    async fn reconcile_embedder_meta(&self) -> Result<usize> {
+        let existing = self.store.get_vault_meta().await?;
+        let active_count = self.store.count_active_amus().await?;
+        let target_id = self.embedder.id();
+        let target_dim = self.embedder.dimensions();
+
+        let needs_reembed = match existing {
+            None => {
+                if active_count == 0 {
+                    false
+                } else {
+                    self.store.active_embedding_dim().await? != Some(target_dim)
+                }
+            }
+            Some(ref meta) => meta.embedder_id != target_id || meta.embedding_dim != target_dim,
+        };
+
+        if !needs_reembed {
+            let needs_meta_write = existing.as_ref().is_none_or(|meta| {
+                meta.schema_version != VAULT_SCHEMA_VERSION
+                    || meta.embedder_id != target_id
+                    || meta.embedding_dim != target_dim
+            });
+            if needs_meta_write {
+                self.store
+                    .set_vault_meta(&VaultMeta {
+                        schema_version: VAULT_SCHEMA_VERSION,
+                        embedder_id: target_id.to_string(),
+                        embedding_dim: target_dim,
+                        updated_at: Utc::now(),
+                    })
+                    .await?;
+            }
+            return Ok(0);
+        }
+
+        if active_count <= self.config.sync_reindex_threshold {
+            return self
+                .store
+                .reembed_active_sync(Arc::clone(&self.embedder), VAULT_SCHEMA_VERSION)
+                .await;
+        }
+
+        let store = self.store.clone();
+        let embedder = Arc::clone(&self.embedder);
+        let handle = tokio::spawn(async move {
+            store
+                .reembed_active_shadow_swap(embedder, VAULT_SCHEMA_VERSION)
+                .await
+        });
+        let mut guard = self
+            .reindex_handle
+            .lock()
+            .map_err(|_| AetherError::Permanent {
+                connector: "vault-engine",
+                message: "reindex mutex poisoned".into(),
+            })?;
+        if let Some(prev) = guard.take() {
+            prev.abort();
+        }
+        *guard = Some(handle);
+        Ok(0)
     }
 
     fn maybe_spawn_watcher(&self, mut shutdown_rx: watch::Receiver<bool>) -> Result<()> {
@@ -104,14 +199,17 @@ impl VaultEngine {
 
     /// Scans the vault, reconciles `Aether/Inbox.md`, and updates changed Markdown files.
     pub async fn sync_vault(&self) -> Result<SyncReport> {
+        let reindexed = self.reconcile_embedder_meta().await?;
         let _guard = self.write_gate.lock().await;
-        sync_vault_inner(
+        let mut report = sync_vault_inner(
             &self.vault_root,
             &self.store,
             self.embedder.as_ref(),
             &self.config.project_id,
         )
-        .await
+        .await?;
+        report.reindexed_amus = reindexed;
+        Ok(report)
     }
 
     /// Processes a single filesystem path event, skipping self-originated writes via SHA-256 ledger.
@@ -121,6 +219,17 @@ impl VaultEngine {
             Ok(rel) => rel,
             Err(_) => return Ok(false),
         };
+
+        if rel_path.eq_ignore_ascii_case(APPROVED_MIRROR_REL_PATH) {
+            if let Ok(bytes) = tokio::fs::read(path).await {
+                let hash = ContentHash::compute(&bytes);
+                let _ = self
+                    .store
+                    .consume_self_write(APPROVED_MIRROR_REL_PATH, &hash)
+                    .await?;
+            }
+            return Ok(false);
+        }
 
         if rel_path.eq_ignore_ascii_case(INBOX_REL_PATH) {
             let Ok(bytes) = tokio::fs::read(path).await else {
@@ -360,7 +469,7 @@ impl VaultEngine {
     pub async fn inspect_source(&self, raw_pointer: &str) -> Result<String> {
         let pointer = SourcePointer::parse(raw_pointer)?;
         let rules = IgnoreRules::load(&self.vault_root);
-        if rules.is_ignored(pointer.relative_path()) {
+        if rules.is_ignored_for_inspect(pointer.relative_path()) {
             return Err(AetherError::InvalidInput(format!(
                 "path `{}` is excluded by vault ignore rules",
                 pointer.relative_path()
@@ -405,6 +514,7 @@ impl VaultEngine {
         if let Some(h) = handle {
             let _ = h.await;
         }
+        let _ = self.wait_for_reindex().await?;
         self.store.close().await
     }
 }
@@ -530,7 +640,9 @@ async fn sync_vault_inner(
     }
 
     for old_path in manifest.keys() {
-        if old_path.eq_ignore_ascii_case(INBOX_REL_PATH) {
+        if old_path.eq_ignore_ascii_case(INBOX_REL_PATH)
+            || old_path.eq_ignore_ascii_case(APPROVED_MIRROR_REL_PATH)
+        {
             continue;
         }
         if !seen_paths.contains(old_path) && store.remove_file(old_path, None).await? {
@@ -617,6 +729,14 @@ async fn reconcile_inbox_inner(
         .apply_inbox_decisions(&parsed_entries, &compiled_amus)
         .await?;
 
+    let mirror_path = vault_root.join(APPROVED_MIRROR_REL_PATH);
+    if compiled > 0 || !mirror_path.exists() {
+        let approved = store.list_approved_candidates().await?;
+        if !approved.is_empty() {
+            write_approved_mirror_atomically(vault_root, store, &approved).await?;
+        }
+    }
+
     if compiled > 0 || rejected > 0 || remaining_pending.len() != parsed_entries.len() {
         write_inbox_atomically(vault_root, store, &remaining_pending).await?;
     } else {
@@ -631,33 +751,12 @@ async fn reconcile_inbox_inner(
 }
 
 fn build_compiled_amu(entry: &InboxEntry, embedder: &dyn Embedder) -> Result<(Amu, Vec<f32>)> {
-    let target_rel = match &entry.target_link {
-        Some(raw) => {
-            let cleaned = raw
-                .trim()
-                .trim_start_matches("[[")
-                .trim_end_matches("]]")
-                .trim()
-                .replace('\\', "/");
-            let with_ext = if cleaned.to_ascii_lowercase().ends_with(".md") {
-                cleaned
-            } else {
-                format!("{cleaned}.md")
-            };
-            if VaultPath::parse(&with_ext).is_ok() {
-                with_ext
-            } else {
-                "Aether/Compiled/Approved.md".to_string()
-            }
-        }
-        None => "Aether/Compiled/Approved.md".to_string(),
-    };
-
-    let pointer_raw = format!("{target_rel}#{}", entry.candidate_id);
+    let pointer_raw = format!("{APPROVED_MIRROR_REL_PATH}#{}", entry.candidate_id);
     let source_pointer = SourcePointer::parse(&pointer_raw)?;
     let amu_id = AmuId::from_pointer(&source_pointer);
+    let heading_path = source_pointer.as_str().to_string();
     let distilled_fact = entry.proposed_fact.trim().to_string();
-    let embedding = embedder.embed(&distilled_fact);
+    let embedding = embedder.embed(&embed_amu_text(&heading_path, &distilled_fact));
 
     let mut graph_edges = Vec::new();
     if let Some(link) = &entry.target_link {
@@ -678,7 +777,7 @@ fn build_compiled_amu(entry: &InboxEntry, embedder: &dyn Embedder) -> Result<(Am
         tier: entry.tier,
         kind: AmuKind::Decision,
         status: AmuStatus::Active,
-        heading_path: source_pointer.as_str().to_string(),
+        heading_path,
         distilled_fact: distilled_fact.clone(),
         source_pointer,
         graph_edges,
@@ -689,6 +788,21 @@ fn build_compiled_amu(entry: &InboxEntry, embedder: &dyn Embedder) -> Result<(Am
         content_hash: ContentHash::compute(distilled_fact.as_bytes()),
     };
     Ok((amu, embedding))
+}
+
+async fn write_approved_mirror_atomically(
+    vault_root: &Path,
+    store: &VaultStore,
+    entries: &[crate::types::ApprovedMirrorEntry],
+) -> Result<()> {
+    let mirror_path = vault_root.join(APPROVED_MIRROR_REL_PATH);
+    let rendered = inbox::render_approved_mirror(entries);
+    let hash = ContentHash::compute(rendered.as_bytes());
+    store
+        .record_self_write(APPROVED_MIRROR_REL_PATH, &hash)
+        .await?;
+    inbox::atomic_write_file(&mirror_path, rendered.as_bytes())?;
+    Ok(())
 }
 
 async fn write_inbox_atomically(
@@ -925,5 +1039,97 @@ mod tests {
         assert!(!res.formatted_context.contains("Rejected memory proposal"));
 
         engine.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn vault_meta_sync_reindexes_when_embedder_dimension_changes() {
+        let vault = TempVault::new();
+        vault.write(
+            "Specs/Vector.md",
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Indexing\nStore embeddings in SQLite WAL.\n",
+        );
+
+        let engine256 = VaultEngine::open(VaultConfig::new(&vault.root))
+            .await
+            .unwrap();
+        let meta256 = engine256.vault_meta().await.unwrap().unwrap();
+        assert_eq!(meta256.schema_version, VAULT_SCHEMA_VERSION);
+        assert_eq!(meta256.embedder_id, "hashed-ngram-256-v1");
+        assert_eq!(meta256.embedding_dim, 256);
+        engine256.shutdown().await.unwrap();
+
+        let embedder384: Arc<dyn Embedder> = Arc::new(HashedNgramEmbedder::with_dimensions(384));
+        let engine384 =
+            VaultEngine::open(VaultConfig::new(&vault.root).with_test_embedder(embedder384))
+                .await
+                .unwrap();
+        let meta384 = engine384.vault_meta().await.unwrap().unwrap();
+        assert_eq!(meta384.embedder_id, "hashed-ngram-384-v1");
+        assert_eq!(meta384.embedding_dim, 384);
+        assert_eq!(
+            engine384.store.active_embedding_dim().await.unwrap(),
+            Some(384)
+        );
+
+        let mut req = RecallRequest::new("embeddings SQLite WAL");
+        req.scope = Some(ScopeTag::new("engineering").unwrap());
+        let recalled = engine384.recall(req).await.unwrap();
+        assert!(recalled
+            .formatted_context
+            .contains("Store embeddings in SQLite WAL."));
+
+        engine384.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn vault_meta_shadow_swap_reindexes_above_threshold_while_keeping_recall_online() {
+        let vault = TempVault::new();
+        vault.write(
+            "Specs/One.md",
+            "---\naether_tier: warm\n---\n# Alpha\nKafka streaming pipeline specification.\n",
+        );
+        vault.write(
+            "Specs/Two.md",
+            "---\naether_tier: warm\n---\n# Beta\nPostgres WAL checkpoint tuning.\n",
+        );
+        vault.write(
+            "Specs/Three.md",
+            "---\naether_tier: warm\n---\n# Gamma\nRedis sentinel failover timing.\n",
+        );
+
+        let engine256 = VaultEngine::open(VaultConfig::new(&vault.root))
+            .await
+            .unwrap();
+        engine256.shutdown().await.unwrap();
+
+        let embedder384: Arc<dyn Embedder> = Arc::new(HashedNgramEmbedder::with_dimensions(384));
+        let engine384 = VaultEngine::open(
+            VaultConfig::new(&vault.root)
+                .with_sync_reindex_threshold(1)
+                .with_test_embedder(embedder384),
+        )
+        .await
+        .unwrap();
+
+        // Recall must stay online via FTS5 + graph RRF even before waiting for background swap.
+        let online_recall = engine384
+            .recall(RecallRequest::new("Kafka streaming pipeline"))
+            .await
+            .unwrap();
+        assert!(online_recall
+            .formatted_context
+            .contains("Kafka streaming pipeline"));
+
+        let swapped = engine384.wait_for_reindex().await.unwrap();
+        assert_eq!(swapped, 3);
+        let meta384 = engine384.vault_meta().await.unwrap().unwrap();
+        assert_eq!(meta384.embedding_dim, 384);
+        assert_eq!(engine384.store.shadow_table_row_count().await.unwrap(), 0);
+        assert_eq!(
+            engine384.store.active_embedding_dim().await.unwrap(),
+            Some(384)
+        );
+
+        engine384.shutdown().await.unwrap();
     }
 }
