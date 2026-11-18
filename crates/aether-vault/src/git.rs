@@ -370,7 +370,7 @@ pub(crate) fn run_git_fetch_merge_blocking(
         "FETCH_HEAD".to_string()
     };
 
-    let merge_out = run_git_cmd(vault_root, &["merge", "--no-edit", &merge_target])?;
+    let merge_out = run_git_cmd_with_identity(vault_root, &["merge", "--no-edit", &merge_target])?;
     let unmerged_paths = list_unmerged_paths(vault_root)?;
     if !merge_out.status.success() && unmerged_paths.is_empty() {
         let stderr = redact_url_userinfo(&String::from_utf8_lossy(&merge_out.stderr));
@@ -514,8 +514,7 @@ fn run_git_cmd(vault_root: &Path, args: &[&str]) -> Result<Output> {
         .map_err(|err| permanent_git_err(format!("failed to execute git {:?}: {err}", args)))
 }
 
-fn run_git_checked(vault_root: &Path, args: &[&str], safe_remote: &str) -> Result<String> {
-    let out = run_git_cmd(vault_root, args)?;
+fn check_git_output(args: &[&str], out: Output, safe_remote: &str) -> Result<String> {
     if !out.status.success() {
         let stderr = redact_url_userinfo(&String::from_utf8_lossy(&out.stderr));
         return Err(permanent_git_err(format!(
@@ -527,7 +526,12 @@ fn run_git_checked(vault_root: &Path, args: &[&str], safe_remote: &str) -> Resul
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-fn run_git_with_identity(vault_root: &Path, args: &[&str], safe_remote: &str) -> Result<String> {
+fn run_git_checked(vault_root: &Path, args: &[&str], safe_remote: &str) -> Result<String> {
+    let out = run_git_cmd(vault_root, args)?;
+    check_git_output(args, out, safe_remote)
+}
+
+fn run_git_cmd_with_identity(vault_root: &Path, args: &[&str]) -> Result<Output> {
     let has_name = run_git_cmd(vault_root, &["config", "--get", "user.name"])?
         .status
         .success();
@@ -542,7 +546,12 @@ fn run_git_with_identity(vault_root: &Path, args: &[&str], safe_remote: &str) ->
         full_args.extend(["-c", "user.email=aether-sync@local"]);
     }
     full_args.extend(args.iter().copied());
-    run_git_checked(vault_root, &full_args, safe_remote)
+    run_git_cmd(vault_root, &full_args)
+}
+
+fn run_git_with_identity(vault_root: &Path, args: &[&str], safe_remote: &str) -> Result<String> {
+    let out = run_git_cmd_with_identity(vault_root, args)?;
+    check_git_output(args, out, safe_remote)
 }
 
 fn permanent_git_err(message: impl Into<String>) -> AetherError {
