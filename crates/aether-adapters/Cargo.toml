@@ -1,8 +1,16 @@
 [package]
 name = "aether-adapters"
+description = "Storage connectors (SQLite, Redis, Qdrant, pgvector, Chroma, Turbopuffer, Neo4j), resilience middleware, and contract tests for Aether SDK"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/aether-adapters"
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [features]
 default = []
@@ -16,7 +24,7 @@ chroma = ["dep:reqwest"]
 pgvector = ["dep:sqlx", "dep:pgvector"]
 
 [dependencies]
-aether-core = { path = "../aether-core" }
+aether-core = { path = "../aether-core", version = "0.1.0" }
 async-trait.workspace = true
 chrono.workspace = true
 petgraph.workspace = true
@@ -29,7 +37,7 @@ uuid.workspace = true
 pgvector = { version = "0.4", features = ["sqlx"], optional = true }
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"], optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"], optional = true }
-rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+rusqlite = { version = "0.41", features = ["bundled"], optional = true }
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls", "json", "uuid", "chrono"], optional = true }
 
 [dev-dependencies]

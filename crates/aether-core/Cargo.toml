@@ -1,8 +1,16 @@
 [package]
 name = "aether-core"
+description = "Core domain contracts, validated IDs, scoring, filters, and storage traits for Aether SDK"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/aether-core"
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 async-trait.workspace = true
