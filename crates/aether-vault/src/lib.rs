@@ -1,13 +1,13 @@
 //! Obsidian-native memory compiler, hybrid recall engine, and stdio MCP server for Project Aether.
 
-#[allow(dead_code)]
+mod engine;
 mod inbox;
-#[allow(dead_code)]
 mod parser;
-#[allow(dead_code)]
 mod prefix;
+mod store;
 mod types;
 
+pub use engine::VaultEngine;
 pub use types::{
     estimate_tokens, Amu, AmuId, AmuKind, AmuStatus, CandidateId, ContentHash, DbTarget,
     InboxCheckbox, InboxEntry, InboxReconcileReport, RecallEntry, RecallRequest, RecallResponse,
