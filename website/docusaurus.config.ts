@@ -37,7 +37,7 @@ const config: Config = {
         docs: {
           path: '../docs',
           exclude: ['superpowers/**'],
-          routeBasePath: '/',
+          routeBasePath: '/docs',
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/Nytheris-AI/aether-sdk/tree/main/',
         },
@@ -57,7 +57,7 @@ const config: Config = {
       title: 'Aether SDK',
       logo: {
         alt: 'Aether SDK Logo',
-        src: 'img/aether-logo.png',
+        src: 'img/aether-logo.svg',
       },
       items: [
         {
@@ -67,12 +67,12 @@ const config: Config = {
           label: 'Docs',
         },
         {
-          to: '/guides/usage',
+          to: '/docs/guides/usage',
           label: 'Guides',
           position: 'left',
         },
         {
-          to: '/architecture',
+          to: '/docs/architecture',
           label: 'Architecture',
           position: 'left',
         },
@@ -90,16 +90,16 @@ const config: Config = {
           title: 'Documentation',
           items: [
             {
-              label: 'Home',
-              to: '/',
+              label: 'Docs Home',
+              to: '/docs',
             },
             {
               label: 'Architecture',
-              to: '/architecture',
+              to: '/docs/architecture',
             },
             {
               label: 'Usage Guide',
-              to: '/guides/usage',
+              to: '/docs/guides/usage',
             },
           ],
         },
@@ -107,12 +107,16 @@ const config: Config = {
           title: 'Project',
           items: [
             {
+              label: 'Landing Page',
+              to: '/',
+            },
+            {
               label: 'Roadmap',
-              to: '/about/roadmap',
+              to: '/docs/about/roadmap',
             },
             {
               label: 'Development Guidelines',
-              to: '/development/guidelines',
+              to: '/docs/development/guidelines',
             },
             {
               label: 'GitHub',
