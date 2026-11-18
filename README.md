@@ -16,7 +16,7 @@ Unify authoritative record storage, derived vector indexes, and temporal knowled
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-38BDF8.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.75%2B-F97316.svg?logo=rust)](Cargo.toml)
 
-[Documentation](https://nytheris-ai.github.io/aether-sdk/) · [Architecture](docs/architecture/index.md) · [Usage Guide](docs/guides/usage.md) · [Storage Providers](#storage-providers) · [Quickstart](#quickstart)
+[Website](https://nytheris-ai.github.io/aether-sdk/) · [Documentation](https://nytheris-ai.github.io/aether-sdk/docs) · [Architecture](docs/architecture/index.md) · [Usage Guide](docs/guides/usage.md) · [Storage Providers](#storage-providers) · [Quickstart](#quickstart)
 
 </div>
 
