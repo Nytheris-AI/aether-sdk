@@ -1,18 +1,18 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_adapters::InMemoryBackend;
-use aether_core::{
+use chrono::Utc;
+use nytheris_aether_adapters::InMemoryBackend;
+use nytheris_aether_core::{
     DistanceMetric, Entity, EntityId, MemoryInput, MemoryItem, MemoryScope, ProjectId, RecordStore,
     Relation, SessionId, TemporalFilter, UserId, VectorStore,
 };
-use aether_cortex::indexer::Indexer;
-use aether_cortex::ppr::{graph_scores, PersonalizedPageRank};
-use aether_cortex::recall::{
+use nytheris_aether_cortex::indexer::Indexer;
+use nytheris_aether_cortex::ppr::{graph_scores, PersonalizedPageRank};
+use nytheris_aether_cortex::recall::{
     graph_search, in_scopes, merge, rrf, scope_filter, session, unindexed, vector_search,
     Candidate, RRF_K,
 };
-use chrono::Utc;
 
 fn test_ns() -> ProjectId {
     ProjectId::new(format!("t-rec-{}", uuid::Uuid::new_v4())).unwrap()
@@ -280,5 +280,5 @@ fn scope_filter_and_in_scopes_enforce_user_isolation() {
 }
 
 fn index_metadata_like(item: &MemoryItem) -> serde_json::Value {
-    aether_cortex::indexer::index_metadata(item)
+    nytheris_aether_cortex::indexer::index_metadata(item)
 }

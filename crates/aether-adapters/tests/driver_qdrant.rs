@@ -3,17 +3,17 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use aether_adapters::contract;
-use aether_adapters::storage::qdrant::{QdrantConfig, QdrantVectorStore};
-use aether_core::{
-    AetherError, ConnectorHealth, DistanceMetric, FilterExpr, FilterValue, MemoryId,
-    OutboundConnector, ProjectId, SecretString, VectorRecord, VectorStore,
-};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
+use nytheris_aether_adapters::contract;
+use nytheris_aether_adapters::storage::qdrant::{QdrantConfig, QdrantVectorStore};
+use nytheris_aether_core::{
+    AetherError, ConnectorHealth, DistanceMetric, FilterExpr, FilterValue, MemoryId,
+    OutboundConnector, ProjectId, SecretString, VectorRecord, VectorStore,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
@@ -879,7 +879,7 @@ async fn qdrant_describe_resolves_across_fresh_clients() {
     let spec = store_b.describe(&ns).await.unwrap();
     assert_eq!(
         spec,
-        Some(aether_core::IndexSpec {
+        Some(nytheris_aether_core::IndexSpec {
             dimensions: 3,
             metric: DistanceMetric::Euclidean,
         })
@@ -919,7 +919,7 @@ async fn live_qdrant_contract_vector_store() {
     .unwrap();
     assert_eq!(
         fresh.describe(&ns).await.unwrap(),
-        Some(aether_core::IndexSpec {
+        Some(nytheris_aether_core::IndexSpec {
             dimensions: 3,
             metric: DistanceMetric::Euclidean,
         })

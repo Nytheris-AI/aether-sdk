@@ -2,13 +2,13 @@ mod common;
 
 use std::collections::{BTreeMap, HashMap};
 
-use aether_core::{
-    ConsistencyMode, DistanceMetric, FilterExpr, FilterValue, MemoryId, ProjectId, RecallMode,
-    RecallQuery, VectorStore,
-};
 use common::{
     build_resilient_manager, embed_text, fixture_path, transform_locomo_sample, LocomoSample,
     EMBED_DIM,
+};
+use nytheris_aether_core::{
+    ConsistencyMode, DistanceMetric, FilterExpr, FilterValue, MemoryId, ProjectId, RecallMode,
+    RecallQuery, VectorStore,
 };
 
 #[derive(Default)]

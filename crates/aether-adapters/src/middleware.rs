@@ -3,14 +3,14 @@
 use std::future::Future;
 use std::time::Duration;
 
-use aether_core::{
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use nytheris_aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome, DistanceMetric, Entity,
     EntityId, FilterExpr, GraphStore, IndexSpec, MemoryId, MemoryItem, OutboundConnector,
     PendingRecord, ProjectId, RecordStore, Relation, Result, SessionId, Subgraph, TemporalFilter,
     VectorMatch, VectorRecord, VectorStore,
 };
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use tracing::Instrument;
 
 /// Retry configuration for transient outbound failures.

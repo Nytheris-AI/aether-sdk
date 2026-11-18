@@ -2,12 +2,12 @@
 //!
 //! ```
 //! use std::sync::Arc;
-//! use aether_adapters::InMemoryBackend;
-//! use aether_core::{DistanceMetric, MemoryInput, ProjectId, RecallQuery, VectorStore, WriteDurability};
-//! use aether_sdk::MemoryManager;
+//! use nytheris_aether_adapters::InMemoryBackend;
+//! use nytheris_aether_core::{DistanceMetric, MemoryInput, ProjectId, RecallQuery, VectorStore, WriteDurability};
+//! use nytheris_aether_sdk::MemoryManager;
 //!
 //! # #[tokio::main]
-//! # async fn main() -> aether_core::Result<()> {
+//! # async fn main() -> nytheris_aether_core::Result<()> {
 //! let backend = Arc::new(InMemoryBackend::new());
 //! let project = ProjectId::new("doctest")?;
 //! backend.initialize(&project, 2, DistanceMetric::Cosine).await?;
@@ -32,22 +32,22 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use aether_adapters::{Batcher, Resilient, RetryPolicy, Timeout, Traced};
-use aether_core::{
+use chrono::Utc;
+use nytheris_aether_adapters::{Batcher, Resilient, RetryPolicy, Timeout, Traced};
+use nytheris_aether_core::{
     AetherError, ConsistencyMode, CreateOutcome, DistanceMetric, EntityId, FilterExpr, GraphStore,
     MemoryId, MemoryInput, MemoryItem, MemoryReceipt, MemoryScope, MemoryUpdate, PendingRecord,
     ProjectId, RecallHit, RecallMode, RecallQuery, RecallResult, ReceiptState, RecordStore, Result,
     Subgraph, VectorStore, WriteDurability,
 };
-use aether_cortex::recall::{self, Candidate, RRF_K};
-use aether_cortex::{index_metadata, Indexer, PersonalizedPageRank};
-use chrono::Utc;
+use nytheris_aether_cortex::recall::{self, Candidate, RRF_K};
+use nytheris_aether_cortex::{index_metadata, Indexer, PersonalizedPageRank};
 use tokio::task::JoinHandle;
 use tracing::Instrument;
 
-pub use aether_adapters as adapters;
-pub use aether_core as core;
-pub use aether_cortex as cortex;
+pub use nytheris_aether_adapters as adapters;
+pub use nytheris_aether_core as core;
+pub use nytheris_aether_cortex as cortex;
 
 #[cfg(feature = "otel")]
 pub mod telemetry;

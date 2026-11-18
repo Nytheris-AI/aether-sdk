@@ -4,18 +4,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_adapters::{FaultPoint, InMemoryBackend, RetryPolicy};
-use aether_core::{
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use common::{build_fault_injectable_manager, embed_text, EMBED_DIM};
+use nytheris_aether_adapters::{FaultPoint, InMemoryBackend, RetryPolicy};
+use nytheris_aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome, DistanceMetric, Entity,
     EntityId, FilterExpr, GraphStore, IndexSpec, MemoryId, MemoryInput, MemoryItem, MemoryUpdate,
     OutboundConnector, PendingRecord, ProjectId, RecallMode, RecallQuery, ReceiptState,
     RecordStore, Relation, Result, SessionId, Subgraph, TemporalFilter, VectorMatch, VectorRecord,
     VectorStore, WriteDurability,
 };
-use aether_sdk::MemoryManager;
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use common::{build_fault_injectable_manager, embed_text, EMBED_DIM};
+use nytheris_aether_sdk::MemoryManager;
 use serde_json::json;
 
 #[derive(Clone, Copy)]

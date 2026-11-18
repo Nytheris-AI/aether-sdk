@@ -1,6 +1,6 @@
 #![cfg(feature = "otel")]
 
-use aether_sdk::telemetry::{init_otel, LogFormat, OtelConfig};
+use nytheris_aether_sdk::telemetry::{init_otel, LogFormat, OtelConfig};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn init_otel_preset_is_one_liner_and_idempotent() {

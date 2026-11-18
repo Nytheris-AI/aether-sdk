@@ -4,19 +4,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_adapters::kv::redis::{RedisConfig, RedisRecordStore};
-use aether_adapters::kv::sqlite::{SqliteConfig, SqliteRecordStore};
-use aether_adapters::storage::chroma::{ChromaConfig, ChromaVectorStore};
-use aether_adapters::storage::neo4j::{Neo4jConfig, Neo4jGraphStore};
-use aether_adapters::storage::pgvector::{PgVectorConfig, PgVectorStore};
-use aether_adapters::storage::qdrant::{QdrantConfig, QdrantVectorStore};
-use aether_core::{
+use chrono::Utc;
+use nytheris_aether_adapters::kv::redis::{RedisConfig, RedisRecordStore};
+use nytheris_aether_adapters::kv::sqlite::{SqliteConfig, SqliteRecordStore};
+use nytheris_aether_adapters::storage::chroma::{ChromaConfig, ChromaVectorStore};
+use nytheris_aether_adapters::storage::neo4j::{Neo4jConfig, Neo4jGraphStore};
+use nytheris_aether_adapters::storage::pgvector::{PgVectorConfig, PgVectorStore};
+use nytheris_aether_adapters::storage::qdrant::{QdrantConfig, QdrantVectorStore};
+use nytheris_aether_core::{
     AetherError, ConsistencyMode, DistanceMetric, Entity, EntityId, MemoryInput, MemoryScope,
     MemoryUpdate, ProjectId, RecallMode, RecallQuery, ReceiptState, Relation, SecretString,
     SessionId, UserId, VectorStore, WriteDurability,
 };
-use aether_sdk::MemoryManager;
-use chrono::Utc;
+use nytheris_aether_sdk::MemoryManager;
 use uuid::Uuid;
 
 struct TempSqliteDb {

@@ -2,16 +2,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_adapters::contract;
-use aether_adapters::middleware::{jittered, Batcher, Resilient, RetryPolicy, Timeout, Traced};
-use aether_adapters::{FaultPoint, InMemoryBackend};
-use aether_core::{
+use async_trait::async_trait;
+use chrono::Utc;
+use nytheris_aether_adapters::contract;
+use nytheris_aether_adapters::middleware::{
+    jittered, Batcher, Resilient, RetryPolicy, Timeout, Traced,
+};
+use nytheris_aether_adapters::{FaultPoint, InMemoryBackend};
+use nytheris_aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
     FilterExpr, GraphStore, IndexSpec, MemoryId, OutboundConnector, ProjectId, Relation, Result,
     TemporalFilter, VectorMatch, VectorRecord, VectorStore,
 };
-use async_trait::async_trait;
-use chrono::Utc;
 use serde_json::json;
 
 #[tokio::test]

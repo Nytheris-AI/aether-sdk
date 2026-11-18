@@ -1,16 +1,16 @@
 //! Level 3: Compose hybrid vector + graph recall and Reciprocal Rank Fusion directly.
 
-use aether_adapters::InMemoryBackend;
-use aether_core::{
+use chrono::Utc;
+use nytheris_aether_adapters::InMemoryBackend;
+use nytheris_aether_core::{
     DistanceMetric, Entity, EntityId, GraphStore, MemoryInput, MemoryItem, ProjectId, RecordStore,
     Relation, TemporalFilter, VectorRecord, VectorStore,
 };
-use aether_cortex::recall::{self, RRF_K};
-use aether_cortex::{index_metadata, PersonalizedPageRank};
-use chrono::Utc;
+use nytheris_aether_cortex::recall::{self, RRF_K};
+use nytheris_aether_cortex::{index_metadata, PersonalizedPageRank};
 
 #[tokio::main]
-async fn main() -> aether_core::Result<()> {
+async fn main() -> nytheris_aether_core::Result<()> {
     let backend = InMemoryBackend::new();
     let ns = ProjectId::new("level3-demo")?;
     backend.initialize(&ns, 2, DistanceMetric::Cosine).await?;

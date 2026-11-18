@@ -3,12 +3,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_adapters::{Batcher, FaultPoint, InMemoryBackend, Resilient, RetryPolicy, Timeout};
-use aether_core::{DistanceMetric, MemoryId, ProjectId, VectorRecord, VectorStore};
+use nytheris_aether_adapters::{
+    Batcher, FaultPoint, InMemoryBackend, Resilient, RetryPolicy, Timeout,
+};
+use nytheris_aether_core::{DistanceMetric, MemoryId, ProjectId, VectorRecord, VectorStore};
 use serde_json::json;
 
 #[tokio::main]
-async fn main() -> aether_core::Result<()> {
+async fn main() -> nytheris_aether_core::Result<()> {
     let raw = Arc::new(InMemoryBackend::new());
     let ns = ProjectId::new("level2-demo")?;
     raw.initialize(&ns, 2, DistanceMetric::Cosine).await?;

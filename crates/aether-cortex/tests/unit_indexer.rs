@@ -1,13 +1,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_adapters::{FaultPoint, InMemoryBackend};
-use aether_core::{
+use chrono::Utc;
+use nytheris_aether_adapters::{FaultPoint, InMemoryBackend};
+use nytheris_aether_core::{
     DistanceMetric, Entity, EntityId, GraphStore, MemoryInput, MemoryItem, MemoryScope, MemoryTier,
     PendingRecord, ProjectId, RecordStore, Relation, SessionId, TemporalFilter, VectorStore,
 };
-use aether_cortex::indexer::{index_metadata, Indexer};
-use chrono::Utc;
+use nytheris_aether_cortex::indexer::{index_metadata, Indexer};
 use serde_json::json;
 
 fn test_ns() -> ProjectId {

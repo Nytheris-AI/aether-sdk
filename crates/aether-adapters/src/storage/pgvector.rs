@@ -4,12 +4,12 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::RwLock;
 
-use aether_core::{
+use async_trait::async_trait;
+use nytheris_aether_core::{
     redact_url_userinfo, AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric,
     FilterExpr, FilterValue, IndexSpec, MemoryId, OutboundConnector, ProjectId, Result,
     SecretString, VectorMatch, VectorRecord, VectorStore,
 };
-use async_trait::async_trait;
 use pgvector::Vector;
 use serde_json::Value;
 use sqlx::error::DatabaseError;

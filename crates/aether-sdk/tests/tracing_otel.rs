@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use aether_adapters::{InMemoryBackend, Traced};
-use aether_core::{
+use nytheris_aether_adapters::{InMemoryBackend, Traced};
+use nytheris_aether_core::{
     DistanceMetric, MemoryId, MemoryInput, MemoryUpdate, ProjectId, RecallMode, RecallQuery,
     VectorStore, WriteDurability,
 };
-use aether_sdk::MemoryManager;
+use nytheris_aether_sdk::MemoryManager;
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event, Metadata, Subscriber};

@@ -1,5 +1,5 @@
 [package]
-name = "aether-sdk"
+name = "nytheris-aether-sdk"
 description = "Model-free, pieces-first Rust memory SDK unifying record, vector, and graph stores"
 version.workspace = true
 edition.workspace = true
@@ -7,7 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-documentation = "https://docs.rs/aether-sdk"
+documentation = "https://docs.rs/nytheris-aether-sdk"
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -23,18 +23,18 @@ otel = [
     "dep:tracing-subscriber",
 ]
 live-docker = [
-    "aether-adapters/sqlite",
-    "aether-adapters/redis",
-    "aether-adapters/qdrant",
-    "aether-adapters/chroma",
-    "aether-adapters/pgvector",
-    "aether-adapters/neo4j",
+    "nytheris-aether-adapters/sqlite",
+    "nytheris-aether-adapters/redis",
+    "nytheris-aether-adapters/qdrant",
+    "nytheris-aether-adapters/chroma",
+    "nytheris-aether-adapters/pgvector",
+    "nytheris-aether-adapters/neo4j",
 ]
 
 [dependencies]
-aether-core = { path = "../aether-core", version = "0.1.0" }
-aether-cortex = { path = "../aether-cortex", version = "0.1.0" }
-aether-adapters = { path = "../aether-adapters", version = "0.1.0" }
+nytheris-aether-core = { path = "../aether-core", version = "0.1.0" }
+nytheris-aether-cortex = { path = "../aether-cortex", version = "0.1.0" }
+nytheris-aether-adapters = { path = "../aether-adapters", version = "0.1.0" }
 async-trait.workspace = true
 chrono.workspace = true
 serde_json.workspace = true

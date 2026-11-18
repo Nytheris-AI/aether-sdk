@@ -1,6 +1,6 @@
 //! Shared HTTP status and transport error mapping for REST-based connectors.
 
-use aether_core::{AetherError, Result};
+use nytheris_aether_core::{AetherError, Result};
 use reqwest::{Response, StatusCode};
 
 /// Maps an HTTP transport error into a retryable `AetherError::Transient`.

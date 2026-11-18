@@ -4,13 +4,13 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use aether_core::{
+use async_trait::async_trait;
+use chrono::Utc;
+use nytheris_aether_core::{
     redact_url_userinfo, AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome,
     MemoryId, MemoryItem, MemoryReceipt, MemoryScope, OutboundConnector, PendingRecord, ProjectId,
     ReceiptState, RecordStore, Result, SecretString, SessionId,
 };
-use async_trait::async_trait;
-use chrono::Utc;
 use redis::aio::ConnectionManager;
 use redis::{AsyncCommands, ErrorKind, RedisError, Script};
 use uuid::Uuid;
