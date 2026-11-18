@@ -5,6 +5,7 @@ members = [
     "crates/aether-cortex",
     "crates/aether-adapters",
     "crates/aether-sdk",
+    "crates/aether-vault",
 ]
 
 [workspace.package]

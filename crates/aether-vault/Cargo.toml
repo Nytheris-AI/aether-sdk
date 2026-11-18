@@ -1,0 +1,29 @@
+[package]
+name = "nytheris-aether-vault"
+description = "Obsidian-native vault daemon, SQLite FTS5+PPR hybrid recall, and stdio MCP server for Project Aether"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+nytheris-aether-core = { path = "../aether-core", version = "0.1.0" }
+nytheris-aether-cortex = { path = "../aether-cortex", version = "0.1.0" }
+chrono.workspace = true
+petgraph.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+hex = "0.4"
+rusqlite = { version = "0.41", features = ["bundled"] }
+sha2 = "0.11"
+walkdir = "2.5"
