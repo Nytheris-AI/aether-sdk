@@ -451,7 +451,7 @@ export const QUICKSTART_SNIPPETS: Record<QuickstartTab, QuickstartOption> = {
   cargo: {
     id: 'cargo',
     label: 'CARGO.TOML',
-    command: `[dependencies]\naether-sdk = { git = "https://github.com/Nytheris-AI/aether-sdk.git" }`,
+    command: `[dependencies]\nnytheris-aether-sdk = { git = "https://github.com/Nytheris-AI/aether-sdk.git" }`,
   },
 };
 
