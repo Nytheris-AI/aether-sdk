@@ -69,8 +69,6 @@ pub struct GitSyncReport {
     pub pushed: bool,
 }
 
-/// Monotonic join-semilattice rank for Aether candidate resolution:
-/// `Pending (0) < Rejected (1) < Approved (2)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum CandidateLatticeStatus {
     Pending = 0,
@@ -85,7 +83,6 @@ pub(crate) struct LatticeCandidate {
     pub(crate) compiled_amu_id: Option<AmuId>,
 }
 
-/// Detects unresolved Git conflict markers (`<<<<<<<` / `=======` / `>>>>>>>`) outside fenced code blocks.
 pub(crate) fn has_unresolved_conflict_markers(markdown: &str) -> bool {
     let mut fence: Option<(u8, usize)> = None;
     let mut saw_open = false;
@@ -103,6 +100,9 @@ pub(crate) fn has_unresolved_conflict_markers(markdown: &str) -> bool {
             fence = Some(open);
             continue;
         }
+        if !crate::inbox::is_conflict_marker_line(raw_line) {
+            continue;
+        }
         if raw_line.starts_with("<<<<<<<") {
             saw_open = true;
             saw_mid = false;
@@ -116,8 +116,6 @@ pub(crate) fn has_unresolved_conflict_markers(markdown: &str) -> bool {
     false
 }
 
-/// Pure CRDT join-semilattice merger over `Inbox.md` and `Approved.md` snapshots plus SQLite state.
-/// Ordering: `Approved > Rejected > Pending` keyed by `CandidateId`.
 pub(crate) fn merge_aether_lattice(
     db_pending: &[InboxEntry],
     db_approved: &[ApprovedMirrorEntry],

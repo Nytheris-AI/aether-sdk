@@ -1,4 +1,4 @@
-//! Obsidian-native memory compiler, hybrid recall engine, and stdio MCP server for Project Aether.
+//! Obsidian-native memory compiler, hybrid recall engine, scoped team Git/HTTP gateway, KV-cache warmer, and MCP server for Project Aether.
 
 mod auth;
 mod dream;

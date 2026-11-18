@@ -111,7 +111,6 @@ impl fmt::Display for KeyId {
 pub struct ApiKeySecret(String);
 
 impl ApiKeySecret {
-    /// Generates 256 bits of OS entropy via two `Uuid::new_v4()` calls.
     pub fn generate() -> Self {
         let a = Uuid::new_v4();
         let b = Uuid::new_v4();
@@ -141,7 +140,6 @@ impl ApiKeySecret {
         &self.0
     }
 
-    /// Domain-separated SHA-256 digest persisted in SQLite `agent_api_keys.key_hash`.
     pub(crate) fn digest(&self) -> ContentHash {
         let mut hasher = Sha256::new();
         hasher.update(b"aether:api_key:v1:");
@@ -346,12 +344,12 @@ impl ScopedApiKey {
     }
 }
 
-/// Input to `VaultEngine::issue_api_key`. Enforces non-empty `scopes` at construction.
+/// Input to `VaultEngine::issue_api_key`. Guarantees a non-empty, deduplicated scope list.
 #[derive(Debug, Clone)]
 pub struct IssueApiKeyRequest {
     pub agent_id: AgentId,
     pub role: AgentRole,
-    pub scopes: Vec<ScopeTag>,
+    scopes: Vec<ScopeTag>,
     pub expires_at: Option<DateTime<Utc>>,
 }
 
@@ -375,6 +373,10 @@ impl IssueApiKeyRequest {
         })
     }
 
+    pub fn scopes(&self) -> &[ScopeTag] {
+        &self.scopes
+    }
+
     pub fn with_expires_at(mut self, expires_at: DateTime<Utc>) -> Self {
         self.expires_at = Some(expires_at);
         self
@@ -388,14 +390,12 @@ pub struct IssuedApiKey {
     pub secret: ApiKeySecret,
 }
 
-/// Crate-internal scope policy passed into unified `VaultEngine` query/inspect pipelines.
 #[derive(Debug, Clone)]
 pub(crate) enum ScopePolicy {
     Unrestricted,
     Allowed(Vec<ScopeTag>),
 }
 
-/// Constant-time slice comparison for SHA-256 hex digests.
 pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;

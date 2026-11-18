@@ -52,7 +52,6 @@ impl McpServer {
         }
     }
 
-    /// Binds an MCP server session directly to a pre-authenticated `ScopedApiKey`.
     pub fn scoped(engine: Arc<VaultEngine>, agent: ScopedApiKey) -> Self {
         Self {
             engine,
@@ -60,7 +59,6 @@ impl McpServer {
         }
     }
 
-    /// Authenticates `secret` against the vault engine and returns a scoped MCP session.
     pub async fn with_api_key(engine: Arc<VaultEngine>, secret: &ApiKeySecret) -> Result<Self> {
         let agent = engine
             .authenticate_api_key(secret)

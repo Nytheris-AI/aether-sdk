@@ -130,8 +130,8 @@ export function renderInboxPane(
 }
 
 /**
- * Obsidian companion plugin entrypoint providing status bar indicator,
- * 1-click Inbox review pane, and "Trigger Dream Pass" command.
+ * Companion plugin wiring the Obsidian status bar, 1-click Inbox review pane,
+ * Dream pass, Git sync, and KV-cache warming commands.
  */
 export class AetherCompanionPlugin {
   readonly client: AetherControlClient;

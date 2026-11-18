@@ -57,6 +57,10 @@ pub(crate) fn atomic_write_file(path: &Path, bytes: &[u8]) -> Result<ContentHash
     Ok(ContentHash::compute(bytes))
 }
 
+pub(crate) fn is_conflict_marker_line(line: &str) -> bool {
+    line.starts_with("<<<<<<<") || line.starts_with("=======") || line.starts_with(">>>>>>>")
+}
+
 /// Parses PRD Section 7.3 entries from `Aether/Inbox.md`.
 pub(crate) fn parse_inbox(markdown: &str) -> Vec<InboxEntry> {
     let mut entries = Vec::new();
@@ -64,10 +68,7 @@ pub(crate) fn parse_inbox(markdown: &str) -> Vec<InboxEntry> {
 
     for raw_line in markdown.lines() {
         let trimmed = raw_line.trim();
-        if trimmed.starts_with("<<<<<<<")
-            || trimmed.starts_with("=======")
-            || trimmed.starts_with(">>>>>>>")
-        {
+        if is_conflict_marker_line(trimmed) {
             continue;
         }
         if let Some(entry) = parse_task_header(trimmed) {
@@ -275,8 +276,6 @@ pub(crate) fn render_approved_mirror(entries: &[ApprovedMirrorEntry]) -> String 
     out
 }
 
-/// Parses `Aether/Compiled/Approved.md` sections (`## cand_<id>`) into `ApprovedMirrorEntry` items.
-/// Tolerates Git conflict marker lines (`<<<<<<<`, `=======`, `>>>>>>>`) when recovering snapshots.
 pub(crate) fn parse_approved_mirror(markdown: &str) -> Vec<ApprovedMirrorEntry> {
     struct Builder {
         candidate_id: CandidateId,
@@ -321,10 +320,7 @@ pub(crate) fn parse_approved_mirror(markdown: &str) -> Vec<ApprovedMirrorEntry> 
 
     for raw_line in markdown.lines() {
         let trimmed = raw_line.trim();
-        if trimmed.starts_with("<<<<<<<")
-            || trimmed.starts_with("=======")
-            || trimmed.starts_with(">>>>>>>")
-        {
+        if is_conflict_marker_line(trimmed) {
             continue;
         }
         if let Some(heading) = trimmed.strip_prefix("## ") {

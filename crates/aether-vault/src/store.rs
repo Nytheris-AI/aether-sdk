@@ -755,7 +755,7 @@ impl VaultStore {
         .await
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) async fn shadow_table_row_count(&self) -> Result<usize> {
         self.with_conn(|conn| {
             let count: i64 = conn

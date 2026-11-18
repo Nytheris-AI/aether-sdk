@@ -17,7 +17,6 @@ use crate::types::{estimate_tokens, Amu, AmuId, AmuStatus, ContentHash, ScopeTag
 
 pub const DEFAULT_KV_BLOCK_TOKENS: usize = 16;
 
-/// Object-safe boxed future alias using only `std` (zero new `Cargo.lock` crates).
 pub type KvFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Validated non-empty model identifier (e.g. `Qwen/Qwen2.5-32B-Instruct`).
@@ -272,7 +271,6 @@ pub struct KvAdapterWarmOutcome {
     pub fallback_used: bool,
 }
 
-/// Pluggable KV-cache backend implemented by [`InMemoryKvCacheAdapter`] and [`VllmLmCacheHttpAdapter`].
 pub trait KvCacheAdapter: Send + Sync {
     fn id(&self) -> &str;
     fn hydrate<'a>(&'a self, _blocks: Vec<KvCacheBlock>) -> KvFuture<'a, Result<()>> {
@@ -291,7 +289,7 @@ pub trait KvCacheAdapter: Send + Sync {
     fn stats<'a>(&'a self) -> KvFuture<'a, Result<KvTierUsage>>;
 }
 
-/// Tiered in-memory KV cache enforcing HBM -> DRAM -> SSD demotion and TTFT modeling.
+/// Bounded in-memory KV cache enforcing HBM -> DRAM -> SSD LRU demotion.
 pub struct InMemoryKvCacheAdapter {
     capacity: KvTierCapacity,
     state: Mutex<HashMap<(ModelId, KvBlockHash), KvCacheBlock>>,
@@ -596,8 +594,7 @@ impl VllmLmCacheConfig {
     }
 }
 
-/// HTTP/1.1 JSON client over `tokio::net::TcpStream` talking to vLLM/SGLang + LMCache,
-/// falling back cleanly to [`InMemoryKvCacheAdapter`] when `offline_fallback` is true.
+/// HTTP/1.1 JSON client for vLLM/SGLang and LMCache with optional [`InMemoryKvCacheAdapter`] offline fallback.
 pub struct VllmLmCacheHttpAdapter {
     config: VllmLmCacheConfig,
     fallback: InMemoryKvCacheAdapter,

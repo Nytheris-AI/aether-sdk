@@ -1007,27 +1007,7 @@ mod tests {
         path: &str,
         body: Option<&str>,
     ) -> (u16, Value) {
-        let mut stream = TcpStream::connect(addr).await.unwrap();
-        let body_str = body.unwrap_or("");
-        let req = format!(
-            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body_str}",
-            body_str.len()
-        );
-        stream.write_all(req.as_bytes()).await.unwrap();
-        stream.flush().await.unwrap();
-        let mut raw = Vec::new();
-        stream.read_to_end(&mut raw).await.unwrap();
-        let text = String::from_utf8(raw).unwrap();
-        let (head, json_body) = text.split_once("\r\n\r\n").unwrap();
-        let status_line = head.lines().next().unwrap();
-        let code: u16 = status_line
-            .split_whitespace()
-            .nth(1)
-            .unwrap()
-            .parse()
-            .unwrap();
-        let parsed: Value = serde_json::from_str(json_body).unwrap();
-        (code, parsed)
+        http_call_with_auth(addr, method, path, None, body).await
     }
 
     async fn http_call_with_auth(

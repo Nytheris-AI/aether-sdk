@@ -37,8 +37,8 @@ use crate::types::{
     VaultStatusReport, VaultTier, VAULT_SCHEMA_VERSION,
 };
 
-/// Single-owner orchestrator for Obsidian vault compilation, hybrid recall,
-/// atomic Inbox staging, and live source provenance checks.
+/// Orchestrator for Obsidian vault compilation, hybrid recall, Inbox reconciliation,
+/// Git team sync, scoped agent access control, and KV-cache warming.
 pub struct VaultEngine {
     vault_root: PathBuf,
     config: VaultConfig,
@@ -881,9 +881,9 @@ impl VaultEngine {
         let key_hash = secret.digest();
         let key = ScopedApiKey::new(
             KeyId::generate(),
-            req.agent_id,
+            req.agent_id.clone(),
             req.role,
-            req.scopes,
+            req.scopes().to_vec(),
             Utc::now(),
             req.expires_at,
             None,
@@ -913,12 +913,10 @@ impl VaultEngine {
             .await
     }
 
-    /// Lists all issued API keys without exposing secret hashes.
     pub async fn list_api_keys(&self) -> Result<Vec<ScopedApiKey>> {
         self.store.list_api_keys().await
     }
 
-    /// Revokes an existing API key by `KeyId`.
     pub async fn revoke_api_key(&self, key_id: &KeyId) -> Result<bool> {
         self.store.revoke_api_key(key_id, Utc::now()).await
     }
@@ -961,7 +959,6 @@ impl VaultEngine {
         self.inspect_source_inner(Some(agent), raw_pointer).await
     }
 
-    /// Lists pending Inbox candidates readable by `agent`.
     pub async fn pending_inbox_as(&self, agent: &ScopedApiKey) -> Result<Vec<InboxEntry>> {
         agent.require_role(AgentRole::Reader)?;
         let pending = self.pending_inbox().await?;
@@ -1203,7 +1200,6 @@ impl VaultEngine {
         })
     }
 
-    /// Returns live KV-cache tier usage and persisted block statistics.
     pub async fn kv_stats(&self, model_id: Option<&ModelId>) -> Result<KvCacheStats> {
         let blocks = self.store.query_kv_blocks(model_id).await?;
         let mut total_tokens = 0usize;
@@ -2167,8 +2163,6 @@ mod tests {
         let authed = engine.authenticate_api_key(&parsed_secret).await.unwrap();
         assert_eq!(authed.key_id, issued_eng_ops.key.key_id);
 
-        // Multi-scope recall without explicit `req.scope` fetches both `engineering` and `ops`,
-        // excluding `hr` before top-K truncation.
         let multi_res = engine
             .recall_as(&authed, RecallRequest::new("SQLite Sentinel Executive"))
             .await
@@ -2179,12 +2173,10 @@ mod tests {
             .formatted_context
             .contains("Executive compensation"));
 
-        // Requesting unauthorized `hr` scope fails.
         let mut bad_req = RecallRequest::new("Executive");
         bad_req.scope = Some(ScopeTag::new("hr").unwrap());
         assert!(engine.recall_as(&authed, bad_req).await.is_err());
 
-        // Scoped stage auto-stamps `proposed_by` and prevents staging into `hr`.
         assert!(engine
             .stage_memory_as(
                 &authed,
@@ -2208,7 +2200,6 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].proposed_by, "ci-platform");
 
-        // Approve a secret HR candidate directly and ensure `ci-platform` cannot inspect it in Approved.md.
         let hr_cand = engine
             .stage_memory(
                 StageMemoryRequest::new("HR bonus target is 15 percent.", VaultTier::Warm)
@@ -2240,7 +2231,6 @@ mod tests {
             .await
             .is_err());
 
-        // Reader role cannot stage memory.
         let reader = engine
             .issue_api_key(
                 IssueApiKeyRequest::new(
@@ -2262,7 +2252,6 @@ mod tests {
             .await
             .is_err());
 
-        // Revocation takes effect immediately on next authentication.
         assert!(engine
             .revoke_api_key(&issued_eng_ops.key.key_id)
             .await
@@ -2272,7 +2261,6 @@ mod tests {
             Err(AuthError::RevokedToken(_))
         ));
 
-        // Bootstrap admin key creation is idempotent across calls.
         let admin_secret = ApiKeySecret::generate();
         let admin_a = engine
             .ensure_bootstrap_admin_key(AgentId::new("bootstrap-admin").unwrap(), &admin_secret)
@@ -2345,7 +2333,6 @@ mod tests {
             .unwrap();
         let bob_engine = VaultEngine::open(VaultConfig::new(&bob_dir)).await.unwrap();
 
-        // Both stage one shared candidate; Alice approves it and modifies Arch.md.
         let shared_req = StageMemoryRequest::new("Shared WAL rule.", VaultTier::Warm)
             .with_scope("engineering")
             .unwrap();
@@ -2374,7 +2361,6 @@ mod tests {
         run_git_ok(&alice_dir, &["commit", "-m", "alice updates"]);
         run_git_ok(&alice_dir, &["push", "origin", "main"]);
 
-        // Bob stages another candidate and edits Arch.md differently, creating conflicts on both.
         let bob_only_cid = bob_engine
             .stage_memory(
                 StageMemoryRequest::new("Bob pending rule.", VaultTier::Warm)
@@ -2404,11 +2390,9 @@ mod tests {
         );
         assert!(!report.pushed);
 
-        // .gitignore must exclude .aether/ and never stage sqlite files.
         let gitignore = fs::read_to_string(bob_dir.join(".gitignore")).unwrap();
         assert!(gitignore.contains(".aether/"));
 
-        // Approved shared_cid must win the monotonic lattice and both pending items remain.
         let approved_md = fs::read_to_string(bob_dir.join("Aether/Compiled/Approved.md")).unwrap();
         assert!(approved_md.contains(shared_cid.as_str()));
         let inbox_md = fs::read_to_string(bob_dir.join("Aether/Inbox.md")).unwrap();
@@ -2416,7 +2400,6 @@ mod tests {
         assert!(inbox_md.contains(alice_only_cid.as_str()));
         assert!(inbox_md.contains(bob_only_cid.as_str()));
 
-        // SQLite retains Bob's last valid AMU for conflicted Arch.md (does not drop or index `<<<<<<<`).
         let recalled = bob_engine
             .recall(RecallRequest::new(
                 "Original clean architecture rule Shared WAL",
@@ -2486,7 +2469,6 @@ mod tests {
             1
         );
 
-        // Superseding the AMU must evict its KV block from both SQLite and the live adapter.
         let cand_id = engine
             .stage_memory(
                 StageMemoryRequest::new(
@@ -2511,7 +2493,6 @@ mod tests {
         assert!(stats_before_restart.persisted_blocks >= 1);
         engine.shutdown().await.unwrap();
 
-        // Reopening with a fresh adapter hydrates persisted KV blocks from SQLite.
         let fresh_adapter: Arc<dyn KvCacheAdapter> = Arc::new(InMemoryKvCacheAdapter::default());
         let reopened = VaultEngine::open(
             VaultConfig::new(&vault.root)
