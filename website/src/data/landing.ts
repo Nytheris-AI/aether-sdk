@@ -239,7 +239,7 @@ export const STORAGE_INTEGRATIONS: readonly StorageIntegration[] = [
     name: 'turbopuffer',
     kind: 'Object Vector + BM25',
     category: 'vector',
-    logoSrc: 'https://www.gstatic.com/bricks/image/eefae7dd-9fe6-4789-b499-d0a8b3111aa8.png',
+    logoSrc: 'https://turbopuffer.com/logo2.png',
     fallbackSrcs: [
       'https://cdn.jsdelivr.net/npm/@thesvg/static/icons/turbopuffer/default.svg',
       'https://cdn.jsdelivr.net/gh/cmu-db/dbdb.io@master/dbdb/media/logos/turbopuffer.svg',
