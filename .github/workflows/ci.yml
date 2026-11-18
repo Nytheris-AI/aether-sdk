@@ -29,6 +29,21 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --all-features
 
+      - name: Check documentation
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --workspace --all-features --no-deps
+
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run cargo-deny checks
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          arguments: --all-features check
+
   website:
     runs-on: ubuntu-latest
     steps:
