@@ -106,6 +106,13 @@ CREATE TABLE IF NOT EXISTS amus_shadow_embeddings (
     amu_id     TEXT PRIMARY KEY,
     embedding  BLOB NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS dream_watermarks (
+    rel_path          TEXT PRIMARY KEY,
+    last_sha256       TEXT NOT NULL,
+    processed_at_us   INTEGER NOT NULL,
+    candidates_staged INTEGER NOT NULL DEFAULT 0
+);
 ";
 
 #[derive(Clone)]
@@ -917,6 +924,61 @@ impl VaultStore {
                 seed_entities,
                 amus_by_memory_id,
             })
+        })
+        .await
+    }
+
+    pub(crate) async fn dream_watermarks(&self) -> Result<HashMap<String, ContentHash>> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare("SELECT rel_path, last_sha256 FROM dream_watermarks")
+                .map_err(map_sqlite_err)?;
+            let rows = stmt
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                .map_err(map_sqlite_err)?;
+            let mut out = HashMap::new();
+            for row in rows {
+                let (rel, sha) = row.map_err(map_sqlite_err)?;
+                if let Ok(hash) = ContentHash::parse(&sha) {
+                    out.insert(rel, hash);
+                }
+            }
+            Ok(out)
+        })
+        .await
+    }
+
+    pub(crate) async fn record_dream_watermark(
+        &self,
+        rel_path: &str,
+        hash: &ContentHash,
+        candidates_staged: usize,
+    ) -> Result<()> {
+        let rel = rel_path.to_string();
+        let sha = hash.as_str().to_string();
+        let now = now_epoch_us();
+        let staged_i64 = i64::try_from(candidates_staged).unwrap_or(i64::MAX);
+        self.with_conn(move |conn| {
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(map_sqlite_err)?;
+            tx.execute(
+                "INSERT OR REPLACE INTO dream_watermarks (
+                     rel_path, last_sha256, processed_at_us, candidates_staged
+                 ) VALUES (?1, ?2, ?3, ?4)",
+                params![rel, sha, now, staged_i64],
+            )
+            .map_err(map_sqlite_err)?;
+            tx.commit().map_err(map_sqlite_err)?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub(crate) async fn list_active_amus(&self) -> Result<Vec<Amu>> {
+        self.with_conn(|conn| {
+            let active = load_active_amus(conn).map_err(map_sqlite_err)?;
+            Ok(active.into_iter().map(|(amu, _)| amu).collect())
         })
         .await
     }

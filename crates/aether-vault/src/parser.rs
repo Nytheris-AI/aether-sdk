@@ -193,6 +193,38 @@ pub(crate) fn slugify_heading(heading: &str) -> String {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct NoteFrontmatterHint {
+    pub(crate) is_private: bool,
+    pub(crate) is_fleeting: bool,
+    pub(crate) scope: ScopeTag,
+}
+
+/// Inspects frontmatter without indexing and returns visibility, fleeting flag, primary scope, and body.
+pub(crate) fn inspect_note_frontmatter<'a>(
+    rel_path: &str,
+    raw_markdown: &'a str,
+) -> (NoteFrontmatterHint, &'a str) {
+    let (fm_text, body) = split_frontmatter(raw_markdown);
+    let fm = match fm_text {
+        Some(raw) => parse_frontmatter(raw, rel_path, Utc::now()),
+        None => Frontmatter::default_for_path(rel_path, Utc::now()),
+    };
+    let scope = fm
+        .scopes
+        .into_iter()
+        .next()
+        .unwrap_or_else(ScopeTag::global);
+    (
+        NoteFrontmatterHint {
+            is_private: fm.tier == RawFrontmatterTier::Private,
+            is_fleeting: fm.kind == AmuKind::Fleeting,
+            scope,
+        },
+        body,
+    )
+}
+
 /// Inspects frontmatter alone and returns `true` when `aether_tier: private` is declared.
 pub(crate) fn is_private_note(raw_markdown: &str) -> bool {
     let (fm_text, _) = split_frontmatter(raw_markdown);
@@ -628,7 +660,7 @@ fn split_body_sections(body: &str) -> Vec<RawSection> {
     sections
 }
 
-fn detect_opening_fence(trimmed: &str) -> Option<(u8, usize)> {
+pub(crate) fn detect_opening_fence(trimmed: &str) -> Option<(u8, usize)> {
     let first = *trimmed.as_bytes().first()?;
     if first != b'`' && first != b'~' {
         return None;
@@ -641,12 +673,12 @@ fn detect_opening_fence(trimmed: &str) -> Option<(u8, usize)> {
     }
 }
 
-fn is_closing_fence(trimmed: &str, fchar: u8, min_len: usize) -> bool {
+pub(crate) fn is_closing_fence(trimmed: &str, fchar: u8, min_len: usize) -> bool {
     let count = trimmed.bytes().take_while(|&b| b == fchar).count();
     count >= min_len && trimmed[count..].trim().is_empty()
 }
 
-fn parse_atx_heading(trimmed: &str) -> Option<(u8, &str)> {
+pub(crate) fn parse_atx_heading(trimmed: &str) -> Option<(u8, &str)> {
     let hashes = trimmed.bytes().take_while(|&b| b == b'#').count();
     if !(1..=6).contains(&hashes) {
         return None;

@@ -811,6 +811,15 @@ pub struct InboxReconcileReport {
     pub remaining_pending: usize,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DreamReport {
+    pub daily_notes_scanned: usize,
+    pub daily_notes_skipped_unchanged: usize,
+    pub candidates_staged: usize,
+    pub contradictions_flagged: usize,
+    pub staged_candidate_ids: Vec<CandidateId>,
+}
+
 /// Deterministic token estimator used by prefix budgeting (`ceil(len / 4)`, `0` when empty).
 pub fn estimate_tokens(text: &str) -> usize {
     if text.is_empty() {

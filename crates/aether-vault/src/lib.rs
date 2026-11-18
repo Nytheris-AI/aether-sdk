@@ -1,5 +1,6 @@
 //! Obsidian-native memory compiler, hybrid recall engine, and stdio MCP server for Project Aether.
 
+mod dream;
 mod embedder;
 mod engine;
 mod inbox;
@@ -19,8 +20,8 @@ pub use mcp::McpServer;
 pub use reranker::{CrossEncoderReranker, NoopReranker, Reranker, DEFAULT_RERANK_TOP_K};
 pub use types::{
     estimate_tokens, Amu, AmuId, AmuKind, AmuStatus, ApprovedMirrorEntry, CandidateId, ContentHash,
-    DbTarget, InboxCheckbox, InboxEntry, InboxReconcileReport, RecallEntry, RecallRequest,
-    RecallResponse, ScopeTag, SourcePointer, StageMemoryRequest, SyncReport, TokenBudget,
-    VaultConfig, VaultMeta, VaultPath, VaultTier, DEFAULT_SYNC_REINDEX_THRESHOLD,
+    DbTarget, DreamReport, InboxCheckbox, InboxEntry, InboxReconcileReport, RecallEntry,
+    RecallRequest, RecallResponse, ScopeTag, SourcePointer, StageMemoryRequest, SyncReport,
+    TokenBudget, VaultConfig, VaultMeta, VaultPath, VaultTier, DEFAULT_SYNC_REINDEX_THRESHOLD,
     HOT_PROFILE_MAX_TOKENS, VAULT_SCHEMA_VERSION,
 };

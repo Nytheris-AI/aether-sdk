@@ -13,6 +13,7 @@ use tokio::sync::{watch, Mutex as AsyncMutex};
 use tokio::task::JoinHandle;
 use walkdir::WalkDir;
 
+use crate::dream;
 use crate::embedder::{embed_amu_text, Embedder, HashedNgramEmbedder};
 use crate::inbox::{self, APPROVED_MIRROR_REL_PATH, INBOX_REL_PATH};
 use crate::parser::{self, IgnoreRules, ParsedNote, ParsedSection};
@@ -20,8 +21,8 @@ use crate::prefix;
 use crate::reranker::{CrossEncoderReranker, Reranker};
 use crate::store::{to_memory_item, VaultStore};
 use crate::types::{
-    Amu, AmuId, AmuKind, AmuStatus, CandidateId, ContentHash, InboxCheckbox, InboxEntry,
-    InboxReconcileReport, RecallEntry, RecallRequest, RecallResponse, SourcePointer,
+    Amu, AmuId, AmuKind, AmuStatus, CandidateId, ContentHash, DreamReport, InboxCheckbox,
+    InboxEntry, InboxReconcileReport, RecallEntry, RecallRequest, RecallResponse, SourcePointer,
     StageMemoryRequest, SyncReport, VaultConfig, VaultMeta, VaultPath, VAULT_SCHEMA_VERSION,
 };
 
@@ -473,6 +474,75 @@ impl VaultEngine {
         ))
     }
 
+    /// Scans Daily/Journal/fleeting notes not yet recorded in `dream_watermarks`,
+    /// extracts durable facts and temporal contradictions, and stages them in `Aether/Inbox.md`.
+    pub async fn run_dream_pass(&self) -> Result<DreamReport> {
+        let _guard = self.write_gate.lock().await;
+        let _ =
+            reconcile_inbox_inner(&self.vault_root, &self.store, self.embedder.as_ref()).await?;
+
+        let rules = IgnoreRules::load(&self.vault_root);
+        let scanned_files = scan_vault_markdown_files(&self.vault_root, rules).await?;
+        let watermarks = self.store.dream_watermarks().await?;
+        let active_amus = self.store.list_active_amus().await?;
+
+        let mut report = DreamReport::default();
+        let today = Utc::now().format("%Y-%m-%d").to_string();
+
+        for (rel_posix, bytes) in scanned_files {
+            let Ok(raw_md) = String::from_utf8(bytes.clone()) else {
+                continue;
+            };
+            if !dream::is_daily_or_fleeting_note(&rel_posix, &raw_md) {
+                continue;
+            }
+            let hash = ContentHash::compute(&bytes);
+            if watermarks.get(&rel_posix) == Some(&hash) {
+                report.daily_notes_skipped_unchanged += 1;
+                continue;
+            }
+
+            report.daily_notes_scanned += 1;
+            let candidates = dream::extract_dream_candidates(&rel_posix, &raw_md, &active_amus);
+            let mut staged_for_note = 0usize;
+            for cand in candidates {
+                let candidate_id = CandidateId::from_proposal(
+                    &cand.proposed_fact,
+                    cand.target_note.as_deref(),
+                    cand.suggested_tier,
+                );
+                if cand.supersedes_amu_id.is_some() {
+                    report.contradictions_flagged += 1;
+                }
+                let entry = InboxEntry {
+                    checkbox: InboxCheckbox::Pending,
+                    tier: cand.suggested_tier,
+                    scope: cand.scope,
+                    proposed_fact: cand.proposed_fact,
+                    candidate_id: candidate_id.clone(),
+                    target_link: cand.target_note,
+                    proposed_by: "dream-worker".into(),
+                    proposed_date: today.clone(),
+                    supersedes_amu_id: cand.supersedes_amu_id,
+                };
+                self.store.stage_candidate(&entry).await?;
+                report.candidates_staged += 1;
+                staged_for_note += 1;
+                report.staged_candidate_ids.push(candidate_id);
+            }
+            self.store
+                .record_dream_watermark(&rel_posix, &hash, staged_for_note)
+                .await?;
+        }
+
+        if report.candidates_staged > 0 {
+            let pending = self.store.list_pending_candidates().await?;
+            write_inbox_atomically(&self.vault_root, &self.store, &pending).await?;
+        }
+
+        Ok(report)
+    }
+
     /// Returns the exact verbatim Markdown section for `raw_pointer`, enforcing traversal and privacy guards.
     pub async fn inspect_source(&self, raw_pointer: &str) -> Result<String> {
         let pointer = SourcePointer::parse(raw_pointer)?;
@@ -540,42 +610,7 @@ async fn sync_vault_inner(
 
     let rules = IgnoreRules::load(vault_root);
     let manifest = store.file_manifest().await?;
-    let vault_root_owned = vault_root.to_path_buf();
-
-    let scanned_files = tokio::task::spawn_blocking(move || -> Vec<(String, Vec<u8>)> {
-        let mut files = Vec::new();
-        for entry in WalkDir::new(&vault_root_owned)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let Ok(canon) = std::fs::canonicalize(entry.path()) else {
-                continue;
-            };
-            if !canon.starts_with(&vault_root_owned) {
-                continue;
-            }
-            let Ok(rel) = entry.path().strip_prefix(&vault_root_owned) else {
-                continue;
-            };
-            let rel_posix = rel.to_string_lossy().replace('\\', "/");
-            if rules.is_ignored(&rel_posix) || !rel_posix.to_ascii_lowercase().ends_with(".md") {
-                continue;
-            }
-            if let Ok(bytes) = std::fs::read(&canon) {
-                files.push((rel_posix, bytes));
-            }
-        }
-        files
-    })
-    .await
-    .map_err(|err| AetherError::Permanent {
-        connector: "vault-fs",
-        message: format!("vault scan task error: {err}"),
-    })?;
+    let scanned_files = scan_vault_markdown_files(vault_root, rules).await?;
 
     let mut seen_paths = HashSet::new();
     let mut pending_updates: Vec<(VaultPath, ContentHash, String)> = Vec::new();
@@ -659,6 +694,47 @@ async fn sync_vault_inner(
     }
 
     Ok(report)
+}
+
+async fn scan_vault_markdown_files(
+    vault_root: &Path,
+    rules: IgnoreRules,
+) -> Result<Vec<(String, Vec<u8>)>> {
+    let vault_root_owned = vault_root.to_path_buf();
+    tokio::task::spawn_blocking(move || -> Vec<(String, Vec<u8>)> {
+        let mut files = Vec::new();
+        for entry in WalkDir::new(&vault_root_owned)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let Ok(canon) = std::fs::canonicalize(entry.path()) else {
+                continue;
+            };
+            if !canon.starts_with(&vault_root_owned) {
+                continue;
+            }
+            let Ok(rel) = entry.path().strip_prefix(&vault_root_owned) else {
+                continue;
+            };
+            let rel_posix = rel.to_string_lossy().replace('\\', "/");
+            if rules.is_ignored(&rel_posix) || !rel_posix.to_ascii_lowercase().ends_with(".md") {
+                continue;
+            }
+            if let Ok(bytes) = std::fs::read(&canon) {
+                files.push((rel_posix, bytes));
+            }
+        }
+        files
+    })
+    .await
+    .map_err(|err| AetherError::Permanent {
+        connector: "vault-fs",
+        message: format!("vault scan task error: {err}"),
+    })
 }
 
 fn resolve_wikilink_targets(sections: &mut [ParsedSection], stem_map: &HashMap<String, String>) {
@@ -1176,5 +1252,55 @@ mod tests {
         );
 
         engine384.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dream_pass_extracts_contradictions_tracks_watermarks_and_supersedes_on_approval() {
+        let vault = TempVault::new();
+        vault.write(
+            "Arch/Vector.md",
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Engine\nUse Qdrant for local vector search.\n",
+        );
+        vault.write(
+            "Daily/2026-05-10.md",
+            "---\naether_scope: engineering\n---\n# Log\n## Decisions\n- Decision: Switched local vector search from Qdrant to LanceDB in [[Arch/Vector]].\n",
+        );
+
+        let engine = VaultEngine::open(VaultConfig::in_memory(&vault.root))
+            .await
+            .unwrap();
+
+        let pass1 = engine.run_dream_pass().await.unwrap();
+        assert_eq!(pass1.daily_notes_scanned, 1);
+        assert_eq!(pass1.daily_notes_skipped_unchanged, 0);
+        assert_eq!(pass1.candidates_staged, 1);
+        assert_eq!(pass1.contradictions_flagged, 1);
+
+        let inbox_path = vault.root.join("Aether/Inbox.md");
+        let inbox_text = fs::read_to_string(&inbox_path).unwrap();
+        assert!(inbox_text.contains("LanceDB"));
+        assert!(inbox_text.contains("supersedes"));
+
+        // Second pass skips unchanged daily note via dream_watermarks.
+        let pass2 = engine.run_dream_pass().await.unwrap();
+        assert_eq!(pass2.daily_notes_scanned, 0);
+        assert_eq!(pass2.daily_notes_skipped_unchanged, 1);
+        assert_eq!(pass2.candidates_staged, 0);
+
+        // Approve the Dream-staged candidate -> supersedes old Qdrant AMU and writes Approved.md.
+        fs::write(&inbox_path, inbox_text.replace("- [ ] ", "- [x] ")).unwrap();
+        let rep = engine.reconcile_inbox().await.unwrap();
+        assert_eq!(rep.compiled, 1);
+        assert!(vault.root.join("Aether/Compiled/Approved.md").exists());
+
+        let mut req = RecallRequest::new("local vector search Qdrant LanceDB");
+        req.scope = Some(ScopeTag::new("engineering").unwrap());
+        let res = engine.recall(req).await.unwrap();
+        assert!(res.formatted_context.contains("LanceDB"));
+        assert!(!res
+            .formatted_context
+            .contains("Use Qdrant for local vector search."));
+
+        engine.shutdown().await.unwrap();
     }
 }
