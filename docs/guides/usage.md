@@ -204,59 +204,95 @@ Use `nytheris-aether-vault` when you want an Obsidian-native local memory daemon
 
 ```bash
 # Default DB: <vault>/.aether/aether.sqlite, default polling: 2000ms (0 disables polling)
-# Optional --http-addr (or AETHER_HTTP_ADDR) binds the loopback HTTP control plane for Obsidian
+# Loopback Obsidian mode (no auth required when bound to 127.0.0.1 / ::1)
 cargo run -p nytheris-aether-vault --bin aether-mcp -- \
   --vault /path/to/obsidian-vault \
   --db /path/to/aether.sqlite \
   --watch-ms 2000 \
   --http-addr 127.0.0.1:4771
+
+# Team HTTP gateway + KV-cache warming + scoped stdio MCP mode
+cargo run -p nytheris-aether-vault --bin aether-mcp -- \
+  --vault /path/to/team-vault \
+  --http-addr 0.0.0.0:4771 \
+  --require-auth \
+  --bootstrap-admin-key "$AETHER_BOOTSTRAP_ADMIN_KEY" \
+  --api-key "$AETHER_API_KEY" \
+  --kv-endpoint http://127.0.0.1:8000 \
+  --kv-model llama-3.1-8b
 ```
 
-When `--vault` is omitted, `aether-mcp` reads `AETHER_VAULT_PATH` or falls back to `.`. It serves newline-delimited JSON-RPC 2.0 (`protocolVersion` `"2024-11-05"`) over `stdin` and `stdout` with three tools:
+When `--vault` is omitted, `aether-mcp` reads `AETHER_VAULT_PATH` or falls back to `.`. It serves newline-delimited JSON-RPC 2.0 (`protocolVersion` `"2024-11-05"`) over `stdin` and `stdout` with three tools. Passing `--api-key` (or `AETHER_API_KEY`) binds the stdio session to a validated `ScopedApiKey`.
 
-- `aether_recall`: `query` (required), `scope` (optional), `max_tokens` (optional, default `1500`), `include_hot_profile` (optional, default `true`), `structured` (optional, default `false` — returns JSON separating `static_prefix`, `dynamic_context`, and `prefix_hash`; `structuredContent` is always included).
-- `aether_stage_memory`: `proposed_fact` (required), `suggested_tier` (optional `"hot"`, `"warm"`, or `"cold"`, default `"warm"`), `target_note` (optional), `supersedes_amu_id` (optional). Appends a pending candidate to `Aether/Inbox.md`.
-- `aether_inspect_source`: `source_pointer` (required, for example `"Arch/DB.md#Schema"` or `"Aether/Compiled/Approved.md#cand_9f82a1"`). Returns the verbatim Markdown section from disk while enforcing `.aetherignore` and `aether_tier: private` guards.
+- `aether_recall` accepts `query` (required), `scope` (optional), `max_tokens` (optional, default `1500`), `include_hot_profile` (optional, default `true`), `structured` (optional, default `false` to emit JSON separating `static_prefix`, `dynamic_context`, and `prefix_hash`; `structuredContent` is always included), and `kv_model` (optional target model for `kv_hint` block reuse metadata).
+- `aether_stage_memory` accepts `proposed_fact` (required), `suggested_tier` (optional `"hot"`, `"warm"`, or `"cold"`, default `"warm"`), `scope` (optional, defaulting to `agent.default_write_scope()` on scoped sessions), `target_note` (optional), and `supersedes_amu_id` (optional). It appends a pending candidate to `Aether/Inbox.md`.
+- `aether_inspect_source` accepts `source_pointer` (required, for example `"Arch/DB.md#Schema"` or `"Aether/Compiled/Approved.md#cand_9f82a1"`). It returns the verbatim Markdown section from disk while enforcing `.aetherignore`, `aether_tier: private`, and scoped agent read permissions.
 
-When `--http-addr` is provided (loopback `127.0.0.1` or `::1` only), `ControlPlaneServer` exposes `GET /v1/status`, `GET /v1/inbox`, `POST /v1/inbox/decide`, `POST /v1/inbox/reconcile`, `POST /v1/dream`, and `POST /v1/sync` for [`obsidian-aether-plugin`](../../obsidian-aether-plugin/manifest.json).
+### Team HTTP Gateway & Obsidian Companion Plugin
 
-### Embed `VaultEngine` and `McpServer` in Rust
+Without `--require-auth`, `ControlPlaneServer::bind` rejects non-loopback addresses (`127.0.0.1` and `::1` only). Passing `--require-auth` (or calling `ControlPlaneServer::bind_with_auth`) enables non-loopback binds, requires `Authorization: Bearer aek_<hex>` on every request, and exposes the full endpoint surface.
+
+- Local management and Inbox endpoints expose `GET /v1/status`, `GET /v1/inbox`, `POST /v1/inbox/decide` (`Admin`), `POST /v1/inbox/reconcile` (`Admin`), `POST /v1/dream` (`Admin`), and `POST /v1/sync` (`Admin`).
+- Team memory, MCP, Git, and KV endpoints expose `POST /v1/recall` (`Reader+`), `POST /v1/stage` (`Contributor+`), `POST /v1/inspect` (`Reader+`), `POST /v1/mcp` (`Reader+`), `POST /v1/git/sync` (`Admin`), `POST /v1/kv/warm` (`Contributor+`), and `GET /v1/kv/stats` (`Reader+`).
+- Key management endpoints (`Admin`) expose `GET /v1/auth/keys`, `POST /v1/auth/keys`, and `POST /v1/auth/keys/revoke`.
+
+The TypeScript plugin in [`obsidian-aether-plugin`](../../obsidian-aether-plugin/manifest.json) supports `AetherClientOptions` (`apiKey`, `allowInsecureRemoteHttp`, `defaultKvModel`), enforces `https://` for remote team gateways unless `allowInsecureRemoteHttp` is enabled, and registers `aether-git-sync` and `aether-warm-kv-cache` commands.
+
+### Embed `VaultEngine` and Team Primitives in Rust
 
 ```rust
 use std::sync::Arc;
 use nytheris_aether_vault::{
-    DenseSubwordEmbedder, McpServer, RecallRequest, StageMemoryRequest, TokenBudget,
-    VaultConfig, VaultEngine, VaultTier,
+    AgentId, AgentRole, DenseSubwordEmbedder, GitSyncOptions, IssueApiKeyRequest,
+    McpServer, ModelId, RecallRequest, ScopeTag, StageMemoryRequest, TokenBudget,
+    VaultConfig, VaultEngine, VaultTier, WarmKvRequest,
 };
 
 #[tokio::main]
 async fn main() -> nytheris_aether_core::Result<()> {
     let config = VaultConfig::new("/path/to/obsidian-vault")
-        .with_embedder(Arc::new(DenseSubwordEmbedder::default()));
+        .with_embedder(Arc::new(DenseSubwordEmbedder::default()))
+        .with_default_kv_model(ModelId::new("llama-3.1-8b")?);
     let engine = Arc::new(VaultEngine::open(config).await?);
     engine.sync_vault().await?;
 
+    let issued = engine
+        .issue_api_key(IssueApiKeyRequest::new(
+            AgentId::new("coding-agent")?,
+            AgentRole::Contributor,
+            vec![ScopeTag::new("engineering")?],
+        )?)
+        .await?;
+
+    let warm = engine
+        .warm_kv_cache_as(&issued.key, WarmKvRequest::new(ModelId::new("llama-3.1-8b")?))
+        .await?;
+    println!("warmed {} KV blocks ({:.1}% TTFT reduction)", warm.blocks_warmed, warm.ttft_reduction_pct);
+
     let mut req = RecallRequest::new("SQLite WAL transactions");
     req.max_tokens = TokenBudget::new(1500)?;
-    let recall = engine.recall(req).await?;
+    let recall = engine.recall_as(&issued.key, req).await?;
     println!(
-        "tokens={}, static_tokens={}, prefix_hash={}",
-        recall.tokens_used, recall.static_prefix_tokens, recall.prefix_hash
+        "tokens={}, static_tokens={}, prefix_hash={}, kv_hit_tokens={:?}",
+        recall.tokens_used,
+        recall.static_prefix_tokens,
+        recall.prefix_hash,
+        recall.kv_hint.as_ref().map(|h| h.cache_hit_tokens),
     );
 
-    let dream = engine.run_dream_pass().await?;
-    println!("dream staged {} candidate(s)", dream.candidates_staged);
-
-    let candidate_id = engine
-        .stage_memory(
-            StageMemoryRequest::new("Use TransactionBehavior::Immediate for writes.", VaultTier::Warm)
-                .with_scope("engineering")?
-                .with_target_note("Arch/DB.md"),
-        )
-        .await?;
+    let mut staged_req = StageMemoryRequest::new(
+        "Use TransactionBehavior::Immediate for writes.",
+        VaultTier::Warm,
+    )
+    .with_target_note("Arch/DB.md");
+    staged_req.scope = issued.key.default_write_scope();
+    let candidate_id = engine.stage_memory_as(&issued.key, staged_req).await?;
     println!("staged {candidate_id} into Aether/Inbox.md");
 
-    let _server = McpServer::new(Arc::clone(&engine));
+    let git_report = engine.git_sync(GitSyncOptions::new()).await?;
+    println!("git sync cleanly={}, resolved={}", git_report.merged_cleanly, git_report.aether_conflicts_resolved);
+
+    let _server = McpServer::with_api_key(Arc::clone(&engine), &issued.secret).await?;
     engine.shutdown().await?;
     Ok(())
 }

@@ -1,6 +1,6 @@
 # Project Aether Milestone 1 vault and MCP architecture
 
-Status: **implemented** (M1 & M2, 2026-11-18). `crates/aether-vault` (`nytheris-aether-vault` and `aether-mcp`) and `obsidian-aether-plugin` are implemented in the workspace.
+Status: **implemented** (M1, M2 & M3, 2026-11-18). `crates/aether-vault` (`nytheris-aether-vault` and `aether-mcp`) and `obsidian-aether-plugin` are implemented in the workspace.
 
 ## Problem
 
@@ -177,3 +177,12 @@ Synthesis cleanup also branded `ContentHash` as a 64-hex newtype, standardized `
 ## Next implementation step
 
 Add `crates/aether-vault` to root `Cargo.toml` and write failing Red TDD tests for `types.rs` covering `SourcePointer` normalization, path traversal rejection, `AmuId` deterministic `MemoryId` mapping, and `ContentHash` validation.
+
+## Milestone 3 Addendum (Team Git Sync, Scoped Auth & KV Warming)
+
+Milestone 3 extends `crates/aether-vault` to SQLite schema version `3` (`VAULT_SCHEMA_VERSION = 3`) inside the same single-owner `VaultEngine` boundary.
+
+1. **`auth.rs` & SQLite `agent_api_keys`.** Adds `AgentId`, `KeyId`, `ApiKeySecret` (`aek_<hex>`), `AgentRole` (`Reader < Contributor < Admin`), `ScopedApiKey`, and constant-time domain-separated SHA-256 verification. `recall_as`, `stage_memory_as`, `inspect_source_as`, `pending_inbox_as`, and `warm_kv_cache_as` intersect agent scopes before top-K truncation and auto-stamp `proposed_by`.
+2. **`git.rs` & Monotonic Lattice.** Adds `VaultEngine::git_sync` with `.gitignore` `.aether/` protection, `redact_url_userinfo` sanitization, conflict-marker skipping for human notes, and deterministic `Approved > Rejected > Pending` conflict resolution for `Aether/Inbox.md` and `Aether/Compiled/Approved.md`.
+3. **`kv.rs` & SQLite `kv_cache_blocks`.** Adds `KvCacheAdapter` (`InMemoryKvCacheAdapter`, `VllmLmCacheHttpAdapter` for vLLM/SGLang + LMCache over HTTP with offline fallback), `KvBlockHash` (PagedAttention chained prefix blocks and CacheBlend AMU chunks), tiered LRU demotion (`GpuHbm`, `HostDram`, `NvmeSsd`), `RecallResponse::kv_hint`, and transactional eviction whenever AMUs change or supersede.
+4. **Transport & CLI Extensions (`http.rs`, `mcp.rs`, `aether-mcp.rs`, `obsidian-aether-plugin`).** Adds `ControlPlaneServer::bind_with_auth` (`/v1/recall`, `/v1/stage`, `/v1/inspect`, `/v1/mcp`, `/v1/git/sync`, `/v1/kv/warm`, `/v1/kv/stats`, `/v1/auth/keys`, `/v1/auth/keys/revoke`), `McpServer::with_api_key` with `kv_model` and `agent.default_write_scope()`, CLI flags (`--require-auth`, `--bootstrap-admin-key`, `--api-key`, `--kv-endpoint`, `--kv-model`), and remote HTTPS + bearer auth commands in `obsidian-aether-plugin`.

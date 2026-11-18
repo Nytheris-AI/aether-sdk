@@ -62,3 +62,20 @@ Aether treats the **`RecordStore`** as the durable source of truth and keeps **`
 ### Embedder Schema Tracking (`vault_meta`)
 
 - `vault_meta` tracks `(schema_version, embedder_id, embedding_dim, updated_at)`. Switching embedders or dimensions on `VaultEngine::open` re-embeds active AMUs synchronously in one `IMMEDIATE` transaction when active count `<= sync_reindex_threshold` (`5000`), or populates `amus_shadow_embeddings` asynchronously and swaps atomically above threshold while keeping FTS5 + graph recall online.
+
+### Scoped Team API Keys (`agent_api_keys`)
+
+- `ScopedApiKey` binds a `KeyId`, an `AgentId`, an `AgentRole` (`Reader`, `Contributor`, or `Admin`), and a non-empty list of `ScopeTag` values. Plaintext secrets (`aek_<hex>`) are returned once at creation and stored as domain-separated SHA-256 digests in `agent_api_keys`, compared in constant time.
+- `VaultEngine::recall_as` intersects requested scopes with the caller's allowed scopes inside `VaultStore::recall_bundle` before top-K truncation. `VaultEngine::stage_memory_as` requires `Contributor` or higher, stamps `proposed_by` with `agent.agent_id`, and rejects disallowed scopes. `VaultEngine::inspect_source_as` blocks cross-scope reads on both vault notes and `Aether/Compiled/Approved.md` entries.
+
+### Git-Backed Team Sync & Monotonic Lattice (`git.rs`)
+
+- `VaultEngine::git_sync` ensures `.gitignore` ignores `.aether/`, runs `git fetch` and `git merge --no-commit`, redacts any credential userinfo in `GitSyncReport` via `redact_url_userinfo`, and optionally commits and pushes merged state.
+- Human notes containing unresolved Git conflict markers (`<<<<<<<`, `=======`, `>>>>>>>` outside fenced code blocks) are skipped during re-indexing so prior valid SQLite AMUs stay active until the human resolves the conflict.
+- Conflicts in `Aether/Inbox.md` and `Aether/Compiled/Approved.md` are resolved deterministically by a join-semilattice keyed on `CandidateId` (`Approved > Rejected > Pending`) combined with local SQLite decision state.
+
+### GPU KV-Tensor Warming & Eviction (`kv_cache_blocks`)
+
+- `kv.rs` partitions `static_prefix` into chained PagedAttention prefix blocks (`KvBlockHash::paged_chained`) and `WARM`/`COLD` AMUs into CacheBlend chunks (`KvBlockHash::cache_blend`) across `GpuHbm`, `HostDram`, and `NvmeSsd`.
+- `InMemoryKvCacheAdapter` tracks tiered capacity with LRU demotion (`GpuHbm -> HostDram -> NvmeSsd`), while `VllmLmCacheHttpAdapter` pushes warming payloads over HTTP (`LmCacheControl` or `OpenAiPrefill`) with offline fallback.
+- Block metadata persists in SQLite (`kv_cache_blocks`), rehydrates on `VaultEngine::open`, surfaces reuse hints in `RecallResponse::kv_hint` (and MCP `structuredContent.kv_hint`), and evicts affected hashes atomically whenever AMUs are modified, removed, or superseded.

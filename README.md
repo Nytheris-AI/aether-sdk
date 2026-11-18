@@ -67,7 +67,7 @@ Start with a raw connector or adopt the full facade. Every higher level is built
 | **`nytheris-aether-cortex`** | Composable [`Indexer`](crates/aether-cortex/src/indexer.rs) sync engine, [`PersonalizedPageRank`](crates/aether-cortex/src/ppr.rs) + `graph_scores`, and [`recall`](crates/aether-cortex/src/recall.rs) retrieval & RRF primitives. |
 | **`nytheris-aether-adapters`** | `InMemoryBackend` (`in_memory` with `FaultPoint` injection), middleware decorators, reusable [`contract`](crates/aether-adapters/src/contract.rs) test suite (`contract-suite`), and 7 backend drivers. |
 | **`nytheris-aether-sdk`** | Public `MemoryManager` / `MemoryManagerBuilder` composition root, runnable examples, and optional OpenTelemetry OTLP preset (`otel`). |
-| **`nytheris-aether-vault`** | Obsidian-native vault daemon (`VaultEngine`), SQLite WAL + FTS5 + `PersonalizedPageRank` + `CrossEncoderReranker` recall, `DenseSubwordEmbedder` / `LocalGpuEmbedder`, `dream_watermarks` consolidation, `Aether/Inbox.md` -> `Aether/Compiled/Approved.md` mirror, loopback `ControlPlaneServer`, and 3-tool stdio `McpServer` (`aether-mcp`). |
+| **`nytheris-aether-vault`** | Obsidian-native vault daemon (`VaultEngine`), SQLite WAL (schema `v3`) + FTS5 + `PersonalizedPageRank` + `CrossEncoderReranker` recall, `DenseSubwordEmbedder` / `LocalGpuEmbedder`, `dream_watermarks` consolidation, `Aether/Inbox.md` -> `Aether/Compiled/Approved.md` mirror, per-agent scoped API keys, Git team sync with monotonic lattice reconciliation, vLLM/SGLang + LMCache KV-tensor warming, authenticated `ControlPlaneServer`, and scoped `McpServer` (`aether-mcp`). |
 
 ---
 
@@ -161,21 +161,26 @@ async fn main() -> nytheris_aether_core::Result<()> {
 
 ### 3. Run the Obsidian Vault MCP Server (`aether-mcp`)
 
-Point `aether-mcp` at a local Obsidian vault to serve newline-delimited JSON-RPC 2.0 over `stdin` and `stdout` with `aether_recall`, `aether_stage_memory`, and `aether_inspect_source`, and optionally expose the loopback HTTP control plane for the companion plugin in [`obsidian-aether-plugin/`](obsidian-aether-plugin/):
+Point `aether-mcp` at a local or shared Git-backed Obsidian vault to serve newline-delimited JSON-RPC 2.0 over `stdin` and `stdout` with `aether_recall`, `aether_stage_memory`, and `aether_inspect_source`. Enable bearer authentication (`--require-auth`), team Git sync, KV-cache pre-warming (`--kv-endpoint`, `--kv-model`), and the HTTP control plane for [`obsidian-aether-plugin/`](obsidian-aether-plugin/).
 
 ```bash
 # Uses AETHER_VAULT_PATH or --vault; defaults to <vault>/.aether/aether.sqlite and 2000ms polling
 cargo run -p nytheris-aether-vault --bin aether-mcp -- --vault /path/to/obsidian-vault
 
-# Override the SQLite path, polling interval (0 disables polling), or loopback HTTP control plane
+# Team gateway mode with bearer authentication, scoped stdio MCP, and vLLM/LMCache KV warming
 cargo run -p nytheris-aether-vault --bin aether-mcp -- \
-  --vault /path/to/obsidian-vault \
+  --vault /path/to/team-obsidian-vault \
   --db /path/to/aether.sqlite \
   --watch-ms 2000 \
-  --http-addr 127.0.0.1:4771
+  --http-addr 0.0.0.0:4771 \
+  --require-auth \
+  --bootstrap-admin-key "$AETHER_BOOTSTRAP_ADMIN_KEY" \
+  --api-key "$AETHER_API_KEY" \
+  --kv-endpoint http://127.0.0.1:8000 \
+  --kv-model llama-3.1-8b
 ```
 
-See the [Vault & MCP Architecture](docs/architecture/m1-vault-mcp-rationale.md) and [Usage Guide](docs/guides/usage.md) for frontmatter tiers, `.aetherignore`, `Aether/Inbox.md` -> `Aether/Compiled/Approved.md` approvals, Dream consolidation, and the Obsidian companion plugin.
+See the [Vault & MCP Architecture](docs/architecture/m1-vault-mcp-rationale.md), [Memory Model](docs/guides/memory.md), and [Usage Guide](docs/guides/usage.md) for frontmatter tiers, `.aetherignore`, `Aether/Inbox.md` approvals, Git team sync, scoped API keys, KV-cache warming, and the Obsidian companion plugin.
 
 ### 4. Run Live Docker Verification (Optional)
 
