@@ -1,6 +1,6 @@
 # Observability & OpenTelemetry Traces
 
-Aether SDK emits structured **`tracing`** spans across `aether-sdk`, `aether-cortex`, and `aether-adapters` out of the box so distributed traces connect end-to-end with zero per-call boilerplate.
+Aether SDK emits structured **`tracing`** spans across `nytheris-aether-sdk`, `nytheris-aether-cortex`, and `nytheris-aether-adapters` out of the box so distributed traces connect end-to-end with zero per-call boilerplate.
 
 ---
 
@@ -31,10 +31,10 @@ aether.flush (MemoryManager)                     [otel.status_code]
 
 ### Span & Event Details
 
-- **Root spans (`aether-sdk`)**: `aether.remember`, `aether.recall`, `aether.update`, `aether.forget`, `aether.flush`, `aether.shutdown` record `otel.status_code` (`"OK"` or `"ERROR"`) and emit `tracing::error!` on failure.
-- **Orchestration spans (`aether-cortex`)**: `aether.cortex.index_pass`, `aether.cortex.index_record`, `aether.cortex.vector_search`, `aether.cortex.graph_search`, `aether.cortex.ppr`.
-- **Connector client spans (`aether-adapters::Traced`)**: `connector_op` with `otel.kind = "client"`, `db.system`, `connector`, `project_id`, `op` (`record_create`, `record_get`, `record_get_many`, `record_cas_update`, `record_tombstone`, `record_pending`, `record_pending_for`, `record_session_items`, `record_mark_indexed`, `initialize`, `describe`, `upsert_batch`, `delete`, `search`, `upsert_entities`, `upsert_relations`, `retract_memory_facts`, `neighborhood`), and `otel.status_code`.
-- **Resilience events (`aether-adapters`)**: `Resilient<T>` emits `tracing::warn!` on transient retry attempts; `Timeout<T>` emits `tracing::warn!` on timeout.
+- **Root spans (`nytheris-aether-sdk`)**: `aether.remember`, `aether.recall`, `aether.update`, `aether.forget`, `aether.flush`, `aether.shutdown` record `otel.status_code` (`"OK"` or `"ERROR"`) and emit `tracing::error!` on failure.
+- **Orchestration spans (`nytheris-aether-cortex`)**: `aether.cortex.index_pass`, `aether.cortex.index_record`, `aether.cortex.vector_search`, `aether.cortex.graph_search`, `aether.cortex.ppr`.
+- **Connector client spans (`nytheris-aether-adapters::Traced`)**: `connector_op` with `otel.kind = "client"`, `db.system`, `connector`, `project_id`, `op` (`record_create`, `record_get`, `record_get_many`, `record_cas_update`, `record_tombstone`, `record_pending`, `record_pending_for`, `record_session_items`, `record_mark_indexed`, `initialize`, `describe`, `upsert_batch`, `delete`, `search`, `upsert_entities`, `upsert_relations`, `retract_memory_facts`, `neighborhood`), and `otel.status_code`.
+- **Resilience events (`nytheris-aether-adapters`)**: `Resilient<T>` emits `tracing::warn!` on transient retry attempts; `Timeout<T>` emits `tracing::warn!` on timeout.
 
 ### Opting Out of Auto-Wrapping
 
@@ -50,18 +50,18 @@ let manager = MemoryManager::builder(record_store)
 
 ## 2. One-Line OpenTelemetry Setup (`feature = "otel"`)
 
-Enable the `otel` feature on `aether-sdk` to use the built-in OTLP gRPC preset:
+Enable the `otel` feature on `nytheris-aether-sdk` to use the built-in OTLP gRPC preset:
 
 ```toml
 [dependencies]
-aether-sdk = { version = "0.1.0", features = ["otel"] }
+nytheris-aether-sdk = { version = "0.1.0", features = ["otel"] }
 ```
 
 In your application entrypoint:
 
 ```rust
-use aether_sdk::telemetry::{init_otel, LogFormat, OtelConfig};
-use aether_sdk::MemoryManager;
+use nytheris_aether_sdk::telemetry::{init_otel, LogFormat, OtelConfig};
+use nytheris_aether_sdk::MemoryManager;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -102,7 +102,7 @@ Then run your app or the included demo (`crates/aether-sdk/examples/otel_demo.rs
 ```bash
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317 \
 RUST_LOG=info \
-cargo run -p aether-sdk --example otel_demo --features otel
+cargo run -p nytheris-aether-sdk --example otel_demo --features otel
 ```
 
 ### Bringing Your Own Subscriber

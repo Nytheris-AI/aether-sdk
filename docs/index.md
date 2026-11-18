@@ -14,7 +14,7 @@
 
 - **[Usage Guide](guides/usage.md)**: Walkthrough and runnable examples across all five SDK levels.
 - **[Memory Model](guides/memory.md)**: Scopes (`Project`, `User`, `Session`), durability (`Buffered`, `WaitFlush`), consistency, and temporal provenance.
-- **[Observability & OpenTelemetry](guides/observability.md)**: `tracing` span hierarchy across `aether-sdk`, `aether-cortex`, and `aether-adapters`, plus the `otel` preset.
+- **[Observability & OpenTelemetry](guides/observability.md)**: `tracing` span hierarchy across `nytheris-aether-sdk`, `nytheris-aether-cortex`, and `nytheris-aether-adapters`, plus the `otel` preset.
 
 ## Development & Roadmap
 

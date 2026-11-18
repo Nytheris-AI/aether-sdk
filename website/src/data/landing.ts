@@ -321,7 +321,7 @@ export const SANDBOX_PROBES: Record<ProbeId, SandboxProbe> = {
     sdkSegments: [
       {kind: 'cm', text: '// Illustrative Rust SDK call — hybrid vector + graph recall\n'},
       {kind: 'kw', text: 'use'},
-      {kind: 'plain', text: ' aether_sdk::{AetherClient, Plane, RecallRequest};\n\n'},
+      {kind: 'plain', text: ' nytheris_aether_sdk::{AetherClient, Plane, RecallRequest};\n\n'},
       {kind: 'kw', text: 'let'},
       {kind: 'plain', text: ' slice = client.recall(RecallRequest {\n'},
       {kind: 'plain', text: '    namespace: "org_core_platform".into(),\n'},
