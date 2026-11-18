@@ -7,6 +7,7 @@ mod engine;
 mod git;
 mod http;
 mod inbox;
+mod kv;
 mod mcp;
 mod parser;
 mod prefix;
@@ -25,6 +26,13 @@ pub use embedder::{
 pub use engine::VaultEngine;
 pub use git::{GitSyncOptions, GitSyncReport};
 pub use http::ControlPlaneServer;
+pub use kv::{
+    InMemoryKvCacheAdapter, InferenceEngineKind, KvAdapterWarmOutcome, KvBlockHash, KvBlockHit,
+    KvBlockMode, KvCacheAdapter, KvCacheBlock, KvCacheStats, KvFuture, KvRecallHint, KvStorageTier,
+    KvTierCapacity, KvTierUsage, KvTimingProfile, KvWarmBatch, KvWarmBlockInput, KvWarmProtocol,
+    KvWarmReport, ModelId, VllmLmCacheConfig, VllmLmCacheHttpAdapter, WarmKvRequest,
+    DEFAULT_KV_BLOCK_TOKENS,
+};
 pub use mcp::McpServer;
 pub use reranker::{CrossEncoderReranker, NoopReranker, Reranker, DEFAULT_RERANK_TOP_K};
 pub use types::{

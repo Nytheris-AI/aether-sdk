@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::embedder::Embedder;
+use crate::kv::{KvCacheAdapter, KvRecallHint, ModelId};
 use crate::reranker::Reranker;
 
 /// Hard token ceiling for the byte-stable static `HOT` prefix block.
@@ -591,6 +592,8 @@ pub struct VaultConfig {
     pub sync_reindex_threshold: usize,
     pub(crate) embedder_override: Option<Arc<dyn Embedder>>,
     pub(crate) reranker_override: Option<Arc<dyn Reranker>>,
+    pub(crate) kv_adapter_override: Option<Arc<dyn KvCacheAdapter>>,
+    pub default_kv_model: Option<ModelId>,
 }
 
 impl fmt::Debug for VaultConfig {
@@ -610,6 +613,11 @@ impl fmt::Debug for VaultConfig {
                 "reranker_id",
                 &self.reranker_override.as_ref().map(|r| r.id()),
             )
+            .field(
+                "kv_adapter_id",
+                &self.kv_adapter_override.as_ref().map(|k| k.id()),
+            )
+            .field("default_kv_model", &self.default_kv_model)
             .finish()
     }
 }
@@ -627,6 +635,8 @@ impl VaultConfig {
             sync_reindex_threshold: DEFAULT_SYNC_REINDEX_THRESHOLD,
             embedder_override: None,
             reranker_override: None,
+            kv_adapter_override: None,
+            default_kv_model: None,
         }
     }
 
@@ -666,6 +676,16 @@ impl VaultConfig {
         self.reranker_override = Some(reranker);
         self
     }
+
+    pub fn with_kv_adapter(mut self, adapter: Arc<dyn KvCacheAdapter>) -> Self {
+        self.kv_adapter_override = Some(adapter);
+        self
+    }
+
+    pub fn with_default_kv_model(mut self, model: ModelId) -> Self {
+        self.default_kv_model = Some(model);
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -674,6 +694,7 @@ pub struct RecallRequest {
     pub scope: Option<ScopeTag>,
     pub max_tokens: TokenBudget,
     pub include_hot_profile: bool,
+    pub kv_model: Option<ModelId>,
 }
 
 impl RecallRequest {
@@ -683,7 +704,13 @@ impl RecallRequest {
             scope: None,
             max_tokens: TokenBudget::default(),
             include_hot_profile: true,
+            kv_model: None,
         }
+    }
+
+    pub fn with_kv_model(mut self, model: ModelId) -> Self {
+        self.kv_model = Some(model);
+        self
     }
 }
 
@@ -706,6 +733,8 @@ pub struct RecallResponse {
     pub dynamic_tokens: usize,
     pub tokens_used: usize,
     pub prefix_hash: ContentHash,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_hint: Option<KvRecallHint>,
 }
 
 #[derive(Debug, Clone)]
