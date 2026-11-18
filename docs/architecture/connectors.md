@@ -1,26 +1,16 @@
-# Connectors Architecture (Unified Storage & DB Layer)
+# Connectors Architecture (Unified Storage Layer)
 
-At the core of `aether-sdk` is its unified outbound connector layer (`aether-adapters`), which lets applications connect uniformly to AI memory storage and databases—such as **Turbopuffer, Neo4j, Qdrant, Chroma, and pgvector**—behind one consistent API. Connectors are structured so every downstream driver inherits resilience, batching, tenant isolation, and observability without duplicating boilerplate.
-
-:::note Status
-This page describes the target connector layer.
-Not built yet: every production driver, `config.rs`, `registry.rs`, retry jitter, and the circuit breaker.
-The approved Phase 5 design also renames `KvStore` to `RecordStore`, makes it the source of truth, and drops `WalStore` and the circuit breaker from the plan.
-See the [Roadmap](../about/roadmap.md) for the real status and the [Phase 5 design](../architecture/hardening-design.md) for what changes.
-:::
+`aether-adapters` provides the outbound storage traits' implementations so applications can combine **SQLite, Redis/Valkey, Turbopuffer, Qdrant, Chroma, pgvector, and Neo4j** behind consistent async traits, resilience wrappers, and contract tests.
 
 ---
 
-## 1. Multi-Tier Storage & Database Connector Traits
+## 1. Storage Roles & Connector Traits
 
-Aether separates fast working-memory state from durable semantic/graph storage using an **L1 → L2 → L3** serving model:
+Aether separates the authoritative system of record from derived search indexes:
 
-- **L1 (`HotContextCache` in `aether-cortex`)**: Process-local bounded cache (`moka` / ring buffer) shielding L2/L3 from hot-key bursts.
-- **L2 (`KvStore: OutboundConnector`)**: Short-term / session memory, TTL expiration, atomic idempotency (`put_if_absent`), distributed CAS (`cas_update`), and cross-replica Read-Your-Writes backed by **Redis/Valkey** (multiplexed async TCP) or **SQLite** (WAL mode file DB).
-- **L3 (`VectorStore` & `GraphStore: OutboundConnector`)**:
-  1. **`VectorStore: OutboundConnector`** — Unified vector + metadata storage for **Turbopuffer, Qdrant, Chroma, pgvector**, etc.
-  2. **`GraphStore: OutboundConnector`** — Unified knowledge-graph storage for **Neo4j** (with `source_memory_id` provenance and `valid_at`/`invalid_at` temporal edges).
-  3. **`WalStore` *(optional)*** — Disk-backed write-ahead log (`redb` / SQLite) for crash-safe `IngestionBuffer` durability.
+- **`RecordStore: OutboundConnector`**: Authoritative durable store for `MemoryItem` records, atomic idempotency (`create`), batch lookup (`get_many`), optimistic CAS (`cas_update`), versioned tombstones (`tombstone`), indexing cursors (`pending`, `pending_for`, `mark_indexed`), and live TTL-backed `session_items`. Backed by **SQLite** (WAL mode) or **Redis/Valkey**.
+- **`VectorStore: OutboundConnector`**: Derived dense vector + metadata index (`initialize`, `describe`, `upsert_batch`, `delete`, `search`) backed by **Turbopuffer, Qdrant, Chroma, or pgvector**. `describe` reports `Option<IndexSpec>` (dimensions and distance metric) for boundary checks.
+- **`GraphStore: OutboundConnector`**: Derived temporal knowledge graph (`upsert_entities`, `upsert_relations`, `retract_memory_facts`, `neighborhood`) backed by **Neo4j** Query API v2 with `source_memory_id` provenance and `valid_at` / `invalid_at` bounds.
 
 ---
 
@@ -28,28 +18,23 @@ Aether separates fast working-memory state from durable semantic/graph storage u
 
 ```text
 crates/aether-adapters/
-├── Cargo.toml                  # Feature flags: redis, sqlite, turbopuffer, qdrant, neo4j, chroma, pgvector
+├── Cargo.toml           # Features: contract-suite, sqlite, redis, turbopuffer, qdrant, neo4j, chroma, pgvector
 └── src/
     ├── lib.rs
-    ├── config.rs               # ConnectorConfig (endpoint, SecretString, pool_size, timeouts, RetryPolicy)
-    ├── registry.rs             # Config-driven builder wrapping drivers in Traced<Resilient<...>>
-    ├── middleware/             # Shared cross-cutting decorators (write once, apply to all)
-    │   ├── resilient.rs        # Exponential backoff + jitter on AetherError::is_retryable(), circuit breaker
-    │   ├── timeout.rs          # Per-operation tokio::time::timeout
-    │   ├── batcher.rs          # Auto-chunks upsert_batch using capabilities().max_batch_size
-    │   └── traced.rs           # tracing spans (connector, project_id, op) + latency/error metrics
-    ├── memory_test.rs          # InMemoryBackend (KvStore + VectorStore + petgraph GraphStore for cargo test)
-    ├── kv/                     # redis.rs, sqlite.rs
-    └── storage/                # turbopuffer.rs, qdrant.rs, neo4j.rs, chroma.rs, pgvector.rs
+    ├── contract.rs      # Reusable backend contract suite (gated by `contract-suite`)
+    ├── in_memory.rs     # InMemoryBackend + FaultPoint injection
+    ├── middleware.rs    # Batcher, Timeout, Resilient (exponential backoff + jitter), Traced
+    ├── kv/              # sqlite.rs, redis.rs
+    └── storage/         # turbopuffer.rs, qdrant.rs, neo4j.rs, chroma.rs, pgvector.rs
 ```
 
 ---
 
-## 3. Shared Supertrait & Decorator Inheritance
+## 3. Shared Supertrait & Middleware Composition
 
 ![Nested middleware around a driver](../assets/middleware_stack.svg)
 
-In Rust, shared driver behavior is composed via a base supertrait (`OutboundConnector`) plus generic decorator wrappers (`Traced<Resilient<Timeout<Batcher<T>>>>`):
+Every driver implements `OutboundConnector` and composes cleanly inside generic middleware (`Traced<Resilient<Timeout<Batcher<T>>>>`):
 
 ```rust
 #[derive(Debug, Clone)]
@@ -68,24 +53,23 @@ pub trait OutboundConnector: Send + Sync {
 }
 ```
 
-### How Downstream Drivers Stay Minimal
-A downstream driver (e.g., `QdrantVectorStore`) only implements the raw protocol (`VectorStore`) and maps vendor errors into `AetherError`:
-- **`AetherError::Transient { .. }`**: Retryable errors (HTTP 429/503, network timeouts, connection resets).
-- **`AetherError::Permanent { .. }`**: Non-retryable errors (HTTP 401/403, dimension mismatch, invalid filter).
+### Error Classification & Wrapper Responsibilities
 
-When registered via `ConnectorRegistry`, every driver is automatically wrapped in:
-1. **`Batcher`** — chunks large `upsert_batch` calls according to `capabilities().max_batch_size`.
-2. **`Timeout`** — bounds per-request tail latency.
-3. **`Resilient`** — retries *only* `Transient` errors with exponential backoff + jitter and trips a circuit breaker on sustained outages.
-4. **`Traced`** — emits `tracing` spans tagged with `connector = self.name()`, `project_id`, and `op`.
+Drivers classify failures via `AetherError`:
+- **`AetherError::Transient { .. }`**: Retryable transport or rate-limit errors (HTTP 429/503, timeouts, busy locks).
+- **`AetherError::Permanent { .. }` / `InvalidInput` / `Conflict` / `NotFound`**: Non-retryable errors.
+
+When stacked (which `MemoryManager::builder` configures by default, with opt-out toggles):
+1. **`Batcher`** (vector store): chunks `upsert_batch` calls to `capabilities().max_batch_size`.
+2. **`Timeout`**: bounds per-request tail latency (default 10s in `MemoryManager`).
+3. **`Resilient`**: retries only `AetherError::is_retryable()` errors with full-jitter exponential backoff (`jittered`).
+4. **`Traced`**: emits `connector_op` `tracing` spans with `otel.kind = "client"`, `db.system`, `connector`, `project_id`, `op`, and `otel.status_code`.
 
 ---
 
-## 4. Contract Test Harness
+## 4. Contract Test Suite
 
-Every connector—whether `InMemoryBackend`, `qdrant`, `neo4j`, or a community-contributed `pgvector` driver—must pass the same shared contract test suite in `aether-adapters/tests/`:
-- **Namespace Isolation**: Writes under `ProjectId("a")` are never visible to `ProjectId("b")`.
-- **Batch & Delete**: `upsert_batch` and `delete` behave idempotently.
-- **Filter Translation**: `FilterExpr` (`Eq`, `In`, `Range`, `And`, `Or`) produces identical results across backends.
-- **Temporal Provenance**: `retract_memory_facts` invalidates only edges owned by the forgotten `MemoryId`.
-- **Transient Retry**: Simulated transient failures retry up to `max_retries`; permanent failures fail immediately.
+Every storage implementation is verified against `aether_adapters::contract::{record_store, record_store_concurrent_idempotency, vector_store, graph_store}`:
+- **Record contract**: `create`, atomic `idempotency_key` deduplication (concurrent + persisted state), namespace isolation, `cas_update` conflict checks, TTL expiration, `session_items`, `tombstone` + key reuse, and `mark_indexed`.
+- **Vector contract**: namespace isolation, `describe` across clients/restarts, `upsert_batch` + `delete` idempotency, dimension mismatch rejection, distance metrics, and `FilterExpr` translation (`Eq`, `In`, `Range`, `And`, `Or`).
+- **Graph contract**: entity/relation idempotent upserts, temporal `as_of` / `active_only` filtering, multi-hop `neighborhood` traversal, and `retract_memory_facts` provenance isolation.

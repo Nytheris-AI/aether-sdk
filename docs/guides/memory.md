@@ -1,33 +1,37 @@
 # Memory Model & Consistency
 
-Aether organizes agent memory across **tiers**, **scopes**, and **three storage layers (L1 / L2 / L3)** so short-term working memory and long-term semantic/graph knowledge behave predictably in production.
+Aether treats the **`RecordStore`** as the durable source of truth and keeps **`VectorStore`** and **`GraphStore`** as derived indexes synchronized via versioned indexing state and tombstones.
 
-:::note Status
-This page describes the code as it is today.
-The approved Phase 5 design changes this model: scopes gain user and session ids, `Global` is removed, session memory stays out of the vector and graph stores, and the L1 cache and ingestion buffer are replaced by a durable record store.
-See the [Roadmap](../about/roadmap.md) for the real status and the [Phase 5 design](../architecture/hardening-design.md) for what changes.
-:::
+## Storage Roles
+
+- **`RecordStore`**: Holds canonical `MemoryItem` records, atomic idempotency keys (`create`), optimistic CAS versions (`cas_update`), pending indexing state (`pending`, `pending_for`, `mark_indexed`), versioned `tombstone` deletes, and TTL-bound `session_items`.
+- **`VectorStore`** *(optional)*: Holds dense vectors paired with filterable metadata (`_aether_scope`, `_aether_tier`, and caller JSON fields). Recall resolves hit bodies from `RecordStore::get_many`, omitting stale or tombstoned records.
+- **`GraphStore`** *(optional)*: Holds entities and idempotent temporal edges (`source_memory_id`, `valid_at`, `invalid_at`) retracted on `update` and `forget`.
 
 ## Memory Tiers (`MemoryTier`)
-- **`Episodic`**: Time-bound events and interaction history.
-- **`Semantic`** *(default)*: Durable facts and structured knowledge.
-- **`Procedural`**: Workflows, tool-use patterns, and learned instructions.
-- **`Profile`**: User or agent preferences and long-lived attributes.
+
+`MemoryTier` (`Episodic`, `Semantic` *(default)*, `Procedural`, `Profile`) is stored on every `MemoryItem` and written to vector metadata as `_aether_tier` for filtering in queries.
 
 ## Memory Scopes (`MemoryScope`)
+
 - **`Project`** *(default)*: Shared within a `ProjectId` namespace.
-- **`User`**: Scoped to an end-user within a project.
-- **`Session`**: Short-term working memory stored in L2 `KvStore` with automatic TTL expiration.
-- **`Global`**: Cross-session shared knowledge within a project.
+- **`User(UserId)`**: Isolated to a validated user identity via `_aether_scope` index filtering and `recall::in_scopes`.
+- **`Session(SessionId)`**: Stored **only** in the `RecordStore` with TTL expiration (`with_session_ttl`, default 1 hour). Session items are never written to vector or graph indexes, preventing stale turns from outliving TTL.
 
 ## Durability & Consistency
 
-![Write and read path across L1, L2 and L3](../assets/write_read_path.svg)
-
 ### `WriteDurability`
-- **`Buffered`** *(default)*: Enqueues writes to `IngestionBuffer` after L2 `KvStore` + L1 `HotContextCache` persistence and returns `ReceiptState::Buffered` immediately.
-- **`WaitFlush`**: Awaits the flush barrier to L3 (`VectorStore` + `GraphStore`) and returns `ReceiptState::Persisted`.
+
+- **`Buffered`** *(default)*: Persists the record in `RecordStore`, wakes any opt-in background indexer, and returns `ReceiptState::Buffered` immediately. Pending records survive process restarts and are indexed on `flush()` or by `background_indexing`.
+- **`WaitFlush`**: Persists the record and runs `Indexer::apply` before returning `ReceiptState::Persisted`.
 
 ### `ConsistencyMode`
-- **`ReadYourWrites`** *(default)*: `QueryPlanner` merges un-flushed `IngestionBuffer` entries, L1 `HotContextCache`, and L2 `KvStore::recent` with L3 `VectorStore` / `GraphStore` results.
-- **`Eventual`**: Queries L3 outbound stores directly for lowest-overhead reads when immediate write visibility is not required.
+
+- **`ReadYourWrites`** *(default)*: Combines indexed `vector_search` hits with unindexed pending records scored using the index's `DistanceMetric::score`, keeping the newest `version` via `recall::merge`, plus live `session_items` when requested.
+- **`Eventual`**: Reads derived vector/graph indexes directly (plus explicit `Session` scopes) without scanning unindexed pending records.
+
+### Updates, Tombstones, and Graph Fusion
+
+- Updating `content` on an embedded memory requires a matching new `embedding` so indexed vectors stay aligned with text.
+- `forget` records an immediate `tombstone` (hiding the memory from `get`/`get_many` right away) and retracts vector/graph entries; any transient index delete failure stays pending and retries cleanly on subsequent flushes.
+- `RecallMode::Hybrid` fuses vector and graph rankings deterministically using `recall::rrf` (Reciprocal Rank Fusion) backed by `PersonalizedPageRank` + `graph_scores`.

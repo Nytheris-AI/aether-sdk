@@ -1,6 +1,6 @@
 # Change Overview - From Gateway to Pieces-First SDK
 
-Status: **proposed, nothing below is implemented yet** (2026-11-16).
+Status: **implemented** (2026-11-18). All code changes below have landed across the Rust workspace.
 This page is the one-screen summary of everything that will change in the code, the docs, and the roadmap.
 The reasoning lives in the [pieces-first SDK design](./sdk-design.md) and the [Phase 5 hardening design](./hardening-design.md).
 Where this page and those documents disagree, they win and this page has a bug.

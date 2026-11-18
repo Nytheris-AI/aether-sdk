@@ -1,6 +1,6 @@
 # Aether SDK Design - Pieces First
 
-Status: **draft, awaiting approval** (2026-11-16).
+Status: **implemented** (2026-11-18).
 This document sets the shape of Aether.
 The [change overview](./change-overview.md) lists every removal, change, and addition in one place.
 It supersedes the "gateway" framing everywhere else in these docs.

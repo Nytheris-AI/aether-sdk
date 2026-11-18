@@ -1,6 +1,6 @@
 # Phase 5 Design - Consistency Hardening
 
-Status: **approved 2026-11-16, not yet implemented**.
+Status: **implemented** (2026-11-18).
 
 :::note Shape superseded
 This design was written when Aether was framed as a gateway with a single facade.
