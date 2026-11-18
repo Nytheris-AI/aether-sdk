@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
-use nytheris_aether_core::{AetherError, Result};
+use nytheris_aether_core::{redact_url_userinfo, AetherError, Result};
 use nytheris_aether_cortex::{
     graph_scores,
     recall::{self, Candidate, RRF_K},
@@ -13,28 +13,39 @@ use tokio::sync::{watch, Mutex as AsyncMutex};
 use tokio::task::JoinHandle;
 use walkdir::WalkDir;
 
+use crate::auth::{
+    AgentId, AgentRole, ApiKeySecret, AuthError, IssueApiKeyRequest, IssuedApiKey, KeyId,
+    ScopePolicy, ScopedApiKey,
+};
 use crate::dream;
 use crate::embedder::{embed_amu_text, Embedder, HashedNgramEmbedder};
+use crate::git::{self, GitSyncOptions, GitSyncReport};
 use crate::inbox::{self, APPROVED_MIRROR_REL_PATH, INBOX_REL_PATH};
+use crate::kv::{
+    self, InMemoryKvCacheAdapter, KvBlockBuildSpec, KvBlockHash, KvCacheAdapter, KvCacheBlock,
+    KvCacheStats, KvRecallHint, KvStorageTier, KvTierUsage, KvTimingProfile, KvWarmBatch,
+    KvWarmBlockInput, KvWarmReport, ModelId, WarmKvRequest,
+};
 use crate::parser::{self, IgnoreRules, ParsedNote, ParsedSection};
 use crate::prefix;
 use crate::reranker::{CrossEncoderReranker, Reranker};
 use crate::store::{to_memory_item, VaultStore};
 use crate::types::{
     Amu, AmuId, AmuKind, AmuStatus, CandidateId, ContentHash, DreamReport, InboxCheckbox,
-    InboxEntry, InboxReconcileReport, RecallEntry, RecallRequest, RecallResponse, SourcePointer,
-    StageMemoryRequest, SyncReport, VaultConfig, VaultMeta, VaultPath, VaultStatusReport,
-    VAULT_SCHEMA_VERSION,
+    InboxEntry, InboxReconcileReport, RecallEntry, RecallRequest, RecallResponse, ScopeTag,
+    SourcePointer, StageMemoryRequest, SyncReport, VaultConfig, VaultMeta, VaultPath,
+    VaultStatusReport, VaultTier, VAULT_SCHEMA_VERSION,
 };
 
-/// Single-owner orchestrator for Obsidian vault compilation, hybrid recall,
-/// atomic Inbox staging, and live source provenance checks.
+/// Orchestrator for Obsidian vault compilation, hybrid recall, Inbox reconciliation,
+/// Git team sync, scoped agent access control, and KV-cache warming.
 pub struct VaultEngine {
     vault_root: PathBuf,
     config: VaultConfig,
     store: VaultStore,
     embedder: Arc<dyn Embedder>,
     reranker: Arc<dyn Reranker>,
+    kv_adapter: Arc<dyn KvCacheAdapter>,
     write_gate: Arc<AsyncMutex<()>>,
     shutdown_tx: watch::Sender<bool>,
     watcher_handle: Mutex<Option<JoinHandle<()>>>,
@@ -61,10 +72,19 @@ impl VaultEngine {
             .reranker_override
             .clone()
             .unwrap_or_else(|| Arc::new(CrossEncoderReranker::default()));
+        let kv_adapter: Arc<dyn KvCacheAdapter> = config
+            .kv_adapter_override
+            .clone()
+            .unwrap_or_else(|| Arc::new(InMemoryKvCacheAdapter::default()));
+        let persisted_kv = store.load_all_kv_blocks().await?;
+        if !persisted_kv.is_empty() {
+            kv_adapter.hydrate(persisted_kv).await?;
+        }
         tracing::debug!(
             embedder_id = embedder.id(),
             embed_dims = embedder.dimensions(),
             reranker_id = reranker.id(),
+            kv_adapter_id = kv_adapter.id(),
             "initialized vault engine"
         );
         let engine = Self {
@@ -73,6 +93,7 @@ impl VaultEngine {
             store,
             embedder,
             reranker,
+            kv_adapter,
             write_gate: Arc::new(AsyncMutex::new(())),
             shutdown_tx,
             watcher_handle: Mutex::new(None),
@@ -178,6 +199,7 @@ impl VaultEngine {
         let vault_root = self.vault_root.clone();
         let store = self.store.clone();
         let embedder = Arc::clone(&self.embedder);
+        let kv_adapter = Arc::clone(&self.kv_adapter);
         let write_gate = Arc::clone(&self.write_gate);
         let project_id = self.config.project_id.clone();
 
@@ -187,7 +209,7 @@ impl VaultEngine {
                     _ = shutdown_rx.changed() => break,
                     _ = tokio::time::sleep(interval) => {
                         let _guard = write_gate.lock().await;
-                        if let Err(err) = sync_vault_inner(&vault_root, &store, embedder.as_ref(), &project_id).await {
+                        if let Err(err) = sync_vault_inner(&vault_root, &store, embedder.as_ref(), kv_adapter.as_ref(), &project_id).await {
                             tracing::warn!(error = %err, "background vault sync failed");
                         }
                     }
@@ -214,6 +236,7 @@ impl VaultEngine {
             &self.vault_root,
             &self.store,
             self.embedder.as_ref(),
+            self.kv_adapter.as_ref(),
             &self.config.project_id,
         )
         .await?;
@@ -252,9 +275,13 @@ impl VaultEngine {
             if manifest.get(INBOX_REL_PATH) == Some(&hash) {
                 return Ok(false);
             }
-            let report =
-                reconcile_inbox_inner(&self.vault_root, &self.store, self.embedder.as_ref())
-                    .await?;
+            let report = reconcile_inbox_inner(
+                &self.vault_root,
+                &self.store,
+                self.embedder.as_ref(),
+                self.kv_adapter.as_ref(),
+            )
+            .await?;
             return Ok(report.compiled > 0 || report.rejected > 0);
         }
 
@@ -264,7 +291,9 @@ impl VaultEngine {
         }
 
         let Ok(bytes) = tokio::fs::read(path).await else {
-            return self.store.remove_file(&rel_path, None).await;
+            let (removed, evicted_kv) = self.store.remove_file(&rel_path, None).await?;
+            evict_kv_hashes(self.kv_adapter.as_ref(), &evicted_kv).await;
+            return Ok(removed);
         };
         let hash = ContentHash::compute(&bytes);
         if self.store.consume_self_write(&rel_path, &hash).await? {
@@ -279,15 +308,22 @@ impl VaultEngine {
         let raw_md = String::from_utf8(bytes).map_err(|err| {
             AetherError::InvalidInput(format!("note `{rel_path}` is not valid UTF-8: {err}"))
         })?;
+        if git::has_unresolved_conflict_markers(&raw_md) {
+            tracing::warn!(rel_path = %rel_path, "skipping note with unresolved git conflict markers");
+            return Ok(false);
+        }
         match parser::parse_note(&rel_path, &raw_md, Utc::now(), self.embedder.as_ref())? {
             ParsedNote::Private => {
-                self.store.remove_file(&rel_path, Some(&hash)).await?;
+                let (_, evicted_kv) = self.store.remove_file(&rel_path, Some(&hash)).await?;
+                evict_kv_hashes(self.kv_adapter.as_ref(), &evicted_kv).await;
                 Ok(true)
             }
             ParsedNote::Public(sections) => {
-                self.store
+                let (_, evicted_kv) = self
+                    .store
                     .commit_file_sections(&vault_path, &hash, &sections)
                     .await?;
+                evict_kv_hashes(self.kv_adapter.as_ref(), &evicted_kv).await;
                 Ok(true)
             }
         }
@@ -354,8 +390,13 @@ impl VaultEngine {
             None => None,
         };
 
-        let _ =
-            reconcile_inbox_inner(&self.vault_root, &self.store, self.embedder.as_ref()).await?;
+        let _ = reconcile_inbox_inner(
+            &self.vault_root,
+            &self.store,
+            self.embedder.as_ref(),
+            self.kv_adapter.as_ref(),
+        )
+        .await?;
 
         let candidate_id = CandidateId::from_proposal(
             &req.proposed_fact,
@@ -383,11 +424,29 @@ impl VaultEngine {
     /// Compiles checked `[x]` entries and drops `[-]` entries in `Aether/Inbox.md`.
     pub async fn reconcile_inbox(&self) -> Result<InboxReconcileReport> {
         let _guard = self.write_gate.lock().await;
-        reconcile_inbox_inner(&self.vault_root, &self.store, self.embedder.as_ref()).await
+        reconcile_inbox_inner(
+            &self.vault_root,
+            &self.store,
+            self.embedder.as_ref(),
+            self.kv_adapter.as_ref(),
+        )
+        .await
     }
 
     /// Runs hybrid FTS5, cosine vector, and `PersonalizedPageRank` recall fused via RRF.
     pub async fn recall(&self, req: RecallRequest) -> Result<RecallResponse> {
+        let policy = match &req.scope {
+            Some(s) => ScopePolicy::Allowed(vec![s.clone()]),
+            None => ScopePolicy::Unrestricted,
+        };
+        self.recall_with_policy(&req, &policy).await
+    }
+
+    async fn recall_with_policy(
+        &self,
+        req: &RecallRequest,
+        scope_policy: &ScopePolicy,
+    ) -> Result<RecallResponse> {
         let query_trimmed = req.query.trim();
         if query_trimmed.is_empty() && !req.include_hot_profile {
             return Err(AetherError::InvalidInput(
@@ -403,17 +462,19 @@ impl VaultEngine {
 
         let bundle = self
             .store
-            .recall_bundle(query_trimmed, &query_vec, req.scope.as_ref(), 32)
+            .recall_bundle(query_trimmed, &query_vec, scope_policy, 32)
             .await?;
 
         if query_trimmed.is_empty() {
-            return Ok(prefix::format_recall_response(
+            let mut resp = prefix::format_recall_response(
                 bundle.hot_amus,
                 Vec::new(),
                 self.config.hot_budget,
                 req.max_tokens,
                 req.include_hot_profile,
-            ));
+            );
+            self.attach_kv_hint(req, &mut resp).await?;
+            return Ok(resp);
         }
 
         let ppr = PersonalizedPageRank::default();
@@ -466,21 +527,94 @@ impl VaultEngine {
         });
         self.reranker.rerank(query_trimmed, &mut ranked_entries);
 
-        Ok(prefix::format_recall_response(
+        let mut resp = prefix::format_recall_response(
             bundle.hot_amus,
             ranked_entries,
             self.config.hot_budget,
             req.max_tokens,
             req.include_hot_profile,
-        ))
+        );
+        self.attach_kv_hint(req, &mut resp).await?;
+        Ok(resp)
+    }
+
+    async fn attach_kv_hint(&self, req: &RecallRequest, resp: &mut RecallResponse) -> Result<()> {
+        let Some(model_id) = req
+            .kv_model
+            .as_ref()
+            .or(self.config.default_kv_model.as_ref())
+        else {
+            return Ok(());
+        };
+
+        let now = Utc::now();
+        let scope = req.scope.clone().unwrap_or_else(ScopeTag::global);
+        let spec = KvBlockBuildSpec {
+            model_id,
+            scope: &scope,
+            tier: KvStorageTier::GpuHbm,
+            block_tokens: kv::DEFAULT_KV_BLOCK_TOKENS,
+            bytes_per_token: 65_536,
+            now,
+        };
+        let prefix_blocks =
+            kv::build_paged_prefix_blocks(&resp.static_prefix, &resp.prefix_hash, &spec);
+        let blend_blocks = kv::build_cache_blend_blocks(&resp.warm_cold_amus, &spec);
+
+        let prefix_block_hashes: Vec<KvBlockHash> = prefix_blocks
+            .iter()
+            .map(|b| b.block.block_hash.clone())
+            .collect();
+        let cache_blend_hashes: Vec<KvBlockHash> = blend_blocks
+            .iter()
+            .map(|b| b.block.block_hash.clone())
+            .collect();
+
+        let mut all_hashes =
+            Vec::with_capacity(prefix_block_hashes.len() + cache_blend_hashes.len());
+        all_hashes.extend(prefix_block_hashes.iter().cloned());
+        all_hashes.extend(cache_blend_hashes.iter().cloned());
+        let total_tokens: usize = prefix_blocks
+            .iter()
+            .chain(&blend_blocks)
+            .map(|b| b.block.token_count)
+            .sum();
+
+        if all_hashes.is_empty() {
+            return Ok(());
+        }
+
+        let hits = self.kv_adapter.lookup_blocks(model_id, &all_hashes).await?;
+        let cache_hit_tokens: usize = hits
+            .iter()
+            .map(|h| h.token_count)
+            .sum::<usize>()
+            .min(total_tokens);
+        let (_, _, estimated_ttft_saved_ms, _) =
+            kv::compute_ttft_savings(total_tokens, &hits, KvTimingProfile::default());
+
+        resp.kv_hint = Some(KvRecallHint {
+            model_id: model_id.clone(),
+            prefix_block_hashes,
+            cache_blend_hashes,
+            cache_hit_tokens,
+            total_tokens,
+            estimated_ttft_saved_ms,
+        });
+        Ok(())
     }
 
     /// Scans Daily/Journal/fleeting notes not yet recorded in `dream_watermarks`,
     /// extracts durable facts and temporal contradictions, and stages them in `Aether/Inbox.md`.
     pub async fn run_dream_pass(&self) -> Result<DreamReport> {
         let _guard = self.write_gate.lock().await;
-        let _ =
-            reconcile_inbox_inner(&self.vault_root, &self.store, self.embedder.as_ref()).await?;
+        let _ = reconcile_inbox_inner(
+            &self.vault_root,
+            &self.store,
+            self.embedder.as_ref(),
+            self.kv_adapter.as_ref(),
+        )
+        .await?;
 
         let rules = IgnoreRules::load(&self.vault_root);
         let scanned_files = scan_vault_markdown_files(&self.vault_root, rules).await?;
@@ -583,8 +717,13 @@ impl VaultEngine {
         approve: bool,
     ) -> Result<InboxReconcileReport> {
         let _guard = self.write_gate.lock().await;
-        let _ =
-            reconcile_inbox_inner(&self.vault_root, &self.store, self.embedder.as_ref()).await?;
+        let _ = reconcile_inbox_inner(
+            &self.vault_root,
+            &self.store,
+            self.embedder.as_ref(),
+            self.kv_adapter.as_ref(),
+        )
+        .await?;
 
         let pending = self.store.list_pending_candidates().await?;
         let mut found = false;
@@ -617,10 +756,11 @@ impl VaultEngine {
             )));
         }
 
-        let (compiled, rejected) = self
+        let (compiled, rejected, evicted_kv) = self
             .store
             .apply_inbox_decisions(&updated_entries, &compiled_amus)
             .await?;
+        evict_kv_hashes(self.kv_adapter.as_ref(), &evicted_kv).await;
 
         if compiled > 0 {
             let approved = self.store.list_approved_candidates().await?;
@@ -640,6 +780,14 @@ impl VaultEngine {
 
     /// Returns the exact verbatim Markdown section for `raw_pointer`, enforcing traversal and privacy guards.
     pub async fn inspect_source(&self, raw_pointer: &str) -> Result<String> {
+        self.inspect_source_inner(None, raw_pointer).await
+    }
+
+    async fn inspect_source_inner(
+        &self,
+        agent: Option<&ScopedApiKey>,
+        raw_pointer: &str,
+    ) -> Result<String> {
         let pointer = SourcePointer::parse(raw_pointer)?;
         let rules = IgnoreRules::load(&self.vault_root);
         if rules.is_ignored_for_inspect(pointer.relative_path()) {
@@ -670,7 +818,433 @@ impl VaultEngine {
             ))
         })?;
 
+        if let Some(scoped_agent) = agent {
+            if pointer
+                .relative_path()
+                .eq_ignore_ascii_case(APPROVED_MIRROR_REL_PATH)
+            {
+                let entries = inbox::parse_approved_mirror(&raw_md);
+                match pointer.heading_anchor() {
+                    Some(anchor) => {
+                        if let Some(entry) = entries
+                            .iter()
+                            .find(|e| e.candidate_id.as_str().eq_ignore_ascii_case(anchor))
+                        {
+                            if !scoped_agent
+                                .can_read_resource_scopes(std::slice::from_ref(&entry.scope))
+                            {
+                                return Err(AuthError::ScopeDenied {
+                                    agent_id: scoped_agent.agent_id.clone(),
+                                    requested: entry.scope.clone(),
+                                }
+                                .into());
+                            }
+                        }
+                    }
+                    None => {
+                        for entry in &entries {
+                            if !scoped_agent
+                                .can_read_resource_scopes(std::slice::from_ref(&entry.scope))
+                            {
+                                return Err(AuthError::ScopeDenied {
+                                    agent_id: scoped_agent.agent_id.clone(),
+                                    requested: entry.scope.clone(),
+                                }
+                                .into());
+                            }
+                        }
+                    }
+                }
+            } else {
+                if parser::is_private_note(&raw_md) {
+                    return Err(AetherError::InvalidInput(
+                        "cannot inspect source of a private note".into(),
+                    ));
+                }
+                let scopes = parser::inspect_note_scopes(pointer.relative_path(), &raw_md);
+                if !scoped_agent.can_read_resource_scopes(&scopes) {
+                    return Err(AuthError::ScopeDenied {
+                        agent_id: scoped_agent.agent_id.clone(),
+                        requested: scopes[0].clone(),
+                    }
+                    .into());
+                }
+            }
+        }
+
         parser::extract_verbatim_section(&raw_md, &pointer)
+    }
+
+    /// Issues a scoped API key persisted in SQLite (`agent_api_keys`) as SHA-256 only.
+    pub async fn issue_api_key(&self, req: IssueApiKeyRequest) -> Result<IssuedApiKey> {
+        let secret = ApiKeySecret::generate();
+        let key_hash = secret.digest();
+        let key = ScopedApiKey::new(
+            KeyId::generate(),
+            req.agent_id.clone(),
+            req.role,
+            req.scopes().to_vec(),
+            Utc::now(),
+            req.expires_at,
+            None,
+        )?;
+        self.store.insert_api_key(&key, &key_hash).await?;
+        Ok(IssuedApiKey { key, secret })
+    }
+
+    /// Ensures a bootstrap Admin key matching `secret` exists in SQLite (idempotent across restarts).
+    pub async fn ensure_bootstrap_admin_key(
+        &self,
+        agent_id: AgentId,
+        secret: &ApiKeySecret,
+    ) -> Result<ScopedApiKey> {
+        self.store
+            .ensure_bootstrap_admin_key(&agent_id, &secret.digest())
+            .await
+    }
+
+    /// Authenticates `secret` in constant time and verifies active status.
+    pub async fn authenticate_api_key(
+        &self,
+        secret: &ApiKeySecret,
+    ) -> std::result::Result<ScopedApiKey, AuthError> {
+        self.store
+            .authenticate_api_key(&secret.digest(), Utc::now())
+            .await
+    }
+
+    pub async fn list_api_keys(&self) -> Result<Vec<ScopedApiKey>> {
+        self.store.list_api_keys().await
+    }
+
+    pub async fn revoke_api_key(&self, key_id: &KeyId) -> Result<bool> {
+        self.store.revoke_api_key(key_id, Utc::now()).await
+    }
+
+    /// Executes scoped recall intersecting `agent.scopes()` with `req.scope`.
+    pub async fn recall_as(
+        &self,
+        agent: &ScopedApiKey,
+        req: RecallRequest,
+    ) -> Result<RecallResponse> {
+        agent.require_role(AgentRole::Reader)?;
+        let policy = if agent.has_wildcard_scope() && req.scope.is_none() {
+            ScopePolicy::Unrestricted
+        } else {
+            let effective = agent.intersect_scopes(req.scope.as_ref())?;
+            ScopePolicy::Allowed(effective)
+        };
+        self.recall_with_policy(&req, &policy).await
+    }
+
+    /// Executes scoped memory staging, auto-stamping `proposed_by` with `agent.agent_id`.
+    pub async fn stage_memory_as(
+        &self,
+        agent: &ScopedApiKey,
+        mut req: StageMemoryRequest,
+    ) -> Result<CandidateId> {
+        agent.require_role(AgentRole::Contributor)?;
+        agent.authorize_write_scope(&req.scope)?;
+        req.proposed_by = agent.agent_id.as_str().to_string();
+        self.stage_memory(req).await
+    }
+
+    /// Executes scoped source inspection, denying cross-scope vault notes and `Approved.md` entries.
+    pub async fn inspect_source_as(
+        &self,
+        agent: &ScopedApiKey,
+        raw_pointer: &str,
+    ) -> Result<String> {
+        agent.require_role(AgentRole::Reader)?;
+        self.inspect_source_inner(Some(agent), raw_pointer).await
+    }
+
+    pub async fn pending_inbox_as(&self, agent: &ScopedApiKey) -> Result<Vec<InboxEntry>> {
+        agent.require_role(AgentRole::Reader)?;
+        let pending = self.pending_inbox().await?;
+        Ok(pending
+            .into_iter()
+            .filter(|entry| agent.can_read_resource_scopes(std::slice::from_ref(&entry.scope)))
+            .collect())
+    }
+
+    /// Synchronizes a Git-backed team vault, resolving Aether Inbox/Approved conflicts via
+    /// monotonic lattice merge and preserving prior active AMUs for conflicted human notes.
+    pub async fn git_sync(&self, opts: GitSyncOptions) -> Result<GitSyncReport> {
+        let _guard = self.write_gate.lock().await;
+        let _ = reconcile_inbox_inner(
+            &self.vault_root,
+            &self.store,
+            self.embedder.as_ref(),
+            self.kv_adapter.as_ref(),
+        )
+        .await?;
+
+        let vault_root_ignore = self.vault_root.clone();
+        tokio::task::spawn_blocking(move || {
+            git::ensure_aether_gitignored_blocking(&vault_root_ignore)
+        })
+        .await
+        .map_err(|err| AetherError::Permanent {
+            connector: "vault-git",
+            message: format!("gitignore task join error: {err}"),
+        })??;
+
+        let vault_root_fetch = self.vault_root.clone();
+        let remote_fetch = opts.remote.clone();
+        let branch_fetch = opts.branch.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            git::run_git_fetch_merge_blocking(
+                &vault_root_fetch,
+                &remote_fetch,
+                branch_fetch.as_deref(),
+            )
+        })
+        .await
+        .map_err(|err| AetherError::Permanent {
+            connector: "vault-git",
+            message: format!("git fetch/merge task join error: {err}"),
+        })??;
+
+        let aether_conflicts_resolved = reconcile_aether_lattice_inner(
+            &self.vault_root,
+            &self.store,
+            self.embedder.as_ref(),
+            self.kv_adapter.as_ref(),
+            &outcome,
+        )
+        .await?;
+
+        let mut remaining_unmerged = Vec::new();
+        let mut conflicted_files = Vec::new();
+        for rel in &outcome.unmerged_paths {
+            if rel.eq_ignore_ascii_case(INBOX_REL_PATH)
+                || rel.eq_ignore_ascii_case(APPROVED_MIRROR_REL_PATH)
+            {
+                continue;
+            }
+            remaining_unmerged.push(rel.clone());
+            if let Ok(vp) = VaultPath::parse(rel) {
+                conflicted_files.push(vp);
+            }
+        }
+
+        let commit_merge = outcome.in_merge_state && remaining_unmerged.is_empty();
+        let do_push = opts.push && remaining_unmerged.is_empty();
+        let vault_root_fin = self.vault_root.clone();
+        let remote_fin = opts.remote.clone();
+        let branch_fin = outcome.branch.clone();
+        let msg_fin = opts.commit_message.clone();
+        let (head_commit, pushed) = tokio::task::spawn_blocking(move || {
+            git::finalize_git_merge_and_push_blocking(
+                &vault_root_fin,
+                &[INBOX_REL_PATH, APPROVED_MIRROR_REL_PATH],
+                commit_merge,
+                &remote_fin,
+                &branch_fin,
+                do_push,
+                msg_fin.as_deref(),
+            )
+        })
+        .await
+        .map_err(|err| AetherError::Permanent {
+            connector: "vault-git",
+            message: format!("git finalize task join error: {err}"),
+        })??;
+
+        let sync_report = sync_vault_inner(
+            &self.vault_root,
+            &self.store,
+            self.embedder.as_ref(),
+            self.kv_adapter.as_ref(),
+            &self.config.project_id,
+        )
+        .await?;
+
+        Ok(GitSyncReport {
+            remote: redact_url_userinfo(&opts.remote),
+            branch: outcome.branch,
+            head_commit,
+            merged_cleanly: remaining_unmerged.is_empty() && conflicted_files.is_empty(),
+            aether_conflicts_resolved,
+            conflicted_files,
+            sync_report,
+            pushed,
+        })
+    }
+
+    /// Pre-warms PagedAttention prefix blocks and CacheBlend AMU chunks for `req.model_id`.
+    pub async fn warm_kv_cache(&self, req: WarmKvRequest) -> Result<KvWarmReport> {
+        let policy = match &req.scope {
+            Some(s) => ScopePolicy::Allowed(vec![s.clone()]),
+            None => ScopePolicy::Unrestricted,
+        };
+        self.warm_kv_cache_with_policy(&req, &policy).await
+    }
+
+    /// Scoped KV-cache warming requiring `Contributor+` role and permitted `ScopeTag`.
+    pub async fn warm_kv_cache_as(
+        &self,
+        agent: &ScopedApiKey,
+        req: WarmKvRequest,
+    ) -> Result<KvWarmReport> {
+        agent.require_role(AgentRole::Contributor)?;
+        let policy = if agent.has_wildcard_scope() && req.scope.is_none() {
+            ScopePolicy::Unrestricted
+        } else {
+            let effective = agent.intersect_scopes(req.scope.as_ref())?;
+            ScopePolicy::Allowed(effective)
+        };
+        self.warm_kv_cache_with_policy(&req, &policy).await
+    }
+
+    async fn warm_kv_cache_with_policy(
+        &self,
+        req: &WarmKvRequest,
+        policy: &ScopePolicy,
+    ) -> Result<KvWarmReport> {
+        let bundle = self.store.recall_bundle("", &[], policy, 0).await?;
+        let now = Utc::now();
+        let bytes_per_token = 65_536;
+        let scope = req.scope.clone().unwrap_or_else(ScopeTag::global);
+        let spec = kv::KvBlockBuildSpec {
+            model_id: &req.model_id,
+            scope: &scope,
+            tier: req.target_tier,
+            block_tokens: req.block_tokens,
+            bytes_per_token,
+            now,
+        };
+        let mut warm_inputs: Vec<KvWarmBlockInput> = Vec::new();
+
+        if req.include_hot_prefix {
+            let hot_resp = prefix::format_recall_response(
+                bundle.hot_amus,
+                Vec::new(),
+                self.config.hot_budget,
+                self.config.hot_budget,
+                true,
+            );
+            warm_inputs.extend(kv::build_paged_prefix_blocks(
+                &hot_resp.static_prefix,
+                &hot_resp.prefix_hash,
+                &spec,
+            ));
+        }
+
+        if req.include_cache_blend {
+            let id_filter: Option<HashSet<AmuId>> = req
+                .amu_ids
+                .as_ref()
+                .map(|ids| ids.iter().copied().collect());
+            let mut non_hot: Vec<Amu> = bundle
+                .amus_by_memory_id
+                .into_values()
+                .filter(|a| {
+                    a.tier != VaultTier::Hot
+                        && a.status == AmuStatus::Active
+                        && id_filter.as_ref().is_none_or(|set| set.contains(&a.amu_id))
+                })
+                .collect();
+            non_hot.sort_by_key(|a| a.amu_id);
+            warm_inputs.extend(kv::build_cache_blend_blocks(&non_hot, &spec));
+        }
+
+        let block_hashes: Vec<KvBlockHash> = warm_inputs
+            .iter()
+            .map(|b| b.block.block_hash.clone())
+            .collect();
+        let total_tokens: usize = warm_inputs.iter().map(|b| b.block.token_count).sum();
+
+        let batch = KvWarmBatch {
+            model_id: req.model_id.clone(),
+            target_tier: req.target_tier,
+            blocks: warm_inputs.clone(),
+        };
+        let outcome = self.kv_adapter.warm_blocks(&batch).await?;
+
+        let placements: HashMap<KvBlockHash, KvStorageTier> =
+            outcome.placements.iter().cloned().collect();
+        let persisted_blocks: Vec<KvCacheBlock> = warm_inputs
+            .into_iter()
+            .filter_map(|mut item| {
+                placements.get(&item.block.block_hash).map(|tier| {
+                    item.block.tier = *tier;
+                    item.block
+                })
+            })
+            .collect();
+        self.store
+            .upsert_kv_blocks(&persisted_blocks, &outcome.evicted_hashes)
+            .await?;
+
+        let hits = self
+            .kv_adapter
+            .lookup_blocks(&req.model_id, &block_hashes)
+            .await?;
+        let (baseline_ms, warmed_ms, saved_ms, reduction_pct) =
+            kv::compute_ttft_savings(total_tokens, &hits, KvTimingProfile::default());
+
+        Ok(KvWarmReport {
+            model_id: req.model_id.clone(),
+            target_tier: req.target_tier,
+            blocks_warmed: outcome.blocks_warmed,
+            blocks_reused: outcome.blocks_reused,
+            tokens_warmed: total_tokens,
+            estimated_baseline_ttft_ms: baseline_ms,
+            estimated_warmed_ttft_ms: warmed_ms,
+            estimated_ttft_saved_ms: saved_ms,
+            ttft_reduction_pct: reduction_pct,
+            fallback_used: outcome.fallback_used,
+            block_hashes,
+        })
+    }
+
+    pub async fn kv_stats(&self, model_id: Option<&ModelId>) -> Result<KvCacheStats> {
+        let blocks = self.store.query_kv_blocks(model_id).await?;
+        let mut total_tokens = 0usize;
+        let mut total_bytes = 0usize;
+        let mut models_set: HashSet<ModelId> = HashSet::new();
+        let mut persisted_usage = KvTierUsage::default();
+        for b in &blocks {
+            total_tokens += b.token_count;
+            total_bytes += b.byte_size;
+            models_set.insert(b.model_id.clone());
+            match b.tier {
+                KvStorageTier::GpuHbm => {
+                    persisted_usage.gpu_hbm_blocks += 1;
+                    persisted_usage.gpu_hbm_tokens += b.token_count;
+                }
+                KvStorageTier::HostDram => {
+                    persisted_usage.host_dram_blocks += 1;
+                    persisted_usage.host_dram_tokens += b.token_count;
+                }
+                KvStorageTier::NvmeSsd => {
+                    persisted_usage.nvme_ssd_blocks += 1;
+                    persisted_usage.nvme_ssd_tokens += b.token_count;
+                }
+            }
+        }
+        let tier_usage = if model_id.is_some() {
+            persisted_usage
+        } else {
+            let live = self.kv_adapter.stats().await?;
+            if live.gpu_hbm_blocks + live.host_dram_blocks + live.nvme_ssd_blocks > 0 {
+                live
+            } else {
+                persisted_usage
+            }
+        };
+        let mut models: Vec<ModelId> = models_set.into_iter().collect();
+        models.sort();
+        Ok(KvCacheStats {
+            adapter_id: self.kv_adapter.id().to_string(),
+            persisted_blocks: blocks.len(),
+            total_tokens,
+            total_bytes,
+            tier_usage,
+            models,
+        })
     }
 
     /// Stops any active background polling loop and closes the SQLite connection.
@@ -696,10 +1270,41 @@ async fn sync_vault_inner(
     vault_root: &Path,
     store: &VaultStore,
     embedder: &dyn Embedder,
+    kv_adapter: &dyn KvCacheAdapter,
     _project_id: &nytheris_aether_core::ProjectId,
 ) -> Result<SyncReport> {
     let mut report = SyncReport::default();
-    let inbox_rep = reconcile_inbox_inner(vault_root, store, embedder).await?;
+    let manifest = store.file_manifest().await?;
+    let inbox_has_conflicts = tokio::fs::read_to_string(vault_root.join(INBOX_REL_PATH))
+        .await
+        .ok()
+        .is_some_and(|s| git::has_unresolved_conflict_markers(&s));
+    let approved_path = vault_root.join(APPROVED_MIRROR_REL_PATH);
+    let approved_changed_externally = if let Ok(bytes) = tokio::fs::read(&approved_path).await {
+        let hash = ContentHash::compute(&bytes);
+        let text = String::from_utf8_lossy(&bytes);
+        git::has_unresolved_conflict_markers(&text)
+            || (!store
+                .consume_self_write(APPROVED_MIRROR_REL_PATH, &hash)
+                .await?
+                && manifest.get(APPROVED_MIRROR_REL_PATH) != Some(&hash))
+    } else {
+        false
+    };
+    if inbox_has_conflicts || approved_changed_externally {
+        let empty_outcome = git::GitMergeOutcome {
+            branch: String::new(),
+            unmerged_paths: Vec::new(),
+            inbox_stages: Vec::new(),
+            approved_stages: Vec::new(),
+            in_merge_state: false,
+        };
+        let _ =
+            reconcile_aether_lattice_inner(vault_root, store, embedder, kv_adapter, &empty_outcome)
+                .await?;
+    }
+
+    let inbox_rep = reconcile_inbox_inner(vault_root, store, embedder, kv_adapter).await?;
     report.inbox_approved = inbox_rep.compiled;
     report.inbox_rejected = inbox_rep.rejected;
 
@@ -757,20 +1362,26 @@ async fn sync_vault_inner(
             Ok(s) => s,
             Err(_) => continue,
         };
+        if git::has_unresolved_conflict_markers(&raw_md) {
+            tracing::warn!(rel_path = %rel_posix, "skipping note with unresolved git conflict markers");
+            continue;
+        }
         pending_updates.push((vault_path, hash, raw_md));
     }
 
     for (vault_path, hash, raw_md) in pending_updates {
         match parser::parse_note(vault_path.as_str(), &raw_md, Utc::now(), embedder)? {
             ParsedNote::Private => {
-                store.remove_file(vault_path.as_str(), Some(&hash)).await?;
+                let (_, evicted_kv) = store.remove_file(vault_path.as_str(), Some(&hash)).await?;
+                evict_kv_hashes(kv_adapter, &evicted_kv).await;
                 report.private_skipped += 1;
             }
             ParsedNote::Public(mut sections) => {
                 resolve_wikilink_targets(&mut sections, &note_stem_to_entity);
-                let count = store
+                let (count, evicted_kv) = store
                     .commit_file_sections(&vault_path, &hash, &sections)
                     .await?;
+                evict_kv_hashes(kv_adapter, &evicted_kv).await;
                 report.files_updated += 1;
                 report.amus_indexed += count;
             }
@@ -783,8 +1394,12 @@ async fn sync_vault_inner(
         {
             continue;
         }
-        if !seen_paths.contains(old_path) && store.remove_file(old_path, None).await? {
-            report.files_removed += 1;
+        if !seen_paths.contains(old_path) {
+            let (removed, evicted_kv) = store.remove_file(old_path, None).await?;
+            evict_kv_hashes(kv_adapter, &evicted_kv).await;
+            if removed {
+                report.files_removed += 1;
+            }
         }
     }
 
@@ -844,10 +1459,110 @@ fn resolve_wikilink_targets(sections: &mut [ParsedSection], stem_map: &HashMap<S
     }
 }
 
+async fn reconcile_aether_lattice_inner(
+    vault_root: &Path,
+    store: &VaultStore,
+    embedder: &dyn Embedder,
+    kv_adapter: &dyn KvCacheAdapter,
+    outcome: &git::GitMergeOutcome,
+) -> Result<usize> {
+    let inbox_path = vault_root.join(INBOX_REL_PATH);
+    let mirror_path = vault_root.join(APPROVED_MIRROR_REL_PATH);
+    let disk_inbox = tokio::fs::read_to_string(&inbox_path).await.ok();
+    let disk_approved = tokio::fs::read_to_string(&mirror_path).await.ok();
+
+    let mut conflicts_resolved = 0usize;
+    if outcome
+        .unmerged_paths
+        .iter()
+        .any(|p| p.eq_ignore_ascii_case(INBOX_REL_PATH))
+        || disk_inbox
+            .as_deref()
+            .is_some_and(git::has_unresolved_conflict_markers)
+    {
+        conflicts_resolved += 1;
+    }
+    if outcome
+        .unmerged_paths
+        .iter()
+        .any(|p| p.eq_ignore_ascii_case(APPROVED_MIRROR_REL_PATH))
+        || disk_approved
+            .as_deref()
+            .is_some_and(git::has_unresolved_conflict_markers)
+    {
+        conflicts_resolved += 1;
+    }
+
+    let db_pending = store.list_pending_candidates().await?;
+    let db_approved = store.list_approved_candidates().await?;
+    let db_rejected = store.list_rejected_candidates().await?;
+
+    let mut inbox_snapshots: Vec<&str> = Vec::new();
+    if let Some(ref s) = disk_inbox {
+        inbox_snapshots.push(s.as_str());
+    }
+    for s in &outcome.inbox_stages {
+        inbox_snapshots.push(s.as_str());
+    }
+
+    let mut approved_snapshots: Vec<&str> = Vec::new();
+    if let Some(ref s) = disk_approved {
+        approved_snapshots.push(s.as_str());
+    }
+    for s in &outcome.approved_stages {
+        approved_snapshots.push(s.as_str());
+    }
+
+    let merged = git::merge_aether_lattice(
+        &db_pending,
+        &db_approved,
+        &db_rejected,
+        &inbox_snapshots,
+        &approved_snapshots,
+    );
+    if merged.is_empty() {
+        return Ok(conflicts_resolved);
+    }
+
+    let mut pending = Vec::new();
+    let mut approved_compiled = Vec::new();
+    let mut rejected = Vec::new();
+    for item in merged.into_values() {
+        match item.status {
+            git::CandidateLatticeStatus::Pending => pending.push(item.entry),
+            git::CandidateLatticeStatus::Rejected => rejected.push(item.entry),
+            git::CandidateLatticeStatus::Approved => {
+                let (amu, emb) = build_compiled_amu(&item.entry, embedder)?;
+                approved_compiled.push((item.entry, amu, emb));
+            }
+        }
+    }
+
+    let evicted_kv = store
+        .apply_lattice_state(&pending, &approved_compiled, &rejected)
+        .await?;
+    evict_kv_hashes(kv_adapter, &evicted_kv).await;
+
+    let mut all_approved = store.list_approved_candidates().await?;
+    all_approved.sort_by(|a, b| a.candidate_id.cmp(&b.candidate_id));
+    if !all_approved.is_empty() || mirror_path.exists() {
+        write_approved_mirror_atomically(vault_root, store, &all_approved).await?;
+    }
+
+    let mut all_pending = store.list_pending_candidates().await?;
+    all_pending.sort_by(|a, b| a.candidate_id.cmp(&b.candidate_id));
+    if !all_pending.is_empty() || inbox_path.exists() {
+        write_inbox_atomically(vault_root, store, &all_pending).await?;
+    }
+
+    Ok(conflicts_resolved)
+}
+
 async fn reconcile_inbox_inner(
     vault_root: &Path,
     store: &VaultStore,
     embedder: &dyn Embedder,
+    kv_adapter: &dyn KvCacheAdapter,
 ) -> Result<InboxReconcileReport> {
     let inbox_path = vault_root.join(INBOX_REL_PATH);
     let pending_in_db = store.list_pending_candidates().await?;
@@ -904,9 +1619,10 @@ async fn reconcile_inbox_inner(
         }
     }
 
-    let (compiled, rejected) = store
+    let (compiled, rejected, evicted_kv) = store
         .apply_inbox_decisions(&parsed_entries, &compiled_amus)
         .await?;
+    evict_kv_hashes(kv_adapter, &evicted_kv).await;
 
     let mirror_path = vault_root.join(APPROVED_MIRROR_REL_PATH);
     if compiled > 0 || !mirror_path.exists() {
@@ -927,6 +1643,15 @@ async fn reconcile_inbox_inner(
         rejected,
         remaining_pending: remaining_pending.len(),
     })
+}
+
+async fn evict_kv_hashes(kv_adapter: &dyn KvCacheAdapter, hashes: &[KvBlockHash]) {
+    if hashes.is_empty() {
+        return;
+    }
+    if let Err(err) = kv_adapter.evict_blocks(hashes).await {
+        tracing::warn!(error = %err, count = hashes.len(), "failed to evict invalidated KV cache blocks");
+    }
 }
 
 fn build_compiled_amu(entry: &InboxEntry, embedder: &dyn Embedder) -> Result<(Amu, Vec<f32>)> {
@@ -1397,5 +2122,390 @@ mod tests {
             .contains("Use Qdrant for local vector search."));
 
         engine.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn scoped_api_keys_enforce_recall_stage_inspect_and_revocation() {
+        let vault = TempVault::new();
+        vault.write(
+            "Engineering/DB.md",
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# DB\nUse WAL mode in SQLite.\n",
+        );
+        vault.write(
+            "Ops/Runbook.md",
+            "---\naether_tier: warm\naether_scope:\n  - ops\n---\n# Failover\nSentinel quorum is 2.\n",
+        );
+        vault.write(
+            "HR/Compensation.md",
+            "---\naether_tier: warm\naether_scope:\n  - hr\n---\n# Bands\nExecutive compensation bands.\n",
+        );
+
+        let engine = VaultEngine::open(VaultConfig::in_memory(&vault.root))
+            .await
+            .unwrap();
+
+        let issued_eng_ops = engine
+            .issue_api_key(
+                IssueApiKeyRequest::new(
+                    AgentId::new("ci-platform").unwrap(),
+                    AgentRole::Contributor,
+                    vec![
+                        ScopeTag::new("engineering").unwrap(),
+                        ScopeTag::new("ops").unwrap(),
+                    ],
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let parsed_secret = ApiKeySecret::parse(issued_eng_ops.secret.expose_secret()).unwrap();
+        let authed = engine.authenticate_api_key(&parsed_secret).await.unwrap();
+        assert_eq!(authed.key_id, issued_eng_ops.key.key_id);
+
+        let multi_res = engine
+            .recall_as(&authed, RecallRequest::new("SQLite Sentinel Executive"))
+            .await
+            .unwrap();
+        assert!(multi_res.formatted_context.contains("WAL mode"));
+        assert!(multi_res.formatted_context.contains("Sentinel quorum"));
+        assert!(!multi_res
+            .formatted_context
+            .contains("Executive compensation"));
+
+        let mut bad_req = RecallRequest::new("Executive");
+        bad_req.scope = Some(ScopeTag::new("hr").unwrap());
+        assert!(engine.recall_as(&authed, bad_req).await.is_err());
+
+        assert!(engine
+            .stage_memory_as(
+                &authed,
+                StageMemoryRequest::new("Unauthorized HR claim.", VaultTier::Warm)
+                    .with_scope("hr")
+                    .unwrap(),
+            )
+            .await
+            .is_err());
+
+        let eng_cand = engine
+            .stage_memory_as(
+                &authed,
+                StageMemoryRequest::new("Prefer connection pooling.", VaultTier::Warm)
+                    .with_scope("engineering")
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let pending = engine.pending_inbox_as(&authed).await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].proposed_by, "ci-platform");
+
+        let hr_cand = engine
+            .stage_memory(
+                StageMemoryRequest::new("HR bonus target is 15 percent.", VaultTier::Warm)
+                    .with_scope("hr")
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        engine
+            .decide_inbox_candidate(&eng_cand, true)
+            .await
+            .unwrap();
+        engine.decide_inbox_candidate(&hr_cand, true).await.unwrap();
+
+        assert!(engine
+            .inspect_source_as(&authed, "Engineering/DB.md#DB")
+            .await
+            .is_ok());
+        assert!(engine
+            .inspect_source_as(&authed, &format!("Aether/Compiled/Approved.md#{eng_cand}"))
+            .await
+            .is_ok());
+        assert!(engine
+            .inspect_source_as(&authed, "HR/Compensation.md#Bands")
+            .await
+            .is_err());
+        assert!(engine
+            .inspect_source_as(&authed, &format!("Aether/Compiled/Approved.md#{hr_cand}"))
+            .await
+            .is_err());
+
+        let reader = engine
+            .issue_api_key(
+                IssueApiKeyRequest::new(
+                    AgentId::new("readonly-bot").unwrap(),
+                    AgentRole::Reader,
+                    vec![ScopeTag::new("engineering").unwrap()],
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(engine
+            .stage_memory_as(
+                &reader.key,
+                StageMemoryRequest::new("Should be rejected.", VaultTier::Warm)
+                    .with_scope("engineering")
+                    .unwrap(),
+            )
+            .await
+            .is_err());
+
+        assert!(engine
+            .revoke_api_key(&issued_eng_ops.key.key_id)
+            .await
+            .unwrap());
+        assert!(matches!(
+            engine.authenticate_api_key(&parsed_secret).await,
+            Err(AuthError::RevokedToken(_))
+        ));
+
+        let admin_secret = ApiKeySecret::generate();
+        let admin_a = engine
+            .ensure_bootstrap_admin_key(AgentId::new("bootstrap-admin").unwrap(), &admin_secret)
+            .await
+            .unwrap();
+        let admin_b = engine
+            .ensure_bootstrap_admin_key(AgentId::new("bootstrap-admin").unwrap(), &admin_secret)
+            .await
+            .unwrap();
+        assert_eq!(admin_a.key_id, admin_b.key_id);
+        assert_eq!(engine.list_api_keys().await.unwrap().len(), 3);
+
+        engine.shutdown().await.unwrap();
+    }
+
+    fn run_git_ok(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "Test User")
+            .env("GIT_AUTHOR_EMAIL", "test@aether.local")
+            .env("GIT_COMMITTER_NAME", "Test User")
+            .env("GIT_COMMITTER_EMAIL", "test@aether.local")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed in {}: {}",
+            args,
+            dir.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[tokio::test]
+    async fn git_sync_resolves_aether_lattice_conflicts_and_preserves_conflicted_note_amus() {
+        let base_dir = std::env::temp_dir().join(format!("aether_git_team_{}", Uuid::new_v4()));
+        let bare_dir = base_dir.join("origin.git");
+        let alice_dir = base_dir.join("alice");
+        let bob_dir = base_dir.join("bob");
+        fs::create_dir_all(&bare_dir).unwrap();
+        fs::create_dir_all(&alice_dir).unwrap();
+
+        run_git_ok(&bare_dir, &["init", "--bare", "-b", "main"]);
+        run_git_ok(&alice_dir, &["init", "-b", "main"]);
+        fs::write(
+            alice_dir.join("Arch.md"),
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Engine\nOriginal clean architecture rule.\n",
+        )
+        .unwrap();
+        run_git_ok(&alice_dir, &["add", "."]);
+        run_git_ok(&alice_dir, &["commit", "-m", "initial vault"]);
+        run_git_ok(
+            &alice_dir,
+            &["remote", "add", "origin", bare_dir.to_str().unwrap()],
+        );
+        run_git_ok(&alice_dir, &["push", "-u", "origin", "main"]);
+        run_git_ok(
+            &base_dir,
+            &[
+                "clone",
+                bare_dir.to_str().unwrap(),
+                bob_dir.to_str().unwrap(),
+            ],
+        );
+
+        let alice_engine = VaultEngine::open(VaultConfig::new(&alice_dir))
+            .await
+            .unwrap();
+        let bob_engine = VaultEngine::open(VaultConfig::new(&bob_dir)).await.unwrap();
+
+        let shared_req = StageMemoryRequest::new("Shared WAL rule.", VaultTier::Warm)
+            .with_scope("engineering")
+            .unwrap();
+        let shared_cid = alice_engine.stage_memory(shared_req.clone()).await.unwrap();
+        let bob_shared_cid = bob_engine.stage_memory(shared_req).await.unwrap();
+        assert_eq!(shared_cid, bob_shared_cid);
+
+        alice_engine
+            .decide_inbox_candidate(&shared_cid, true)
+            .await
+            .unwrap();
+        let alice_only_cid = alice_engine
+            .stage_memory(
+                StageMemoryRequest::new("Alice pending rule.", VaultTier::Warm)
+                    .with_scope("engineering")
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        fs::write(
+            alice_dir.join("Arch.md"),
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Engine\nAlice updated architecture rule.\n",
+        )
+        .unwrap();
+        run_git_ok(&alice_dir, &["add", "Arch.md", "Aether/"]);
+        run_git_ok(&alice_dir, &["commit", "-m", "alice updates"]);
+        run_git_ok(&alice_dir, &["push", "origin", "main"]);
+
+        let bob_only_cid = bob_engine
+            .stage_memory(
+                StageMemoryRequest::new("Bob pending rule.", VaultTier::Warm)
+                    .with_scope("engineering")
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        fs::write(
+            bob_dir.join("Arch.md"),
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Engine\nBob updated architecture rule.\n",
+        )
+        .unwrap();
+        run_git_ok(&bob_dir, &["add", "Arch.md", "Aether/"]);
+        run_git_ok(&bob_dir, &["commit", "-m", "bob updates"]);
+
+        let report = bob_engine
+            .git_sync(GitSyncOptions::new().with_push(false))
+            .await
+            .unwrap();
+
+        assert!(!report.merged_cleanly);
+        assert!(report.aether_conflicts_resolved >= 1);
+        assert_eq!(
+            report.conflicted_files,
+            vec![VaultPath::parse("Arch.md").unwrap()]
+        );
+        assert!(!report.pushed);
+
+        let gitignore = fs::read_to_string(bob_dir.join(".gitignore")).unwrap();
+        assert!(gitignore.contains(".aether/"));
+
+        let approved_md = fs::read_to_string(bob_dir.join("Aether/Compiled/Approved.md")).unwrap();
+        assert!(approved_md.contains(shared_cid.as_str()));
+        let inbox_md = fs::read_to_string(bob_dir.join("Aether/Inbox.md")).unwrap();
+        assert!(!inbox_md.contains(shared_cid.as_str()));
+        assert!(inbox_md.contains(alice_only_cid.as_str()));
+        assert!(inbox_md.contains(bob_only_cid.as_str()));
+
+        let recalled = bob_engine
+            .recall(RecallRequest::new(
+                "Original clean architecture rule Shared WAL",
+            ))
+            .await
+            .unwrap();
+        assert!(recalled.formatted_context.contains("Shared WAL rule."));
+        assert!(recalled
+            .formatted_context
+            .contains("Original clean architecture rule."));
+        assert!(!recalled.formatted_context.contains("<<<<<<<"));
+
+        alice_engine.shutdown().await.unwrap();
+        bob_engine.shutdown().await.unwrap();
+        let _ = fs::remove_dir_all(&base_dir);
+    }
+
+    #[tokio::test]
+    async fn kv_warming_hydrates_populates_recall_hints_and_evicts_on_supersede() {
+        let vault = TempVault::new();
+        vault.write(
+            "Profile/Rules.md",
+            "---\naether_tier: hot\naether_scope:\n  - global\naether_kind: rule\n---\n# Rules\nAlways use SQLite WAL mode and keep commits atomic.\n",
+        );
+        vault.write(
+            "Arch/Vector.md",
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Engine\nUse Qdrant for local vector search.\n",
+        );
+
+        let model = ModelId::new("Qwen/Qwen2.5-32B-Instruct").unwrap();
+        let adapter: Arc<dyn KvCacheAdapter> = Arc::new(InMemoryKvCacheAdapter::default());
+        let engine = VaultEngine::open(
+            VaultConfig::new(&vault.root)
+                .with_kv_adapter(Arc::clone(&adapter))
+                .with_default_kv_model(model.clone()),
+        )
+        .await
+        .unwrap();
+
+        let warm_rep = engine
+            .warm_kv_cache(
+                WarmKvRequest::new(model.clone()).with_scope(ScopeTag::new("engineering").unwrap()),
+            )
+            .await
+            .unwrap();
+        assert!(warm_rep.blocks_warmed >= 2);
+        assert!(warm_rep.ttft_reduction_pct >= 80.0);
+
+        let mut req = RecallRequest::new("local vector search Qdrant");
+        req.scope = Some(ScopeTag::new("engineering").unwrap());
+        let recalled = engine.recall(req).await.unwrap();
+        let hint = recalled.kv_hint.expect("kv_hint must be populated");
+        assert_eq!(hint.model_id, model);
+        assert!(hint.cache_hit_tokens > 0);
+        assert!(hint.estimated_ttft_saved_ms > 0.0);
+
+        let old_ptr = SourcePointer::parse("Arch/Vector.md#Engine").unwrap();
+        let old_amu = AmuId::from_pointer(&old_ptr);
+        let old_hash =
+            KvBlockHash::cache_blend(&model, old_amu, &recalled.warm_cold_amus[0].content_hash);
+        assert_eq!(
+            adapter
+                .lookup_blocks(&model, std::slice::from_ref(&old_hash))
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let cand_id = engine
+            .stage_memory(
+                StageMemoryRequest::new(
+                    "Switched local vector search to LanceDB.",
+                    VaultTier::Warm,
+                )
+                .with_scope("engineering")
+                .unwrap()
+                .with_supersedes(old_amu),
+            )
+            .await
+            .unwrap();
+        engine.decide_inbox_candidate(&cand_id, true).await.unwrap();
+
+        assert!(adapter
+            .lookup_blocks(&model, &[old_hash])
+            .await
+            .unwrap()
+            .is_empty());
+
+        let stats_before_restart = engine.kv_stats(Some(&model)).await.unwrap();
+        assert!(stats_before_restart.persisted_blocks >= 1);
+        engine.shutdown().await.unwrap();
+
+        let fresh_adapter: Arc<dyn KvCacheAdapter> = Arc::new(InMemoryKvCacheAdapter::default());
+        let reopened = VaultEngine::open(
+            VaultConfig::new(&vault.root)
+                .with_kv_adapter(Arc::clone(&fresh_adapter))
+                .with_default_kv_model(model.clone()),
+        )
+        .await
+        .unwrap();
+        let stats_after_restart = reopened.kv_stats(Some(&model)).await.unwrap();
+        assert_eq!(
+            stats_after_restart.persisted_blocks,
+            stats_before_restart.persisted_blocks
+        );
+        reopened.shutdown().await.unwrap();
     }
 }

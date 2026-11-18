@@ -1,5 +1,13 @@
-import {AetherControlClient} from './api.ts';
-import type {DreamReport, InboxDecision, InboxEntry, VaultStatusReport} from './types.ts';
+import {AetherControlClient, type AetherClientOptions, type FetchLike} from './api.ts';
+import type {
+  DreamReport,
+  GitSyncOptionsRequest,
+  GitSyncReport,
+  InboxDecision,
+  InboxEntry,
+  KvWarmReport,
+  VaultStatusReport,
+} from './types.ts';
 
 export interface StatusBarHandle {
   setText(text: string): void;
@@ -27,6 +35,15 @@ export function formatStatusBarText(status: VaultStatusReport | null): string {
 
 export function formatDreamNotice(report: DreamReport): string {
   return `Aether Dream pass: scanned ${report.daily_notes_scanned} note(s), staged ${report.candidates_staged} candidate(s), flagged ${report.contradictions_flagged} contradiction(s).`;
+}
+
+export function formatGitSyncNotice(report: GitSyncReport): string {
+  const statusLabel = report.merged_cleanly ? 'clean' : `${report.conflicted_files.length} conflict(s)`;
+  return `Aether Git sync (${report.branch}, ${statusLabel}): indexed ${report.sync_report.amus_indexed} AMU(s), resolved ${report.aether_conflicts_resolved} Aether conflict(s).`;
+}
+
+export function formatKvWarmNotice(report: KvWarmReport): string {
+  return `Aether KV warm (${report.model_id}): warmed ${report.blocks_warmed} block(s) across ${report.tokens_warmed} token(s), ${report.ttft_reduction_pct.toFixed(1)}% TTFT reduction.`;
 }
 
 /**
@@ -113,18 +130,27 @@ export function renderInboxPane(
 }
 
 /**
- * Obsidian companion plugin entrypoint providing status bar indicator,
- * 1-click Inbox review pane, and "Trigger Dream Pass" command.
+ * Companion plugin wiring the Obsidian status bar, 1-click Inbox review pane,
+ * Dream pass, Git sync, and KV-cache warming commands.
  */
 export class AetherCompanionPlugin {
   readonly client: AetherControlClient;
   readonly inboxController: InboxReviewController;
+  readonly defaultKvModel: string;
   private readonly host: ObsidianHostAdapter;
   private statusBar: StatusBarHandle | null = null;
 
-  constructor(host: ObsidianHostAdapter, baseUrl = 'http://127.0.0.1:4771', fetchImpl = fetch) {
+  constructor(
+    host: ObsidianHostAdapter,
+    baseUrl = 'http://127.0.0.1:4771',
+    fetchOrOptions: FetchLike | AetherClientOptions = fetch,
+  ) {
     this.host = host;
-    this.client = new AetherControlClient(baseUrl, fetchImpl);
+    this.client = new AetherControlClient(baseUrl, fetchOrOptions);
+    this.defaultKvModel =
+      typeof fetchOrOptions === 'object' && fetchOrOptions.defaultKvModel
+        ? fetchOrOptions.defaultKvModel
+        : 'llama-3.1-8b';
     this.inboxController = new InboxReviewController(this.client, async () => {
       await this.refreshStatus();
     });
@@ -145,6 +171,16 @@ export class AetherCompanionPlugin {
       name: 'Trigger Dream Pass',
       callback: async () => this.triggerDreamPass(),
     });
+    this.host.addCommand({
+      id: 'aether-git-sync',
+      name: 'Git Sync Team Vault',
+      callback: async () => this.gitSync(),
+    });
+    this.host.addCommand({
+      id: 'aether-warm-kv-cache',
+      name: 'Warm GPU KV Cache',
+      callback: async () => this.warmKvCache(),
+    });
     await this.refreshStatus();
   }
 
@@ -164,6 +200,23 @@ export class AetherCompanionPlugin {
     await this.inboxController.refresh();
     await this.refreshStatus();
     this.host.notify(formatDreamNotice(report));
+    return report;
+  }
+
+  async gitSync(options: GitSyncOptionsRequest = {}): Promise<GitSyncReport> {
+    const report = await this.client.gitSync(options);
+    await this.inboxController.refresh();
+    await this.refreshStatus();
+    this.host.notify(formatGitSyncNotice(report));
+    return report;
+  }
+
+  async warmKvCache(modelId = this.defaultKvModel, scope?: string): Promise<KvWarmReport> {
+    const report = await this.client.warmKvCache({
+      model_id: modelId,
+      scope,
+    });
+    this.host.notify(formatKvWarmNotice(report));
     return report;
   }
 }

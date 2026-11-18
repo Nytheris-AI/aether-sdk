@@ -67,3 +67,65 @@ export interface SyncReport {
   inbox_rejected: number;
   reindexed_amus: number;
 }
+
+export type KvStorageTier = 'gpu_hbm' | 'host_dram' | 'nvme_ssd';
+
+export interface GitSyncOptionsRequest {
+  remote?: string;
+  branch?: string;
+  push?: boolean;
+  commit_message?: string;
+}
+
+export interface GitSyncReport {
+  remote: string;
+  branch: string;
+  head_commit: string;
+  merged_cleanly: boolean;
+  aether_conflicts_resolved: number;
+  conflicted_files: string[];
+  sync_report: SyncReport;
+  pushed: boolean;
+}
+
+export interface WarmKvRequest {
+  model_id: string;
+  scope?: string;
+  amu_ids?: string[];
+  target_tier?: KvStorageTier;
+  include_hot_prefix?: boolean;
+  include_cache_blend?: boolean;
+  block_tokens?: number;
+}
+
+export interface KvWarmReport {
+  model_id: string;
+  target_tier: KvStorageTier;
+  blocks_warmed: number;
+  blocks_reused: number;
+  tokens_warmed: number;
+  estimated_baseline_ttft_ms: number;
+  estimated_warmed_ttft_ms: number;
+  estimated_ttft_saved_ms: number;
+  ttft_reduction_pct: number;
+  fallback_used: boolean;
+  block_hashes: string[];
+}
+
+export interface KvTierUsage {
+  gpu_hbm_blocks: number;
+  host_dram_blocks: number;
+  nvme_ssd_blocks: number;
+  gpu_hbm_tokens: number;
+  host_dram_tokens: number;
+  nvme_ssd_tokens: number;
+}
+
+export interface KvCacheStats {
+  adapter_id: string;
+  persisted_blocks: number;
+  total_tokens: number;
+  total_bytes: number;
+  tier_usage: KvTierUsage;
+  models: string[];
+}

@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use nytheris_aether_vault::{McpServer, VaultConfig, VaultEngine};
+use nytheris_aether_vault::{
+    AgentId, AgentRole, IssueApiKeyRequest, McpServer, ModelId, ScopeTag, VaultConfig, VaultEngine,
+    WarmKvRequest,
+};
 use serde_json::{json, Value};
 use tokio::io::BufReader;
 use uuid::Uuid;
@@ -422,6 +425,145 @@ async fn mcp_recall_emits_structured_static_prefix_and_dynamic_context() {
         serde_json::from_str(resps[1]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(text_json["prefix_hash"], sc2["prefix_hash"]);
     assert_eq!(text_json["static_prefix"], sc2["static_prefix"]);
+
+    engine.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn mcp_scoped_session_enforces_scopes_defaults_stage_scope_and_emits_kv_hint() {
+    let vault = TempVault::new();
+    vault.write(
+        "Profile/Core.md",
+        "---\naether_tier: hot\naether_scope:\n  - global\naether_kind: profile\n---\n# Core\nAlways write idiomatic Rust.\n",
+    );
+    vault.write(
+        "Specs/Engine.md",
+        "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Engine\nUse PagedAttention KV prefix caching.\n",
+    );
+    vault.write(
+        "Finance/Salary.md",
+        "---\naether_tier: warm\naether_scope:\n  - finance\n---\n# Payroll\nExecutive compensation schedule.\n",
+    );
+
+    let engine = Arc::new(
+        VaultEngine::open(VaultConfig::in_memory(&vault.root))
+            .await
+            .unwrap(),
+    );
+    let model = ModelId::new("llama-3.1-8b").unwrap();
+    let warm = engine
+        .warm_kv_cache(
+            WarmKvRequest::new(model.clone()).with_scope(ScopeTag::new("engineering").unwrap()),
+        )
+        .await
+        .unwrap();
+    assert!(warm.blocks_warmed >= 1);
+
+    let issued = engine
+        .issue_api_key(
+            IssueApiKeyRequest::new(
+                AgentId::new("mcp-eng-agent").unwrap(),
+                AgentRole::Contributor,
+                vec![ScopeTag::new("engineering").unwrap()],
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let server = McpServer::with_api_key(Arc::clone(&engine), &issued.secret)
+        .await
+        .unwrap();
+
+    let recall_ok = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "aether_recall",
+            "arguments": {
+                "query": "PagedAttention KV prefix Executive compensation",
+                "structured": true,
+                "kv_model": "llama-3.1-8b"
+            }
+        }
+    });
+    let recall_denied = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "aether_recall",
+            "arguments": {
+                "query": "compensation",
+                "scope": "finance"
+            }
+        }
+    });
+    let stage_default_scope = json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": "aether_stage_memory",
+            "arguments": {
+                "proposed_fact": "Enable LMCache offloading on H100 hosts."
+            }
+        }
+    });
+    let inspect_denied = json!({
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "tools/call",
+        "params": {
+            "name": "aether_inspect_source",
+            "arguments": {
+                "source_pointer": "Finance/Salary.md#Payroll"
+            }
+        }
+    });
+
+    let mut out = Vec::new();
+    let payload =
+        format!("{recall_ok}\n{recall_denied}\n{stage_default_scope}\n{inspect_denied}\n");
+    server
+        .serve_streams(BufReader::new(payload.as_bytes()), &mut out)
+        .await
+        .unwrap();
+    let resps: Vec<Value> = String::from_utf8(out)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+
+    assert_eq!(resps[0]["result"]["isError"], false);
+    let sc = &resps[0]["result"]["structuredContent"];
+    assert!(sc["dynamic_context"]
+        .as_str()
+        .unwrap()
+        .contains("PagedAttention"));
+    assert!(!sc["dynamic_context"]
+        .as_str()
+        .unwrap()
+        .contains("Executive compensation"));
+    assert_eq!(sc["kv_hint"]["model_id"], "llama-3.1-8b");
+    assert!(sc["kv_hint"]["cache_hit_tokens"].as_u64().unwrap() > 0);
+
+    assert_eq!(resps[1]["result"]["isError"], true);
+
+    assert_eq!(resps[2]["result"]["isError"], false);
+    let stage_out: Value =
+        serde_json::from_str(resps[2]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    let cand_id = stage_out["candidate_id"].as_str().unwrap();
+    let pending = engine.pending_inbox().await.unwrap();
+    let staged_entry = pending
+        .iter()
+        .find(|e| e.candidate_id.as_str() == cand_id)
+        .unwrap();
+    assert_eq!(staged_entry.scope.as_str(), "engineering");
+    assert_eq!(staged_entry.proposed_by, "mcp-eng-agent");
+
+    assert_eq!(resps[3]["result"]["isError"], true);
 
     engine.shutdown().await.unwrap();
 }

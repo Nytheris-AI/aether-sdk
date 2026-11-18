@@ -66,8 +66,23 @@ const config: Config = {
           label: 'Docs',
         },
         {
+          to: '/docs/series/01-quickstart-first-memory',
+          label: 'Series',
+          position: 'left',
+        },
+        {
+          to: '/docs/concepts',
+          label: 'Concepts',
+          position: 'left',
+        },
+        {
           to: '/docs/guides/usage',
           label: 'Guides',
+          position: 'left',
+        },
+        {
+          to: '/docs/reference/crates-and-apis',
+          label: 'Reference',
           position: 'left',
         },
         {
@@ -86,19 +101,36 @@ const config: Config = {
       style: 'dark',
       links: [
         {
-          title: 'Documentation',
+          title: 'Learn',
           items: [
             {
               label: 'Docs Home',
               to: '/docs',
             },
             {
-              label: 'Architecture',
-              to: '/docs/architecture',
+              label: 'Learning Series',
+              to: '/docs/series/01-quickstart-first-memory',
             },
             {
-              label: 'Usage Guide',
+              label: 'Concepts',
+              to: '/docs/concepts',
+            },
+          ],
+        },
+        {
+          title: 'Build',
+          items: [
+            {
+              label: 'How-To Guides',
               to: '/docs/guides/usage',
+            },
+            {
+              label: 'Developer Reference',
+              to: '/docs/reference/crates-and-apis',
+            },
+            {
+              label: 'Architecture & ADRs',
+              to: '/docs/architecture',
             },
           ],
         },
@@ -129,7 +161,7 @@ const config: Config = {
     prism: {
       theme: prismThemes.github,
       darkTheme: prismThemes.dracula,
-      additionalLanguages: ['python', 'bash', 'toml', 'yaml'],
+      additionalLanguages: ['python', 'bash', 'toml', 'yaml', 'rust', 'json'],
     },
   } satisfies Preset.ThemeConfig,
 };

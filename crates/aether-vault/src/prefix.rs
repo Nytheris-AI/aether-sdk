@@ -62,11 +62,7 @@ pub(crate) fn format_recall_response(
         if entry.amu.status != AmuStatus::Active || !included_ids.insert(entry.amu.amu_id) {
             continue;
         }
-        let tier_label = entry.amu.tier.as_str().to_ascii_uppercase();
-        let line = format!(
-            "- [{}] [{}] ({}) {}\n",
-            entry.amu.amu_id, tier_label, entry.amu.source_pointer, entry.amu.distilled_fact
-        );
+        let line = format_recall_amu_line(&entry.amu);
         let mut candidate_dyn = if dynamic_context.is_empty() {
             String::from(DYNAMIC_HEADER)
         } else {
@@ -100,7 +96,16 @@ pub(crate) fn format_recall_response(
         dynamic_tokens,
         tokens_used,
         prefix_hash,
+        kv_hint: None,
     }
+}
+
+pub(crate) fn format_recall_amu_line(amu: &Amu) -> String {
+    let tier_label = amu.tier.as_str().to_ascii_uppercase();
+    format!(
+        "- [{}] [{}] ({}) {}\n",
+        amu.amu_id, tier_label, amu.source_pointer, amu.distilled_fact
+    )
 }
 
 fn combine_blocks(hot_prefix: &str, dynamic_context: &str) -> String {

@@ -225,6 +225,16 @@ pub(crate) fn inspect_note_frontmatter<'a>(
     )
 }
 
+/// Inspects frontmatter without indexing and returns all `aether_scope` tags (or `[global]`).
+pub(crate) fn inspect_note_scopes(rel_path: &str, raw_markdown: &str) -> Vec<ScopeTag> {
+    let (fm_text, _) = split_frontmatter(raw_markdown);
+    let fm = match fm_text {
+        Some(raw) => parse_frontmatter(raw, rel_path, Utc::now()),
+        None => Frontmatter::default_for_path(rel_path, Utc::now()),
+    };
+    fm.scopes
+}
+
 /// Inspects frontmatter alone and returns `true` when `aether_tier: private` is declared.
 pub(crate) fn is_private_note(raw_markdown: &str) -> bool {
     let (fm_text, _) = split_frontmatter(raw_markdown);
