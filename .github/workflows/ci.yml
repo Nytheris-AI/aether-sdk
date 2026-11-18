@@ -42,7 +42,7 @@ jobs:
       - name: Run cargo-deny checks
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          arguments: --all-features check
+          arguments: --all-features
 
   website:
     runs-on: ubuntu-latest
