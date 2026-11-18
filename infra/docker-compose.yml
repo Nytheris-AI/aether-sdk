@@ -1,0 +1,83 @@
+name: aether-dev
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: aether-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${AETHER_POSTGRES_USER:-aether}
+      POSTGRES_PASSWORD: ${AETHER_POSTGRES_PASSWORD:-aether_dev}
+      POSTGRES_DB: ${AETHER_POSTGRES_DB:-aether}
+    ports:
+      - "${AETHER_POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - aether_postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${AETHER_POSTGRES_USER:-aether} -d ${AETHER_POSTGRES_DB:-aether}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: aether-qdrant
+    restart: unless-stopped
+    ports:
+      - "${AETHER_QDRANT_HTTP_PORT:-16333}:6333"
+      - "${AETHER_QDRANT_GRPC_PORT:-16334}:6334"
+    volumes:
+      - aether_qdrant_data:/qdrant/storage
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333 && printf \"GET /healthz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3 && grep -q \"200 OK\" <&3'",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  neo4j:
+    image: neo4j:5-community
+    container_name: aether-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: ${AETHER_NEO4J_USER:-neo4j}/${AETHER_NEO4J_PASSWORD:-aether_dev}
+    ports:
+      - "${AETHER_NEO4J_HTTP_PORT:-17474}:7474"
+      - "${AETHER_NEO4J_BOLT_PORT:-17687}:7687"
+    volumes:
+      - aether_neo4j_data:/data
+      - aether_neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: aether-valkey
+    restart: unless-stopped
+    ports:
+      - "${AETHER_VALKEY_PORT:-16379}:6379"
+    volumes:
+      - aether_valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  aether_postgres_data:
+  aether_qdrant_data:
+  aether_neo4j_data:
+  aether_neo4j_logs:
+  aether_valkey_data:
