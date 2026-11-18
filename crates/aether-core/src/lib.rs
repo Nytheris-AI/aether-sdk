@@ -1,4 +1,22 @@
 //! Core domain contracts, DTOs, errors, and storage traits for Aether SDK.
+//!
+//! ```
+//! use aether_core::{DistanceMetric, FilterExpr, FilterValue, ProjectId};
+//! use serde_json::json;
+//!
+//! let project = ProjectId::new("demo-project")?;
+//! assert_eq!(project.as_str(), "demo-project");
+//!
+//! let score = DistanceMetric::Cosine.score(&[1.0, 0.0], &[1.0, 0.0]);
+//! assert!((score - 1.0).abs() < 1e-6);
+//!
+//! let filter = FilterExpr::Eq {
+//!     field: "topic".into(),
+//!     value: FilterValue::String("rust".into()),
+//! };
+//! assert!(filter.matches(&json!({"topic": "rust"})));
+//! # Ok::<(), aether_core::AetherError>(())
+//! ```
 
 use std::fmt;
 use std::sync::Arc;
