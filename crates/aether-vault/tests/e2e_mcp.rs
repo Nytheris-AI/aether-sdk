@@ -338,3 +338,90 @@ async fn mcp_approved_inbox_materializes_mirror_and_inspects_verbatim() {
 
     engine.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn mcp_recall_emits_structured_static_prefix_and_dynamic_context() {
+    let vault = TempVault::new();
+    vault.write(
+        "Profile/Core.md",
+        "---\naether_tier: hot\naether_scope:\n  - global\naether_kind: profile\n---\n# Core\nAlways write idiomatic Rust.\n",
+    );
+    vault.write(
+        "Specs/DB.md",
+        "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# SQLite\nSQLite WAL mode supports concurrent readers.\n",
+    );
+    vault.write(
+        "Specs/Cache.md",
+        "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Prefix\nCanonical HOT prefix avoids timestamp churn.\n",
+    );
+
+    let engine = Arc::new(
+        VaultEngine::open(VaultConfig::in_memory(&vault.root))
+            .await
+            .unwrap(),
+    );
+    let server = McpServer::new(Arc::clone(&engine));
+
+    let req1 = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "aether_recall",
+            "arguments": {
+                "query": "SQLite WAL concurrent readers",
+                "scope": "engineering"
+            }
+        }
+    });
+    let req2 = json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "aether_recall",
+            "arguments": {
+                "query": "Canonical HOT prefix timestamp",
+                "scope": "engineering",
+                "structured": true
+            }
+        }
+    });
+
+    let mut out = Vec::new();
+    let payload = format!("{req1}\n{req2}\n");
+    server
+        .serve_streams(BufReader::new(payload.as_bytes()), &mut out)
+        .await
+        .unwrap();
+    let resps: Vec<Value> = String::from_utf8(out)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+
+    let sc1 = &resps[0]["result"]["structuredContent"];
+    let sc2 = &resps[1]["result"]["structuredContent"];
+    assert_eq!(sc1["prefix_hash"], sc2["prefix_hash"]);
+    assert_eq!(sc1["static_prefix"], sc2["static_prefix"]);
+    assert!(sc1["static_prefix"]
+        .as_str()
+        .unwrap()
+        .contains("Always write idiomatic Rust."));
+    assert_ne!(sc1["dynamic_context"], sc2["dynamic_context"]);
+    assert!(sc1["dynamic_context"]
+        .as_str()
+        .unwrap()
+        .contains("SQLite WAL"));
+    assert!(sc2["dynamic_context"]
+        .as_str()
+        .unwrap()
+        .contains("Canonical HOT prefix"));
+
+    let text_json: Value =
+        serde_json::from_str(resps[1]["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(text_json["prefix_hash"], sc2["prefix_hash"]);
+    assert_eq!(text_json["static_prefix"], sc2["static_prefix"]);
+
+    engine.shutdown().await.unwrap();
+}

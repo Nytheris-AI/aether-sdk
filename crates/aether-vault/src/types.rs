@@ -697,10 +697,13 @@ pub struct RecallEntry {
 pub struct RecallResponse {
     pub formatted_context: String,
     pub hot_prefix: String,
+    pub static_prefix: String,
     pub dynamic_context: String,
     pub hot_amus: Vec<Amu>,
     pub warm_cold_amus: Vec<Amu>,
     pub entries: Vec<RecallEntry>,
+    pub static_prefix_tokens: usize,
+    pub dynamic_tokens: usize,
     pub tokens_used: usize,
     pub prefix_hash: ContentHash,
 }

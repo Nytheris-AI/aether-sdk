@@ -83,15 +83,21 @@ pub(crate) fn format_recall_response(
     }
 
     let formatted_context = combine_blocks(&hot_prefix, &dynamic_context);
+    let static_prefix_tokens = estimate_tokens(&hot_prefix);
+    let dynamic_tokens = estimate_tokens(&dynamic_context);
     let tokens_used = estimate_tokens(&formatted_context);
+    let static_prefix = hot_prefix.clone();
 
     RecallResponse {
         formatted_context,
         hot_prefix,
+        static_prefix,
         dynamic_context,
         hot_amus: selected_hot,
         warm_cold_amus,
         entries,
+        static_prefix_tokens,
+        dynamic_tokens,
         tokens_used,
         prefix_hash,
     }
@@ -196,6 +202,15 @@ mod tests {
 
         assert_eq!(resp_a.prefix_hash, resp_b.prefix_hash);
         assert_eq!(resp_a.hot_prefix, resp_b.hot_prefix);
+        assert_eq!(resp_a.static_prefix, resp_a.hot_prefix);
+        assert_eq!(
+            resp_a.static_prefix_tokens,
+            estimate_tokens(&resp_a.static_prefix)
+        );
+        assert_eq!(
+            resp_a.dynamic_tokens,
+            estimate_tokens(&resp_a.dynamic_context)
+        );
         assert!(resp_a.hot_amus[0].amu_id < resp_a.hot_amus[1].amu_id);
         assert!(resp_a.formatted_context.starts_with(&resp_a.hot_prefix));
         assert!(resp_a.tokens_used <= 500);
