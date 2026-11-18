@@ -67,6 +67,7 @@ Start with a raw connector or adopt the full facade. Every higher level is built
 | **`nytheris-aether-cortex`** | Composable [`Indexer`](crates/aether-cortex/src/indexer.rs) sync engine, [`PersonalizedPageRank`](crates/aether-cortex/src/ppr.rs) + `graph_scores`, and [`recall`](crates/aether-cortex/src/recall.rs) retrieval & RRF primitives. |
 | **`nytheris-aether-adapters`** | `InMemoryBackend` (`in_memory` with `FaultPoint` injection), middleware decorators, reusable [`contract`](crates/aether-adapters/src/contract.rs) test suite (`contract-suite`), and 7 backend drivers. |
 | **`nytheris-aether-sdk`** | Public `MemoryManager` / `MemoryManagerBuilder` composition root, runnable examples, and optional OpenTelemetry OTLP preset (`otel`). |
+| **`nytheris-aether-vault`** | Obsidian-native vault daemon (`VaultEngine`), SQLite WAL + FTS5 + `PersonalizedPageRank` hybrid recall, `Aether/Inbox.md` staging, and 3-tool stdio `McpServer` (`aether-mcp`). |
 
 ---
 
@@ -158,7 +159,24 @@ async fn main() -> nytheris_aether_core::Result<()> {
 }
 ```
 
-### 3. Run Live Docker Verification (Optional)
+### 3. Run the Obsidian Vault MCP Server (`aether-mcp`)
+
+Point `aether-mcp` at a local Obsidian vault to serve newline-delimited JSON-RPC 2.0 over `stdin` and `stdout` with `aether_recall`, `aether_stage_memory`, and `aether_inspect_source`:
+
+```bash
+# Uses AETHER_VAULT_PATH or --vault; defaults to <vault>/.aether/aether.sqlite and 2000ms polling
+cargo run -p nytheris-aether-vault --bin aether-mcp -- --vault /path/to/obsidian-vault
+
+# Override the SQLite path or polling interval (0 disables background polling)
+cargo run -p nytheris-aether-vault --bin aether-mcp -- \
+  --vault /path/to/obsidian-vault \
+  --db /path/to/aether.sqlite \
+  --watch-ms 2000
+```
+
+See the [M1 Vault & MCP Architecture](docs/architecture/m1-vault-mcp-rationale.md) and [Usage Guide](docs/guides/usage.md) for frontmatter tiers, `.aetherignore`, and `Aether/Inbox.md` approval rules.
+
+### 4. Run Live Docker Verification (Optional)
 
 Spin up the local backing stores with [`scripts/dev-infra.sh`](scripts/dev-infra.sh) (see [`infra/README.md`](infra/README.md) for ports and credentials), then execute the `#[ignore]` live driver and end-to-end `MemoryManager` suites:
 

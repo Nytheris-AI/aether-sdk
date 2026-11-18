@@ -1,5 +1,7 @@
 # Project Aether Milestone 1 vault and MCP architecture
 
+Status: **implemented** (2026-11-18). `crates/aether-vault` (`nytheris-aether-vault` and `aether-mcp`) is implemented in the workspace.
+
 ## Problem
 
 Milestone 1 builds a local Obsidian vault daemon and a three-tool `stdio` MCP server inside a new workspace crate at `crates/aether-vault`, named `nytheris-aether-vault`. Existing crates in Aether SDK separate storage contracts from graph and fusion ranking. `nytheris-aether-adapters` provides `SqliteRecordStore` for opaque JSON payloads without FTS5 full-text search, wikilink edge queries, or a self-write hash ledger.

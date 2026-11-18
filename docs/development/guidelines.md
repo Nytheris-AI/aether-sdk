@@ -8,6 +8,7 @@ Engineering conventions for working on the **Aether SDK** Rust workspace. See [`
 - `crates/aether-cortex` - Composable sync and retrieval primitives (`Indexer`, `PersonalizedPageRank`, `graph_scores`, `recall::{scope_filter, vector_search, unindexed, session, graph_search, merge, rrf, in_scopes}`).
 - `crates/aether-adapters` - Storage connectors (`sqlite`, `redis`, `turbopuffer`, `qdrant`, `chroma`, `pgvector`, `neo4j`), resilience middleware (`Batcher`, `Timeout`, `Resilient`, `Traced`), `InMemoryBackend` (`in_memory` module with `FaultPoint`), and reusable `contract` test suite (`contract-suite` feature).
 - `crates/aether-sdk` - Optional `MemoryManager` / `MemoryManagerBuilder` facade, runnable examples (`level_1_connector` .. `level_5_facade`), and optional `telemetry` (`otel` feature).
+- `crates/aether-vault` - Obsidian-native vault daemon (`VaultEngine`), single-file SQLite WAL + FTS5 + 256-dim local vector + `PersonalizedPageRank` hybrid recall, `Aether/Inbox.md` staging and reconciliation, and 3-tool stdio MCP server (`McpServer`, `aether-mcp` binary).
 
 ## Core Principles
 
