@@ -1,14 +1,15 @@
-//! In-memory `VectorStore` + `petgraph` `GraphStore` for `cargo test` and local dry-runs.
+//! In-memory `RecordStore`, `VectorStore`, and `petgraph` `GraphStore` for local execution and tests.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use aether_core::{
-    AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
-    FilterExpr, GraphEdge, GraphStore, MemoryId, MemoryItem, MemoryReceipt, MemoryScope,
-    OutboundConnector, ProjectId, RecordStore, Relation, Result, Subgraph, TemporalFilter,
-    VectorMatch, VectorRecord, VectorStore,
+    AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome, DistanceMetric, Entity,
+    EntityId, FilterExpr, GraphEdge, GraphStore, IndexSpec, MemoryId, MemoryItem, MemoryReceipt,
+    MemoryScope, OutboundConnector, PendingRecord, ProjectId, ReceiptState, RecordStore, Relation,
+    Result, SessionId, Subgraph, TemporalFilter, VectorMatch, VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -33,17 +34,14 @@ struct RecordEntry {
     item: MemoryItem,
     expires_at: Option<Instant>,
     seq: u64,
-}
-
-struct IdemEntry {
-    receipt: MemoryReceipt,
-    expires_at: Option<Instant>,
+    indexed_version: u64,
+    tombstone: bool,
 }
 
 #[derive(Default)]
 struct RecordNamespace {
     items: HashMap<MemoryId, RecordEntry>,
-    idempotency: HashMap<String, IdemEntry>,
+    create_keys: HashMap<String, MemoryId>,
     next_seq: u64,
 }
 
@@ -63,6 +61,7 @@ pub struct InMemoryBackend {
     vectors: RwLock<HashMap<ProjectId, VectorNamespace>>,
     graphs: RwLock<HashMap<ProjectId, GraphNamespace>>,
     faults: Mutex<HashMap<FaultPoint, usize>>,
+    global_seq: AtomicU64,
 }
 
 impl InMemoryBackend {
@@ -131,6 +130,53 @@ impl OutboundConnector for InMemoryBackend {
 
 #[async_trait]
 impl RecordStore for InMemoryBackend {
+    async fn create(
+        &self,
+        ns: &ProjectId,
+        item: &MemoryItem,
+        ttl: Option<Duration>,
+    ) -> Result<CreateOutcome> {
+        let now = Instant::now();
+        let mut guard = self.records.write().unwrap();
+        let entry = guard.entry(ns.clone()).or_default();
+
+        if let Some(key) = &item.idempotency_key {
+            if let Some(&existing_id) = entry.create_keys.get(key) {
+                if let Some(existing) = entry.items.get(&existing_id) {
+                    let live =
+                        !existing.tombstone && existing.expires_at.is_none_or(|exp| now < exp);
+                    if live {
+                        let state = if existing.indexed_version == existing.item.version {
+                            ReceiptState::Persisted
+                        } else {
+                            ReceiptState::Buffered
+                        };
+                        return Ok(CreateOutcome::Duplicate(MemoryReceipt {
+                            memory_id: existing.item.id,
+                            state,
+                            version: existing.item.version,
+                        }));
+                    }
+                }
+            }
+            entry.create_keys.insert(key.clone(), item.id);
+        }
+
+        let gseq = self.global_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        entry.next_seq = gseq;
+        entry.items.insert(
+            item.id,
+            RecordEntry {
+                item: item.clone(),
+                expires_at: ttl.map(|d| now + d),
+                seq: gseq,
+                indexed_version: 0,
+                tombstone: false,
+            },
+        );
+        Ok(CreateOutcome::Created)
+    }
+
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
         let now = Instant::now();
         let guard = self.records.read().unwrap();
@@ -138,7 +184,7 @@ impl RecordStore for InMemoryBackend {
             return Ok(None);
         };
         Ok(entry.items.get(&id).and_then(|e| {
-            if e.expires_at.is_some_and(|exp| now >= exp) {
+            if e.tombstone || e.expires_at.is_some_and(|exp| now >= exp) {
                 None
             } else {
                 Some(e.item.clone())
@@ -146,46 +192,21 @@ impl RecordStore for InMemoryBackend {
         }))
     }
 
-    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
+    async fn get_many(&self, ns: &ProjectId, ids: &[MemoryId]) -> Result<Vec<MemoryItem>> {
         let now = Instant::now();
-        let mut guard = self.records.write().unwrap();
-        let entry = guard.entry(ns.clone()).or_default();
-        entry.next_seq += 1;
-        let seq = entry.next_seq;
-        entry.items.insert(
-            item.id,
-            RecordEntry {
-                item: item.clone(),
-                expires_at: ttl.map(|d| now + d),
-                seq,
-            },
-        );
-        Ok(())
-    }
-
-    async fn put_if_absent(
-        &self,
-        ns: &ProjectId,
-        idempotency_key: &str,
-        receipt: &MemoryReceipt,
-        ttl: Option<Duration>,
-    ) -> Result<Option<MemoryReceipt>> {
-        let now = Instant::now();
-        let mut guard = self.records.write().unwrap();
-        let entry = guard.entry(ns.clone()).or_default();
-        if let Some(existing) = entry.idempotency.get(idempotency_key) {
-            if existing.expires_at.is_none_or(|exp| now < exp) {
-                return Ok(Some(existing.receipt.clone()));
+        let guard = self.records.read().unwrap();
+        let Some(entry) = guard.get(ns) else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(e) = entry.items.get(id) {
+                if !e.tombstone && e.expires_at.is_none_or(|exp| now < exp) {
+                    out.push(e.item.clone());
+                }
             }
         }
-        entry.idempotency.insert(
-            idempotency_key.to_string(),
-            IdemEntry {
-                receipt: receipt.clone(),
-                expires_at: ttl.map(|d| now + d),
-            },
-        );
-        Ok(None)
+        Ok(out)
     }
 
     async fn cas_update(
@@ -203,7 +224,7 @@ impl RecordStore for InMemoryBackend {
         let current = entry
             .items
             .get(&id)
-            .filter(|e| e.expires_at.is_none_or(|exp| now < exp))
+            .filter(|e| !e.tombstone && e.expires_at.is_none_or(|exp| now < exp))
             .ok_or_else(|| AetherError::NotFound(format!("memory {id}")))?;
 
         if let Some(expected) = expected_version {
@@ -217,25 +238,122 @@ impl RecordStore for InMemoryBackend {
         }
 
         let expires_at = current.expires_at;
-        entry.next_seq += 1;
-        let seq = entry.next_seq;
+        let indexed_version = current.indexed_version;
+        let gseq = self.global_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        entry.next_seq = gseq;
         entry.items.insert(
             id,
             RecordEntry {
                 item: new_item.clone(),
                 expires_at,
-                seq,
+                seq: gseq,
+                indexed_version,
+                tombstone: false,
             },
         );
         Ok(())
     }
 
-    async fn recent(
+    async fn tombstone(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
+        let now = Instant::now();
+        let mut guard = self.records.write().unwrap();
+        let Some(entry) = guard.get_mut(ns) else {
+            return Ok(None);
+        };
+        let Some(rec) = entry.items.get_mut(&id) else {
+            return Ok(None);
+        };
+        if rec.tombstone || rec.expires_at.is_some_and(|exp| now >= exp) {
+            return Ok(None);
+        }
+        let key_to_release = rec.item.idempotency_key.clone();
+        rec.item.version += 1;
+        rec.tombstone = true;
+        let gseq = self.global_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        rec.seq = gseq;
+        let result_item = rec.item.clone();
+        entry.next_seq = gseq;
+        if let Some(key) = key_to_release {
+            if entry.create_keys.get(&key) == Some(&id) {
+                entry.create_keys.remove(&key);
+            }
+        }
+        Ok(Some(result_item))
+    }
+
+    async fn pending(&self, limit: usize) -> Result<Vec<PendingRecord>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let now = Instant::now();
+        let guard = self.records.read().unwrap();
+        let mut pending: Vec<(u64, PendingRecord)> = Vec::new();
+        for ns_entry in guard.values() {
+            for e in ns_entry.items.values() {
+                if e.indexed_version != e.item.version && e.expires_at.is_none_or(|exp| now < exp) {
+                    pending.push((
+                        e.seq,
+                        PendingRecord {
+                            item: e.item.clone(),
+                            tombstone: e.tombstone,
+                        },
+                    ));
+                }
+            }
+        }
+        pending.sort_by_key(|(seq, _)| *seq);
+        Ok(pending.into_iter().take(limit).map(|(_, r)| r).collect())
+    }
+
+    async fn pending_for(&self, ns: &ProjectId, limit: usize) -> Result<Vec<MemoryItem>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let now = Instant::now();
+        let guard = self.records.read().unwrap();
+        let Some(entry) = guard.get(ns) else {
+            return Ok(Vec::new());
+        };
+        let mut pending: Vec<(u64, MemoryItem)> = entry
+            .items
+            .values()
+            .filter(|e| {
+                !e.tombstone
+                    && e.indexed_version != e.item.version
+                    && e.expires_at.is_none_or(|exp| now < exp)
+            })
+            .map(|e| (e.seq, e.item.clone()))
+            .collect();
+        pending.sort_by_key(|(seq, _)| *seq);
+        Ok(pending.into_iter().take(limit).map(|(_, i)| i).collect())
+    }
+
+    async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()> {
+        let mut guard = self.records.write().unwrap();
+        let Some(entry) = guard.get_mut(ns) else {
+            return Ok(());
+        };
+        if let Some(rec) = entry.items.get_mut(&id) {
+            if rec.item.version == version {
+                if rec.tombstone {
+                    entry.items.remove(&id);
+                } else {
+                    rec.indexed_version = version;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn session_items(
         &self,
         ns: &ProjectId,
-        scope: Option<MemoryScope>,
+        session: &SessionId,
         limit: usize,
     ) -> Result<Vec<MemoryItem>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
         let now = Instant::now();
         let guard = self.records.read().unwrap();
         let Some(entry) = guard.get(ns) else {
@@ -244,8 +362,8 @@ impl RecordStore for InMemoryBackend {
         let mut items: Vec<&RecordEntry> = entry
             .items
             .values()
-            .filter(|e| e.expires_at.is_none_or(|exp| now < exp))
-            .filter(|e| scope.is_none_or(|s| e.item.scope == s))
+            .filter(|e| !e.tombstone && e.expires_at.is_none_or(|exp| now < exp))
+            .filter(|e| matches!(&e.item.scope, MemoryScope::Session(s) if s == session))
             .collect();
         items.sort_by_key(|b| std::cmp::Reverse(b.seq));
         Ok(items
@@ -253,14 +371,6 @@ impl RecordStore for InMemoryBackend {
             .take(limit)
             .map(|e| e.item.clone())
             .collect())
-    }
-
-    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
-        let mut guard = self.records.write().unwrap();
-        if let Some(entry) = guard.get_mut(ns) {
-            entry.items.remove(&id);
-        }
-        Ok(())
     }
 }
 
@@ -282,6 +392,16 @@ impl VectorStore for InMemoryBackend {
         entry.dimensions = Some(dimensions);
         entry.metric = metric;
         Ok(())
+    }
+
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        let guard = self.vectors.read().unwrap();
+        Ok(guard.get(ns).and_then(|entry| {
+            entry.dimensions.map(|dimensions| IndexSpec {
+                dimensions,
+                metric: entry.metric,
+            })
+        }))
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {
@@ -382,18 +502,30 @@ impl GraphStore for InMemoryBackend {
         for rel in relations {
             let src_idx = ensure_node(entry, &rel.source);
             let dst_idx = ensure_node(entry, &rel.target);
-            entry.graph.add_edge(
-                src_idx,
-                dst_idx,
-                GraphEdge {
-                    source: rel.source.clone(),
-                    target: rel.target.clone(),
-                    relation_type: rel.relation_type.clone(),
-                    source_memory_id,
-                    valid_at: rel.valid_at,
-                    invalid_at: rel.invalid_at,
-                },
-            );
+            let new_edge = GraphEdge {
+                source: rel.source.clone(),
+                target: rel.target.clone(),
+                relation_type: rel.relation_type.clone(),
+                source_memory_id,
+                valid_at: rel.valid_at,
+                invalid_at: rel.invalid_at,
+            };
+            let existing = entry
+                .graph
+                .edges_connecting(src_idx, dst_idx)
+                .find(|edge_ref| {
+                    let w = edge_ref.weight();
+                    w.source_memory_id == source_memory_id
+                        && w.source == rel.source
+                        && w.target == rel.target
+                        && w.relation_type == rel.relation_type
+                })
+                .map(|edge_ref| edge_ref.id());
+            if let Some(edge_idx) = existing {
+                entry.graph[edge_idx] = new_edge;
+            } else {
+                entry.graph.add_edge(src_idx, dst_idx, new_edge);
+            }
         }
         Ok(())
     }

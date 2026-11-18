@@ -9,7 +9,7 @@
           "id": "mem-vec-001",
           "idempotency_key": "kb:arch-team-alpha:vec-001",
           "tier": "semantic",
-          "scope": "project",
+          "scope": { "kind": "project" },
           "content": "Team Alpha uses Qdrant as the primary vector index for production semantic search.",
           "entities": [
             { "id": "team:alpha", "name": "Team Alpha", "entity_type": "Team" },
@@ -35,7 +35,7 @@
           "id": "mem-graph-002",
           "idempotency_key": "kb:arch-team-alpha:graph-002",
           "tier": "semantic",
-          "scope": "project",
+          "scope": { "kind": "project" },
           "content": "Team Alpha stores entity provenance and temporal knowledge graphs in Neo4j.",
           "entities": [
             { "id": "team:alpha", "name": "Team Alpha", "entity_type": "Team" },
@@ -61,7 +61,7 @@
           "id": "mem-proc-003",
           "idempotency_key": "kb:arch-team-alpha:proc-003",
           "tier": "procedural",
-          "scope": "project",
+          "scope": { "kind": "project" },
           "content": "Run cargo test --workspace --all-features before merging any adapter PR.",
           "entities": [
             { "id": "team:alpha", "name": "Team Alpha", "entity_type": "Team" },
@@ -87,7 +87,7 @@
           "id": "mem-sess-004",
           "idempotency_key": "kb:arch-team-alpha:sess-004",
           "tier": "episodic",
-          "scope": "session",
+          "scope": { "kind": "session", "id": "sess-ops-004" },
           "content": "Temporary debugging note: Qdrant staging node restarted during load test.",
           "entities": [
             { "id": "db:qdrant", "name": "Qdrant", "entity_type": "VectorDatabase" }

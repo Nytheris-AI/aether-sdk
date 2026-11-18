@@ -7,11 +7,13 @@ license.workspace = true
 [features]
 default = []
 contract-suite = []
-turbopuffer = []
-qdrant = []
-neo4j = []
-chroma = []
-pgvector = []
+sqlite = ["dep:rusqlite"]
+redis = ["dep:redis"]
+turbopuffer = ["dep:reqwest"]
+qdrant = ["dep:reqwest"]
+neo4j = ["dep:reqwest"]
+chroma = ["dep:reqwest"]
+pgvector = ["dep:sqlx", "dep:pgvector"]
 
 [dependencies]
 aether-core = { path = "../aether-core" }
@@ -24,6 +26,42 @@ tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 
+pgvector = { version = "0.4", features = ["sqlx"], optional = true }
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"], optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"], optional = true }
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls", "json", "uuid", "chrono"], optional = true }
+
 [dev-dependencies]
 aether-adapters = { path = ".", features = ["contract-suite"] }
+axum = "0.8"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+
+[[test]]
+name = "driver_sqlite"
+required-features = ["sqlite", "contract-suite"]
+
+[[test]]
+name = "driver_redis"
+required-features = ["redis", "contract-suite"]
+
+[[test]]
+name = "driver_turbopuffer"
+required-features = ["turbopuffer", "contract-suite"]
+
+[[test]]
+name = "driver_qdrant"
+required-features = ["qdrant", "contract-suite"]
+
+[[test]]
+name = "driver_chroma"
+required-features = ["chroma", "contract-suite"]
+
+[[test]]
+name = "driver_pgvector"
+required-features = ["pgvector", "contract-suite"]
+
+[[test]]
+name = "driver_neo4j"
+required-features = ["neo4j", "contract-suite"]

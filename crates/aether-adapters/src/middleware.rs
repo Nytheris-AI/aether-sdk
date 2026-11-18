@@ -4,10 +4,10 @@ use std::future::Future;
 use std::time::Duration;
 
 use aether_core::{
-    AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
-    FilterExpr, GraphStore, MemoryId, MemoryItem, MemoryReceipt, MemoryScope, OutboundConnector,
-    ProjectId, RecordStore, Relation, Result, Subgraph, TemporalFilter, VectorMatch, VectorRecord,
-    VectorStore,
+    AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome, DistanceMetric, Entity,
+    EntityId, FilterExpr, GraphStore, IndexSpec, MemoryId, MemoryItem, OutboundConnector,
+    PendingRecord, ProjectId, RecordStore, Relation, Result, SessionId, Subgraph, TemporalFilter,
+    VectorMatch, VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -29,11 +29,23 @@ impl Default for RetryPolicy {
     }
 }
 
+pub fn jittered(backoff: Duration, random: u64) -> Duration {
+    if backoff.is_zero() {
+        return Duration::ZERO;
+    }
+    let nanos = backoff.as_nanos();
+    let capped = u128::from(random) % (nanos + 1);
+    Duration::from_nanos(u64::try_from(capped).unwrap_or(u64::MAX))
+}
+
 async fn retry_transient<F, Fut, T>(policy: RetryPolicy, mut op: F) -> Result<T>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T>>,
 {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+
     let mut attempt = 0;
     loop {
         match op().await {
@@ -41,14 +53,16 @@ where
             Err(err) if err.is_retryable() && attempt < policy.max_retries => {
                 let shift = attempt.min(10) as u32;
                 let backoff = policy.base_delay.saturating_mul(1u32 << shift);
+                let seed = RandomState::new().build_hasher().finish();
+                let delay = jittered(backoff, seed);
                 tracing::warn!(
                     attempt = attempt + 1,
                     max_retries = policy.max_retries,
-                    backoff_ms = backoff.as_millis() as u64,
+                    backoff_ms = delay.as_millis() as u64,
                     error = %err,
                     "retrying transient connector error"
                 );
-                tokio::time::sleep(backoff).await;
+                tokio::time::sleep(delay).await;
                 attempt += 1;
             }
             Err(err) => return Err(err),
@@ -86,25 +100,21 @@ impl<T: OutboundConnector> OutboundConnector for Resilient<T> {
 
 #[async_trait]
 impl<T: RecordStore> RecordStore for Resilient<T> {
+    async fn create(
+        &self,
+        ns: &ProjectId,
+        item: &MemoryItem,
+        ttl: Option<Duration>,
+    ) -> Result<CreateOutcome> {
+        retry_transient(self.policy, || self.inner.create(ns, item, ttl)).await
+    }
+
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
         retry_transient(self.policy, || self.inner.get(ns, id)).await
     }
 
-    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
-        retry_transient(self.policy, || self.inner.put(ns, item, ttl)).await
-    }
-
-    async fn put_if_absent(
-        &self,
-        ns: &ProjectId,
-        idempotency_key: &str,
-        receipt: &MemoryReceipt,
-        ttl: Option<Duration>,
-    ) -> Result<Option<MemoryReceipt>> {
-        retry_transient(self.policy, || {
-            self.inner.put_if_absent(ns, idempotency_key, receipt, ttl)
-        })
-        .await
+    async fn get_many(&self, ns: &ProjectId, ids: &[MemoryId]) -> Result<Vec<MemoryItem>> {
+        retry_transient(self.policy, || self.inner.get_many(ns, ids)).await
     }
 
     async fn cas_update(
@@ -120,17 +130,29 @@ impl<T: RecordStore> RecordStore for Resilient<T> {
         .await
     }
 
-    async fn recent(
-        &self,
-        ns: &ProjectId,
-        scope: Option<MemoryScope>,
-        limit: usize,
-    ) -> Result<Vec<MemoryItem>> {
-        retry_transient(self.policy, || self.inner.recent(ns, scope, limit)).await
+    async fn tombstone(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
+        retry_transient(self.policy, || self.inner.tombstone(ns, id)).await
     }
 
-    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
-        retry_transient(self.policy, || self.inner.delete(ns, id)).await
+    async fn pending(&self, limit: usize) -> Result<Vec<PendingRecord>> {
+        retry_transient(self.policy, || self.inner.pending(limit)).await
+    }
+
+    async fn pending_for(&self, ns: &ProjectId, limit: usize) -> Result<Vec<MemoryItem>> {
+        retry_transient(self.policy, || self.inner.pending_for(ns, limit)).await
+    }
+
+    async fn session_items(
+        &self,
+        ns: &ProjectId,
+        session: &SessionId,
+        limit: usize,
+    ) -> Result<Vec<MemoryItem>> {
+        retry_transient(self.policy, || self.inner.session_items(ns, session, limit)).await
+    }
+
+    async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()> {
+        retry_transient(self.policy, || self.inner.mark_indexed(ns, id, version)).await
     }
 }
 
@@ -146,6 +168,10 @@ impl<T: VectorStore> VectorStore for Resilient<T> {
             self.inner.initialize(ns, dimensions, metric)
         })
         .await
+    }
+
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        retry_transient(self.policy, || self.inner.describe(ns)).await
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {
@@ -268,27 +294,23 @@ impl<T: OutboundConnector> OutboundConnector for Timeout<T> {
 
 #[async_trait]
 impl<T: RecordStore> RecordStore for Timeout<T> {
+    async fn create(
+        &self,
+        ns: &ProjectId,
+        item: &MemoryItem,
+        ttl: Option<Duration>,
+    ) -> Result<CreateOutcome> {
+        self.run(self.inner.name(), self.inner.create(ns, item, ttl))
+            .await
+    }
+
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
         self.run(self.inner.name(), self.inner.get(ns, id)).await
     }
 
-    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
-        self.run(self.inner.name(), self.inner.put(ns, item, ttl))
+    async fn get_many(&self, ns: &ProjectId, ids: &[MemoryId]) -> Result<Vec<MemoryItem>> {
+        self.run(self.inner.name(), self.inner.get_many(ns, ids))
             .await
-    }
-
-    async fn put_if_absent(
-        &self,
-        ns: &ProjectId,
-        idempotency_key: &str,
-        receipt: &MemoryReceipt,
-        ttl: Option<Duration>,
-    ) -> Result<Option<MemoryReceipt>> {
-        self.run(
-            self.inner.name(),
-            self.inner.put_if_absent(ns, idempotency_key, receipt, ttl),
-        )
-        .await
     }
 
     async fn cas_update(
@@ -305,18 +327,36 @@ impl<T: RecordStore> RecordStore for Timeout<T> {
         .await
     }
 
-    async fn recent(
-        &self,
-        ns: &ProjectId,
-        scope: Option<MemoryScope>,
-        limit: usize,
-    ) -> Result<Vec<MemoryItem>> {
-        self.run(self.inner.name(), self.inner.recent(ns, scope, limit))
+    async fn tombstone(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
+        self.run(self.inner.name(), self.inner.tombstone(ns, id))
             .await
     }
 
-    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
-        self.run(self.inner.name(), self.inner.delete(ns, id)).await
+    async fn pending(&self, limit: usize) -> Result<Vec<PendingRecord>> {
+        self.run(self.inner.name(), self.inner.pending(limit)).await
+    }
+
+    async fn pending_for(&self, ns: &ProjectId, limit: usize) -> Result<Vec<MemoryItem>> {
+        self.run(self.inner.name(), self.inner.pending_for(ns, limit))
+            .await
+    }
+
+    async fn session_items(
+        &self,
+        ns: &ProjectId,
+        session: &SessionId,
+        limit: usize,
+    ) -> Result<Vec<MemoryItem>> {
+        self.run(
+            self.inner.name(),
+            self.inner.session_items(ns, session, limit),
+        )
+        .await
+    }
+
+    async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()> {
+        self.run(self.inner.name(), self.inner.mark_indexed(ns, id, version))
+            .await
     }
 }
 
@@ -333,6 +373,10 @@ impl<T: VectorStore> VectorStore for Timeout<T> {
             self.inner.initialize(ns, dimensions, metric),
         )
         .await
+    }
+
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        self.run(self.inner.name(), self.inner.describe(ns)).await
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {
@@ -449,6 +493,10 @@ impl<T: VectorStore> VectorStore for Batcher<T> {
         self.inner.initialize(ns, dimensions, metric).await
     }
 
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        self.inner.describe(ns).await
+    }
+
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {
         let chunk_size = self.inner.capabilities().max_batch_size.max(1);
         for chunk in records.chunks(chunk_size) {
@@ -536,6 +584,24 @@ impl<T: OutboundConnector> OutboundConnector for Traced<T> {
 
 #[async_trait]
 impl<T: RecordStore> RecordStore for Traced<T> {
+    async fn create(
+        &self,
+        ns: &ProjectId,
+        item: &MemoryItem,
+        ttl: Option<Duration>,
+    ) -> Result<CreateOutcome> {
+        let span = tracing::info_span!(
+            "connector_op",
+            otel.kind = "client",
+            db.system = self.inner.name(),
+            connector = self.inner.name(),
+            project_id = %ns,
+            op = "record_create",
+            otel.status_code = tracing::field::Empty,
+        );
+        run_connector_span(span, self.inner.create(ns, item, ttl)).await
+    }
+
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
         let span = tracing::info_span!(
             "connector_op",
@@ -549,40 +615,18 @@ impl<T: RecordStore> RecordStore for Traced<T> {
         run_connector_span(span, self.inner.get(ns, id)).await
     }
 
-    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
+    async fn get_many(&self, ns: &ProjectId, ids: &[MemoryId]) -> Result<Vec<MemoryItem>> {
         let span = tracing::info_span!(
             "connector_op",
             otel.kind = "client",
             db.system = self.inner.name(),
             connector = self.inner.name(),
             project_id = %ns,
-            op = "record_put",
+            op = "record_get_many",
+            count = ids.len(),
             otel.status_code = tracing::field::Empty,
         );
-        run_connector_span(span, self.inner.put(ns, item, ttl)).await
-    }
-
-    async fn put_if_absent(
-        &self,
-        ns: &ProjectId,
-        idempotency_key: &str,
-        receipt: &MemoryReceipt,
-        ttl: Option<Duration>,
-    ) -> Result<Option<MemoryReceipt>> {
-        let span = tracing::info_span!(
-            "connector_op",
-            otel.kind = "client",
-            db.system = self.inner.name(),
-            connector = self.inner.name(),
-            project_id = %ns,
-            op = "record_put_if_absent",
-            otel.status_code = tracing::field::Empty,
-        );
-        run_connector_span(
-            span,
-            self.inner.put_if_absent(ns, idempotency_key, receipt, ttl),
-        )
-        .await
+        run_connector_span(span, self.inner.get_many(ns, ids)).await
     }
 
     async fn cas_update(
@@ -608,10 +652,50 @@ impl<T: RecordStore> RecordStore for Traced<T> {
         .await
     }
 
-    async fn recent(
+    async fn tombstone(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
+        let span = tracing::info_span!(
+            "connector_op",
+            otel.kind = "client",
+            db.system = self.inner.name(),
+            connector = self.inner.name(),
+            project_id = %ns,
+            op = "record_tombstone",
+            otel.status_code = tracing::field::Empty,
+        );
+        run_connector_span(span, self.inner.tombstone(ns, id)).await
+    }
+
+    async fn pending(&self, limit: usize) -> Result<Vec<PendingRecord>> {
+        let span = tracing::info_span!(
+            "connector_op",
+            otel.kind = "client",
+            db.system = self.inner.name(),
+            connector = self.inner.name(),
+            op = "record_pending",
+            limit,
+            otel.status_code = tracing::field::Empty,
+        );
+        run_connector_span(span, self.inner.pending(limit)).await
+    }
+
+    async fn pending_for(&self, ns: &ProjectId, limit: usize) -> Result<Vec<MemoryItem>> {
+        let span = tracing::info_span!(
+            "connector_op",
+            otel.kind = "client",
+            db.system = self.inner.name(),
+            connector = self.inner.name(),
+            project_id = %ns,
+            op = "record_pending_for",
+            limit,
+            otel.status_code = tracing::field::Empty,
+        );
+        run_connector_span(span, self.inner.pending_for(ns, limit)).await
+    }
+
+    async fn session_items(
         &self,
         ns: &ProjectId,
-        scope: Option<MemoryScope>,
+        session: &SessionId,
         limit: usize,
     ) -> Result<Vec<MemoryItem>> {
         let span = tracing::info_span!(
@@ -620,24 +704,24 @@ impl<T: RecordStore> RecordStore for Traced<T> {
             db.system = self.inner.name(),
             connector = self.inner.name(),
             project_id = %ns,
-            op = "record_recent",
+            op = "record_session_items",
             limit,
             otel.status_code = tracing::field::Empty,
         );
-        run_connector_span(span, self.inner.recent(ns, scope, limit)).await
+        run_connector_span(span, self.inner.session_items(ns, session, limit)).await
     }
 
-    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
+    async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()> {
         let span = tracing::info_span!(
             "connector_op",
             otel.kind = "client",
             db.system = self.inner.name(),
             connector = self.inner.name(),
             project_id = %ns,
-            op = "record_delete",
+            op = "record_mark_indexed",
             otel.status_code = tracing::field::Empty,
         );
-        run_connector_span(span, self.inner.delete(ns, id)).await
+        run_connector_span(span, self.inner.mark_indexed(ns, id, version)).await
     }
 }
 
@@ -659,6 +743,19 @@ impl<T: VectorStore> VectorStore for Traced<T> {
             otel.status_code = tracing::field::Empty,
         );
         run_connector_span(span, self.inner.initialize(ns, dimensions, metric)).await
+    }
+
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        let span = tracing::info_span!(
+            "connector_op",
+            otel.kind = "client",
+            db.system = self.inner.name(),
+            connector = self.inner.name(),
+            project_id = %ns,
+            op = "describe",
+            otel.status_code = tracing::field::Empty,
+        );
+        run_connector_span(span, self.inner.describe(ns)).await
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {

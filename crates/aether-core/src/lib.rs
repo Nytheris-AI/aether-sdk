@@ -1,4 +1,4 @@
-//! Core domain contracts, DTOs, errors, and inbound/outbound traits for Aether SDK.
+//! Core domain contracts, DTOs, errors, and storage traits for Aether SDK.
 
 use std::fmt;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use serde_json::Value;
 use thiserror::Error;
 use uuid::Uuid;
 
-/// Unified error type across the Aether gateway and outbound storage connectors.
+/// Unified error type across Aether SDK and outbound storage connectors.
 #[derive(Debug, Error)]
 pub enum AetherError {
     #[error("not implemented: {0}")]
@@ -138,6 +138,62 @@ impl fmt::Display for EntityId {
     }
 }
 
+/// Strongly typed user identifier for user-scoped memories.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct UserId(String);
+
+impl UserId {
+    /// Validates and constructs a non-empty `UserId`.
+    pub fn new(id: impl Into<String>) -> Result<Self> {
+        let s = id.into();
+        if s.trim().is_empty() {
+            return Err(AetherError::InvalidInput(
+                "user_id must not be empty".into(),
+            ));
+        }
+        Ok(Self(s))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for UserId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Strongly typed session identifier for working-memory entries.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SessionId(String);
+
+impl SessionId {
+    /// Validates and constructs a non-empty `SessionId`.
+    pub fn new(id: impl Into<String>) -> Result<Self> {
+        let s = id.into();
+        if s.trim().is_empty() {
+            return Err(AetherError::InvalidInput(
+                "session_id must not be empty".into(),
+            ));
+        }
+        Ok(Self(s))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for SessionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// Opaque credential wrapper whose `Debug` and `Display` implementations always redact the value.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SecretString(String);
@@ -199,14 +255,26 @@ pub enum MemoryTier {
     Profile,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
 pub enum MemoryScope {
     #[default]
     Project,
-    User,
-    Session,
-    Global,
+    User(UserId),
+    Session(SessionId),
+}
+
+impl MemoryScope {
+    /// Returns the index metadata key (`"project"` or `"user:<id>"`).
+    ///
+    /// Session memories are never written to derived vector/graph indexes, so this returns `None`.
+    pub fn index_key(&self) -> Option<String> {
+        match self {
+            MemoryScope::Project => Some("project".into()),
+            MemoryScope::User(uid) => Some(format!("user:{}", uid.as_str())),
+            MemoryScope::Session(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -373,7 +441,7 @@ pub struct Relation {
     pub invalid_at: Option<DateTime<Utc>>,
 }
 
-/// Caller-constructed inbound memory payload validated at the gateway boundary.
+/// Caller-constructed memory payload validated at the SDK boundary.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MemoryInput {
     pub project_id: ProjectId,
@@ -404,7 +472,7 @@ impl MemoryInput {
         }
     }
 
-    /// Validates required invariants before entering the gateway core.
+    /// Validates required invariants before entering the SDK.
     pub fn validate(&self) -> Result<()> {
         if self.content.trim().is_empty() {
             return Err(AetherError::InvalidInput(
@@ -412,33 +480,58 @@ impl MemoryInput {
             ));
         }
         if let Some(vec) = &self.embedding {
-            if vec.is_empty() {
-                return Err(AetherError::InvalidInput(
-                    "embedding vector must not be empty when provided".into(),
-                ));
-            }
-            if vec.iter().any(|x| !x.is_finite()) {
-                return Err(AetherError::InvalidInput(
-                    "embedding vector contains non-finite values".into(),
-                ));
-            }
+            validate_vector_values(vec, "embedding vector")?;
         }
-        for entity in &self.entities {
-            if entity.name.trim().is_empty() {
-                return Err(AetherError::InvalidInput(
-                    "entity name must not be empty".into(),
-                ));
-            }
-        }
-        for rel in &self.relations {
-            if rel.relation_type.trim().is_empty() {
-                return Err(AetherError::InvalidInput(
-                    "relation_type must not be empty".into(),
-                ));
-            }
-        }
+        validate_metadata_object(&self.metadata)?;
+        validate_entities_and_relations(&self.entities, &self.relations)?;
         Ok(())
     }
+}
+
+fn validate_vector_values(vec: &[f32], label: &str) -> Result<()> {
+    if vec.is_empty() {
+        return Err(AetherError::InvalidInput(format!(
+            "{label} must not be empty when provided"
+        )));
+    }
+    if vec.iter().any(|x| !x.is_finite()) {
+        return Err(AetherError::InvalidInput(format!(
+            "{label} contains non-finite values"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_metadata_object(metadata: &Value) -> Result<()> {
+    let Some(map) = metadata.as_object() else {
+        return Err(AetherError::InvalidInput(
+            "metadata must be a JSON object".into(),
+        ));
+    };
+    if let Some(key) = map.keys().find(|k| k.starts_with("_aether_")) {
+        return Err(AetherError::InvalidInput(format!(
+            "metadata key `{key}` uses reserved `_aether_` prefix"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_entities_and_relations(entities: &[Entity], relations: &[Relation]) -> Result<()> {
+    for entity in entities {
+        if entity.name.trim().is_empty() {
+            return Err(AetherError::InvalidInput(
+                "entity name must not be empty".into(),
+            ));
+        }
+    }
+    for rel in relations {
+        if rel.relation_type.trim().is_empty() {
+            return Err(AetherError::InvalidInput(
+                "relation_type must not be empty".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Canonical stored memory record with optimistic-concurrency `version`.
@@ -487,12 +580,71 @@ pub struct MemoryReceipt {
     pub version: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CreateOutcome {
+    Created,
+    Duplicate(MemoryReceipt),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PendingRecord {
+    pub item: MemoryItem,
+    pub tombstone: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IndexSpec {
+    pub dimensions: usize,
+    pub metric: DistanceMetric,
+}
+
+impl IndexSpec {
+    /// Validates that `vector` is non-empty, finite, and matches `self.dimensions`.
+    pub fn check(&self, vector: &[f32]) -> Result<()> {
+        validate_vector_values(vector, "vector")?;
+        if vector.len() != self.dimensions {
+            return Err(AetherError::InvalidInput(format!(
+                "vector dimension mismatch: expected {}, got {}",
+                self.dimensions,
+                vector.len()
+            )));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MemoryUpdate {
     pub content: Option<String>,
     pub embedding: Option<Vec<f32>>,
     pub metadata: Option<Value>,
+    pub entities: Option<Vec<Entity>>,
+    pub relations: Option<Vec<Relation>>,
     pub expected_version: Option<u64>,
+}
+
+impl MemoryUpdate {
+    /// Validates updated fields at the boundary.
+    pub fn validate(&self) -> Result<()> {
+        if let Some(content) = &self.content {
+            if content.trim().is_empty() {
+                return Err(AetherError::InvalidInput(
+                    "updated content must not be empty".into(),
+                ));
+            }
+        }
+        if let Some(vec) = &self.embedding {
+            validate_vector_values(vec, "embedding vector")?;
+        }
+        if let Some(metadata) = &self.metadata {
+            validate_metadata_object(metadata)?;
+        }
+        validate_entities_and_relations(
+            self.entities.as_deref().unwrap_or(&[]),
+            self.relations.as_deref().unwrap_or(&[]),
+        )?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -507,6 +659,7 @@ pub struct RecallQuery {
     pub per_node_limit: usize,
     pub temporal: TemporalFilter,
     pub filters: Option<FilterExpr>,
+    pub scopes: Vec<MemoryScope>,
     pub consistency: ConsistencyMode,
 }
 
@@ -523,8 +676,33 @@ impl RecallQuery {
             per_node_limit: 25,
             temporal: TemporalFilter::default(),
             filters: None,
+            scopes: vec![MemoryScope::Project],
             consistency: ConsistencyMode::default(),
         }
+    }
+
+    /// Validates query requirements before dispatching to stores.
+    pub fn validate(&self) -> Result<()> {
+        if self.scopes.is_empty() {
+            return Err(AetherError::InvalidInput("scopes must not be empty".into()));
+        }
+        if let Some(vec) = &self.query_vector {
+            validate_vector_values(vec, "query_vector")?;
+        }
+        match self.mode {
+            RecallMode::Vector | RecallMode::Hybrid if self.query_vector.is_none() => {
+                return Err(AetherError::InvalidInput(
+                    "query_vector is required for vector or hybrid recall".into(),
+                ));
+            }
+            RecallMode::Graph if self.seed_entities.is_empty() => {
+                return Err(AetherError::InvalidInput(
+                    "seed_entities must not be empty for graph recall".into(),
+                ));
+            }
+            _ => {}
+        }
+        Ok(())
     }
 }
 
@@ -595,20 +773,19 @@ pub trait OutboundConnector: Send + Sync {
     async fn close(&self) -> Result<()>;
 }
 
-/// Unified L2 working-memory / record store contract (Redis/Valkey, SQLite, etc.).
+/// Unified record store contract (SQLite, Redis/Valkey, etc.).
 #[async_trait]
 pub trait RecordStore: OutboundConnector {
-    async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>>;
-
-    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()>;
-
-    async fn put_if_absent(
+    async fn create(
         &self,
         ns: &ProjectId,
-        idempotency_key: &str,
-        receipt: &MemoryReceipt,
+        item: &MemoryItem,
         ttl: Option<Duration>,
-    ) -> Result<Option<MemoryReceipt>>;
+    ) -> Result<CreateOutcome>;
+
+    async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>>;
+
+    async fn get_many(&self, ns: &ProjectId, ids: &[MemoryId]) -> Result<Vec<MemoryItem>>;
 
     async fn cas_update(
         &self,
@@ -618,14 +795,20 @@ pub trait RecordStore: OutboundConnector {
         new_item: &MemoryItem,
     ) -> Result<()>;
 
-    async fn recent(
+    async fn tombstone(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>>;
+
+    async fn pending(&self, limit: usize) -> Result<Vec<PendingRecord>>;
+
+    async fn pending_for(&self, ns: &ProjectId, limit: usize) -> Result<Vec<MemoryItem>>;
+
+    async fn session_items(
         &self,
         ns: &ProjectId,
-        scope: Option<MemoryScope>,
+        session: &SessionId,
         limit: usize,
     ) -> Result<Vec<MemoryItem>>;
 
-    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()>;
+    async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()>;
 }
 
 /// Unified vector storage contract (Turbopuffer, Qdrant, Chroma, pgvector, etc.).
@@ -637,6 +820,8 @@ pub trait VectorStore: OutboundConnector {
         dimensions: usize,
         metric: DistanceMetric,
     ) -> Result<()>;
+
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>>;
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()>;
 
@@ -656,6 +841,10 @@ pub trait VectorStore: OutboundConnector {
 pub trait GraphStore: OutboundConnector {
     async fn upsert_entities(&self, ns: &ProjectId, entities: &[Entity]) -> Result<()>;
 
+    /// Upserts provenance-tagged relations keyed by `(source_memory_id, source, target, relation_type)`.
+    ///
+    /// Repeating an upsert for an existing key replaces the stored edge in place (including
+    /// restoring an active `invalid_at = None` edge after prior retraction) rather than adding duplicates.
     async fn upsert_relations(
         &self,
         ns: &ProjectId,
@@ -680,22 +869,6 @@ pub trait GraphStore: OutboundConnector {
     ) -> Result<Subgraph>;
 }
 
-/// Primary inbound gateway contract implemented by `MemoryManager`.
-#[async_trait]
-pub trait MemoryInbound: Send + Sync {
-    async fn remember(&self, input: MemoryInput) -> Result<MemoryReceipt>;
-    async fn recall(&self, query: RecallQuery) -> Result<RecallResult>;
-    async fn update(
-        &self,
-        project_id: &ProjectId,
-        memory_id: MemoryId,
-        patch: MemoryUpdate,
-    ) -> Result<MemoryReceipt>;
-    async fn forget(&self, project_id: &ProjectId, memory_id: MemoryId) -> Result<()>;
-    async fn flush(&self) -> Result<()>;
-    async fn shutdown(&self) -> Result<()>;
-}
-
 #[async_trait]
 impl<T: OutboundConnector + ?Sized> OutboundConnector for Arc<T> {
     fn name(&self) -> &'static str {
@@ -717,24 +890,21 @@ impl<T: OutboundConnector + ?Sized> OutboundConnector for Arc<T> {
 
 #[async_trait]
 impl<T: RecordStore + ?Sized> RecordStore for Arc<T> {
+    async fn create(
+        &self,
+        ns: &ProjectId,
+        item: &MemoryItem,
+        ttl: Option<Duration>,
+    ) -> Result<CreateOutcome> {
+        (**self).create(ns, item, ttl).await
+    }
+
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
         (**self).get(ns, id).await
     }
 
-    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
-        (**self).put(ns, item, ttl).await
-    }
-
-    async fn put_if_absent(
-        &self,
-        ns: &ProjectId,
-        idempotency_key: &str,
-        receipt: &MemoryReceipt,
-        ttl: Option<Duration>,
-    ) -> Result<Option<MemoryReceipt>> {
-        (**self)
-            .put_if_absent(ns, idempotency_key, receipt, ttl)
-            .await
+    async fn get_many(&self, ns: &ProjectId, ids: &[MemoryId]) -> Result<Vec<MemoryItem>> {
+        (**self).get_many(ns, ids).await
     }
 
     async fn cas_update(
@@ -749,17 +919,29 @@ impl<T: RecordStore + ?Sized> RecordStore for Arc<T> {
             .await
     }
 
-    async fn recent(
-        &self,
-        ns: &ProjectId,
-        scope: Option<MemoryScope>,
-        limit: usize,
-    ) -> Result<Vec<MemoryItem>> {
-        (**self).recent(ns, scope, limit).await
+    async fn tombstone(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
+        (**self).tombstone(ns, id).await
     }
 
-    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
-        (**self).delete(ns, id).await
+    async fn pending(&self, limit: usize) -> Result<Vec<PendingRecord>> {
+        (**self).pending(limit).await
+    }
+
+    async fn pending_for(&self, ns: &ProjectId, limit: usize) -> Result<Vec<MemoryItem>> {
+        (**self).pending_for(ns, limit).await
+    }
+
+    async fn session_items(
+        &self,
+        ns: &ProjectId,
+        session: &SessionId,
+        limit: usize,
+    ) -> Result<Vec<MemoryItem>> {
+        (**self).session_items(ns, session, limit).await
+    }
+
+    async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()> {
+        (**self).mark_indexed(ns, id, version).await
     }
 }
 
@@ -772,6 +954,10 @@ impl<T: VectorStore + ?Sized> VectorStore for Arc<T> {
         metric: DistanceMetric,
     ) -> Result<()> {
         (**self).initialize(ns, dimensions, metric).await
+    }
+
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        (**self).describe(ns).await
     }
 
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {

@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use aether_adapters::InMemoryBackend;
 use aether_core::{
-    AetherError, DistanceMetric, Entity, EntityId, GraphStore, MemoryInbound, MemoryInput,
-    MemoryUpdate, ProjectId, RecallMode, RecallQuery, ReceiptState, Relation, TemporalFilter,
-    VectorStore, WriteDurability,
+    AetherError, DistanceMetric, Entity, EntityId, GraphStore, MemoryInput, MemoryUpdate,
+    ProjectId, RecallMode, RecallQuery, ReceiptState, Relation, TemporalFilter, VectorStore,
+    WriteDurability,
 };
 use aether_sdk::MemoryManager;
 use chrono::Utc;
@@ -18,11 +18,10 @@ async fn remember_recall_update_cas_and_forget_lifecycle() {
         .await
         .unwrap();
 
-    let manager: Arc<dyn MemoryInbound> = Arc::new(MemoryManager::new(
-        backend.clone(),
-        backend.clone(),
-        backend.clone(),
-    ));
+    let manager = MemoryManager::builder(backend.clone())
+        .vector(backend.clone())
+        .graph(backend.clone())
+        .build();
 
     let mut input = MemoryInput::new(pid.clone(), "Alice uses Turbopuffer for vector recall.");
     input.embedding = Some(vec![1.0, 0.0, 0.0]);
@@ -62,8 +61,10 @@ async fn remember_recall_update_cas_and_forget_lifecycle() {
             receipt.memory_id,
             MemoryUpdate {
                 content: Some("Alice uses Turbopuffer and Neo4j.".into()),
-                embedding: None,
+                embedding: Some(vec![1.0, 0.0, 0.0]),
                 metadata: None,
+                entities: None,
+                relations: None,
                 expected_version: Some(1),
             },
         )
@@ -79,6 +80,8 @@ async fn remember_recall_update_cas_and_forget_lifecycle() {
                 content: Some("stale write".into()),
                 embedding: None,
                 metadata: None,
+                entities: None,
+                relations: None,
                 expected_version: Some(1),
             },
         )

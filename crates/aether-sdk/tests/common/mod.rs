@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_adapters::{InMemoryBackend, Resilient, RetryPolicy, Timeout, Traced};
+use aether_adapters::{InMemoryBackend, RetryPolicy};
 use aether_core::{
     Entity, EntityId, MemoryInput, MemoryScope, MemoryTier, ProjectId, Relation, WriteDurability,
 };
@@ -65,19 +65,14 @@ pub fn fixture_path(name: &str) -> PathBuf {
 }
 
 pub fn build_fault_injectable_manager(raw: Arc<InMemoryBackend>) -> Arc<MemoryManager> {
-    let record_store = Arc::new(Traced::new(Resilient::new(
-        Timeout::new(raw.clone(), Duration::from_secs(2)),
-        RetryPolicy::default(),
-    )));
-    let vec_store = Arc::new(Traced::new(Resilient::new(
-        Timeout::new(raw.clone(), Duration::from_secs(2)),
-        RetryPolicy::default(),
-    )));
-    let graph_store = Arc::new(Traced::new(Resilient::new(
-        Timeout::new(raw, Duration::from_secs(2)),
-        RetryPolicy::default(),
-    )));
-    Arc::new(MemoryManager::new(record_store, vec_store, graph_store))
+    Arc::new(
+        MemoryManager::builder(raw.clone())
+            .vector(raw.clone())
+            .graph(raw)
+            .with_timeout(Some(Duration::from_secs(2)))
+            .with_retry(Some(RetryPolicy::default()))
+            .build(),
+    )
 }
 
 pub fn build_resilient_manager() -> (Arc<InMemoryBackend>, Arc<MemoryManager>) {

@@ -4,12 +4,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_adapters::{FaultPoint, InMemoryBackend, Resilient, RetryPolicy, Timeout, Traced};
+use aether_adapters::{FaultPoint, InMemoryBackend, RetryPolicy};
 use aether_core::{
-    AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
-    FilterExpr, GraphStore, MemoryId, MemoryInbound, MemoryInput, MemoryItem, MemoryReceipt,
-    MemoryScope, MemoryUpdate, OutboundConnector, ProjectId, RecallMode, RecallQuery, ReceiptState,
-    RecordStore, Relation, Result, Subgraph, TemporalFilter, VectorMatch, VectorRecord,
+    AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome, DistanceMetric, Entity,
+    EntityId, FilterExpr, GraphStore, IndexSpec, MemoryId, MemoryInput, MemoryItem, MemoryUpdate,
+    OutboundConnector, PendingRecord, ProjectId, RecallMode, RecallQuery, ReceiptState,
+    RecordStore, Relation, Result, SessionId, Subgraph, TemporalFilter, VectorMatch, VectorRecord,
     VectorStore, WriteDurability,
 };
 use aether_sdk::MemoryManager;
@@ -83,23 +83,24 @@ impl OutboundConnector for CountingFaultStore {
 
 #[async_trait]
 impl RecordStore for CountingFaultStore {
+    async fn create(
+        &self,
+        ns: &ProjectId,
+        item: &MemoryItem,
+        ttl: Option<Duration>,
+    ) -> Result<CreateOutcome> {
+        Self::maybe_fail(
+            &self.record_put_calls,
+            self.record_put_mode,
+            "record_create",
+        )?;
+        self.inner.create(ns, item, ttl).await
+    }
     async fn get(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
         self.inner.get(ns, id).await
     }
-    async fn put(&self, ns: &ProjectId, item: &MemoryItem, ttl: Option<Duration>) -> Result<()> {
-        Self::maybe_fail(&self.record_put_calls, self.record_put_mode, "record_put")?;
-        self.inner.put(ns, item, ttl).await
-    }
-    async fn put_if_absent(
-        &self,
-        ns: &ProjectId,
-        idempotency_key: &str,
-        receipt: &MemoryReceipt,
-        ttl: Option<Duration>,
-    ) -> Result<Option<MemoryReceipt>> {
-        self.inner
-            .put_if_absent(ns, idempotency_key, receipt, ttl)
-            .await
+    async fn get_many(&self, ns: &ProjectId, ids: &[MemoryId]) -> Result<Vec<MemoryItem>> {
+        self.inner.get_many(ns, ids).await
     }
     async fn cas_update(
         &self,
@@ -112,16 +113,25 @@ impl RecordStore for CountingFaultStore {
             .cas_update(ns, id, expected_version, new_item)
             .await
     }
-    async fn recent(
+    async fn tombstone(&self, ns: &ProjectId, id: MemoryId) -> Result<Option<MemoryItem>> {
+        self.inner.tombstone(ns, id).await
+    }
+    async fn pending(&self, limit: usize) -> Result<Vec<PendingRecord>> {
+        self.inner.pending(limit).await
+    }
+    async fn pending_for(&self, ns: &ProjectId, limit: usize) -> Result<Vec<MemoryItem>> {
+        self.inner.pending_for(ns, limit).await
+    }
+    async fn session_items(
         &self,
         ns: &ProjectId,
-        scope: Option<MemoryScope>,
+        session: &SessionId,
         limit: usize,
     ) -> Result<Vec<MemoryItem>> {
-        self.inner.recent(ns, scope, limit).await
+        self.inner.session_items(ns, session, limit).await
     }
-    async fn delete(&self, ns: &ProjectId, id: MemoryId) -> Result<()> {
-        RecordStore::delete(&*self.inner, ns, id).await
+    async fn mark_indexed(&self, ns: &ProjectId, id: MemoryId, version: u64) -> Result<()> {
+        self.inner.mark_indexed(ns, id, version).await
     }
 }
 
@@ -134,6 +144,9 @@ impl VectorStore for CountingFaultStore {
         metric: DistanceMetric,
     ) -> Result<()> {
         self.inner.initialize(ns, dimensions, metric).await
+    }
+    async fn describe(&self, ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        self.inner.describe(ns).await
     }
     async fn upsert_batch(&self, ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {
         Self::maybe_fail(
@@ -206,19 +219,14 @@ fn wrap_counting_manager(store: Arc<CountingFaultStore>) -> Arc<MemoryManager> {
         max_retries: 3,
         base_delay: Duration::from_millis(10),
     };
-    let record_store = Arc::new(Traced::new(Resilient::new(
-        Timeout::new(store.clone(), Duration::from_secs(2)),
-        policy,
-    )));
-    let vec_store = Arc::new(Traced::new(Resilient::new(
-        Timeout::new(store.clone(), Duration::from_secs(2)),
-        policy,
-    )));
-    let graph_store = Arc::new(Traced::new(Resilient::new(
-        Timeout::new(store, Duration::from_secs(2)),
-        policy,
-    )));
-    Arc::new(MemoryManager::new(record_store, vec_store, graph_store))
+    Arc::new(
+        MemoryManager::builder(store.clone())
+            .vector(store.clone())
+            .graph(store)
+            .with_timeout(Some(Duration::from_secs(2)))
+            .with_retry(Some(policy))
+            .build(),
+    )
 }
 
 fn sample_graph_input(pid: &ProjectId, content: &str) -> MemoryInput {
@@ -375,6 +383,8 @@ async fn e2e_update_and_forget_stay_consistent_after_transient_recovery() {
                 content: Some("Updated gateway configuration v2".into()),
                 embedding: Some(embed_text("Updated gateway configuration v2")),
                 metadata: Some(json!({ "rev": 2 })),
+                entities: None,
+                relations: None,
                 expected_version: Some(1),
             },
         )
@@ -404,6 +414,8 @@ async fn e2e_update_and_forget_stay_consistent_after_transient_recovery() {
                 content: Some("stale".into()),
                 embedding: None,
                 metadata: None,
+                entities: None,
+                relations: None,
                 expected_version: Some(1),
             },
         )
@@ -441,6 +453,8 @@ async fn e2e_update_and_forget_stay_consistent_after_transient_recovery() {
                 content: Some("after forget".into()),
                 embedding: None,
                 metadata: None,
+                entities: None,
+                relations: None,
                 expected_version: None,
             },
         )

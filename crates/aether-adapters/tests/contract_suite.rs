@@ -3,11 +3,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use aether_adapters::contract;
-use aether_adapters::middleware::{Batcher, Resilient, RetryPolicy, Timeout, Traced};
+use aether_adapters::middleware::{jittered, Batcher, Resilient, RetryPolicy, Timeout, Traced};
 use aether_adapters::{FaultPoint, InMemoryBackend};
 use aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
-    FilterExpr, GraphStore, MemoryId, OutboundConnector, ProjectId, Relation, Result,
+    FilterExpr, GraphStore, IndexSpec, MemoryId, OutboundConnector, ProjectId, Relation, Result,
     TemporalFilter, VectorMatch, VectorRecord, VectorStore,
 };
 use async_trait::async_trait;
@@ -34,6 +34,12 @@ async fn contract_record_store_in_memory_through_middleware() {
         RetryPolicy::default(),
     ));
     contract::record_store(&store).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn contract_record_store_concurrent_idempotency_in_memory() {
+    let backend = Arc::new(InMemoryBackend::new());
+    contract::record_store_concurrent_idempotency(backend).await;
 }
 
 struct FlakyStore {
@@ -67,6 +73,9 @@ impl OutboundConnector for FlakyStore {
 impl VectorStore for FlakyStore {
     async fn initialize(&self, _ns: &ProjectId, _d: usize, _m: DistanceMetric) -> Result<()> {
         Ok(())
+    }
+    async fn describe(&self, _ns: &ProjectId) -> Result<Option<IndexSpec>> {
+        Ok(None)
     }
     async fn upsert_batch(&self, _ns: &ProjectId, records: &[VectorRecord]) -> Result<()> {
         self.batch_sizes.lock().unwrap().push(records.len());
@@ -265,4 +274,14 @@ async fn in_memory_backend_injects_delete_and_graph_faults() {
         .await
         .unwrap();
     assert!(active.edges.is_empty());
+}
+
+#[test]
+fn jittered_backoff_stays_within_bounds() {
+    let max = Duration::from_millis(100);
+    assert_eq!(jittered(Duration::ZERO, 42), Duration::ZERO);
+    for seed in [0u64, 1, 7, 12345, u64::MAX] {
+        let d = jittered(max, seed);
+        assert!(d <= max, "jittered {d:?} exceeded {max:?}");
+    }
 }

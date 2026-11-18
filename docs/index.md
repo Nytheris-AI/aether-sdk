@@ -1,26 +1,25 @@
 # Aether SDK Documentation
 
-**Aether SDK** is a model-free Rust **memory SDK**: composable pieces that developers integrate into their own workflow to store, index, and retrieve AI memory across record, vector, and graph stores such as **SQLite, Redis/Valkey, Turbopuffer, Neo4j, Qdrant, Chroma, and pgvector**.
+**Aether SDK** is a model-free Rust **memory SDK**: composable pieces that developers integrate into their own workflow to store, index, and retrieve AI memory across record, vector, and graph stores (**SQLite, Redis/Valkey, Turbopuffer, Neo4j, Qdrant, Chroma, and pgvector**).
 
 ## Technical Reference
 
-- **[Architecture Overview](architecture/index.md)**: Layered 4-crate Rust workspace and L1/L2/L3 serving model.
-- **[Rust Migration Blueprint](architecture/rust-migration.md)**: Core domain contracts (`aether-core`), `aether-cortex`, and `aether-sdk`.
-- **[Connectors Architecture](architecture/connectors.md)**: Outbound `KvStore`, `VectorStore`, and `GraphStore` drivers with shared resilience middleware.
-- **[Change Overview](architecture/change-overview.md)**: One-screen summary of what will be removed, changed, added, and kept.
-- **[Pieces-First SDK Design](architecture/sdk-design.md)**: The shape of Aether. Five levels of pieces, from single connectors to the optional `MemoryManager` facade.
-- **[Phase 5 Hardening Design](architecture/hardening-design.md)**: Approved design for making the record store the source of truth, with vector and graph stores as derived indexes.
+- **[Architecture Overview](architecture/index.md)**: Five composable levels across the 4-crate Rust workspace.
+- **[Pieces-First SDK Design](architecture/sdk-design.md)**: Design of the five levels, from single connectors to the optional `MemoryManager` facade.
+- **[Phase 5 Hardening Design](architecture/hardening-design.md)**: Durable record-store source of truth with derived vector and graph indexes.
+- **[Connectors Architecture](architecture/connectors.md)**: Outbound `RecordStore`, `VectorStore`, and `GraphStore` drivers, middleware decorators, and the shared contract suite.
+- **[Change Overview](architecture/change-overview.md)**: Summary of the pieces-first and hardening overhaul.
 
 ## Guides
 
-- **[Usage Guide](guides/usage.md)**: Quickstart with `MemoryManager` (`remember`, `recall`, `update`, `forget`, `flush`, `shutdown`).
-- **[Memory Model](guides/memory.md)**: `MemoryTier`, `MemoryScope`, `WriteDurability`, `ConsistencyMode`, and temporal provenance.
-- **[Observability & OpenTelemetry](guides/observability.md)**: Zero-boilerplate `tracing` span hierarchy and the one-line `otel` preset.
+- **[Usage Guide](guides/usage.md)**: Walkthrough and runnable examples across all five SDK levels.
+- **[Memory Model](guides/memory.md)**: Scopes (`Project`, `User`, `Session`), durability (`Buffered`, `WaitFlush`), consistency, and temporal provenance.
+- **[Observability & OpenTelemetry](guides/observability.md)**: `tracing` span hierarchy across `aether-sdk`, `aether-cortex`, and `aether-adapters`, plus the `otel` preset.
 
 ## Development & Roadmap
 
-- **[Development Guidelines](development/guidelines.md)**: Engineering standards, micro commits, and TDD conventions.
-- **[Roadmap](about/roadmap.md)**: Real status of each component, known gaps, and what comes next.
+- **[Development Guidelines](development/guidelines.md)**: Engineering conventions, verification gate, and contract testing.
+- **[Roadmap](about/roadmap.md)**: Current status of crates, drivers, and next milestones.
 
 ---
 

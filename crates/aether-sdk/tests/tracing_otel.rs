@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use aether_adapters::{InMemoryBackend, Traced};
 use aether_core::{
-    DistanceMetric, MemoryId, MemoryInbound, MemoryInput, MemoryUpdate, ProjectId, RecallMode,
-    RecallQuery, VectorStore, WriteDurability,
+    DistanceMetric, MemoryId, MemoryInput, MemoryUpdate, ProjectId, RecallMode, RecallQuery,
+    VectorStore, WriteDurability,
 };
 use aether_sdk::MemoryManager;
 use tracing::field::{Field, Visit};
@@ -141,15 +141,18 @@ fn otel_traces_connect_memory_manager_cortex_and_adapters() {
             .await
             .unwrap();
 
-        let manager = MemoryManager::new(kv, vec_store, graph);
+        let manager = MemoryManager::builder(kv)
+            .vector(vec_store)
+            .graph(graph)
+            .build();
 
-        // 1. Remember (WaitFlush) -> should emit root aether.remember -> aether.cortex.enqueue -> aether.cortex.flush -> connector_op
+        // 1. Remember (WaitFlush) -> should emit root aether.remember -> aether.cortex.index_record -> connector_op
         let mut input = MemoryInput::new(pid.clone(), "OpenTelemetry trace propagation test");
         input.embedding = Some(vec![1.0, 0.0, 0.0]);
         input.durability = WriteDurability::WaitFlush;
         manager.remember(input).await.unwrap();
 
-        // 2. Recall -> should emit root aether.recall -> aether.cortex.query_plan -> connector_op
+        // 2. Recall -> should emit root aether.recall -> aether.cortex.vector_search -> connector_op
         let mut query = RecallQuery::new(pid.clone(), "trace propagation");
         query.query_vector = Some(vec![1.0, 0.0, 0.0]);
         query.mode = RecallMode::Vector;
@@ -165,6 +168,8 @@ fn otel_traces_connect_memory_manager_cortex_and_adapters() {
                     content: Some("won't exist".into()),
                     embedding: None,
                     metadata: None,
+                    entities: None,
+                    relations: None,
                     expected_version: None,
                 },
             )
@@ -203,17 +208,13 @@ fn otel_traces_connect_memory_manager_cortex_and_adapters() {
     );
 
     // Verify cortex child spans
-    let enqueue_spans = collector.find_by_name("aether.cortex.enqueue");
-    assert_eq!(enqueue_spans.len(), 1);
-    assert!(collector.has_parent(&enqueue_spans[0], "aether.remember"));
+    let index_spans = collector.find_by_name("aether.cortex.index_record");
+    assert_eq!(index_spans.len(), 1);
+    assert!(collector.has_parent(&index_spans[0], "aether.remember"));
 
-    let flush_spans = collector.find_by_name("aether.cortex.flush");
-    assert_eq!(flush_spans.len(), 1);
-    assert!(collector.has_parent(&flush_spans[0], "aether.cortex.enqueue"));
-
-    let plan_spans = collector.find_by_name("aether.cortex.query_plan");
-    assert_eq!(plan_spans.len(), 1);
-    assert!(collector.has_parent(&plan_spans[0], "aether.recall"));
+    let search_spans = collector.find_by_name("aether.cortex.vector_search");
+    assert_eq!(search_spans.len(), 1);
+    assert!(collector.has_parent(&search_spans[0], "aether.recall"));
 
     // Verify connector_op spans are no longer orphans (nested under aether.remember / aether.recall)
     let connector_spans = collector.find_by_name("connector_op");
@@ -243,7 +244,10 @@ fn zero_boilerplate_memory_manager_emits_otel_client_spans() {
             .unwrap();
 
         // No manual Traced::new(...) wrapping!
-        let manager = MemoryManager::new(raw.clone(), raw.clone(), raw.clone());
+        let manager = MemoryManager::builder(raw.clone())
+            .vector(raw.clone())
+            .graph(raw)
+            .build();
 
         let mut input = MemoryInput::new(pid.clone(), "Zero boilerplate telemetry");
         input.embedding = Some(vec![1.0, 0.0, 0.0]);
@@ -259,6 +263,8 @@ fn zero_boilerplate_memory_manager_emits_otel_client_spans() {
                     content: Some("conflict".into()),
                     embedding: None,
                     metadata: None,
+                    entities: None,
+                    relations: None,
                     expected_version: Some(999),
                 },
             )
@@ -274,20 +280,23 @@ fn zero_boilerplate_memory_manager_emits_otel_client_spans() {
         .iter()
         .any(|s| collector.has_parent(s, "aether.remember")));
 
-    let put_span = connector_spans
+    let create_span = connector_spans
         .iter()
-        .find(|s| s.fields.get("op").map(String::as_str) == Some("record_put"))
-        .expect("expected record_put connector_op span");
+        .find(|s| s.fields.get("op").map(String::as_str) == Some("record_create"))
+        .expect("expected record_create connector_op span");
     assert_eq!(
-        put_span.fields.get("otel.kind").map(String::as_str),
+        create_span.fields.get("otel.kind").map(String::as_str),
         Some("client")
     );
     assert_eq!(
-        put_span.fields.get("db.system").map(String::as_str),
+        create_span.fields.get("db.system").map(String::as_str),
         Some("in_memory")
     );
     assert_eq!(
-        put_span.fields.get("otel.status_code").map(String::as_str),
+        create_span
+            .fields
+            .get("otel.status_code")
+            .map(String::as_str),
         Some("OK")
     );
 }

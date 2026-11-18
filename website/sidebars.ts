@@ -8,11 +8,10 @@ const sidebars: SidebarsConfig = {
       label: 'Architecture',
       items: [
         'architecture/index',
-        'architecture/rust-migration',
         'architecture/connectors',
-        'architecture/change-overview',
         'architecture/sdk-design',
         'architecture/hardening-design',
+        'architecture/change-overview',
       ],
     },
     {
@@ -21,6 +20,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'guides/usage',
         'guides/memory',
+        'guides/observability',
       ],
     },
     {

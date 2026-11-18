@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use aether_core::{
     AetherError, ConsistencyMode, DistanceMetric, Entity, EntityId, FilterExpr, FilterValue,
-    MemoryId, MemoryInbound, MemoryInput, MemoryScope, MemoryTier, MemoryUpdate, ProjectId,
-    RecallMode, RecallQuery, ReceiptState, Relation, TemporalFilter, VectorStore, WriteDurability,
+    MemoryId, MemoryInput, MemoryScope, MemoryTier, MemoryUpdate, ProjectId, RecallMode,
+    RecallQuery, ReceiptState, Relation, TemporalFilter, VectorStore, WriteDurability,
 };
 use chrono::{DateTime, Utc};
 use common::{
@@ -223,7 +223,7 @@ async fn e2e_knowledge_lifecycle_cas_temporal_and_forget() {
             let mut input = MemoryInput::new(pid.clone(), rec.content.clone());
             input.embedding = Some(embed_text(&rec.content));
             input.tier = rec.tier;
-            input.scope = rec.scope;
+            input.scope = rec.scope.clone();
             input.durability = WriteDurability::WaitFlush;
             input.idempotency_key = Some(rec.idempotency_key.clone());
             input.entities = rec.entities.clone();
@@ -261,6 +261,8 @@ async fn e2e_knowledge_lifecycle_cas_temporal_and_forget() {
                         content: Some(upd.new_content.clone()),
                         embedding: Some(embed_text(&upd.new_content)),
                         metadata: Some(upd.new_metadata.clone()),
+                        entities: None,
+                        relations: None,
                         expected_version: Some(1),
                     },
                 )
@@ -276,6 +278,8 @@ async fn e2e_knowledge_lifecycle_cas_temporal_and_forget() {
                         content: Some("stale overwrite".into()),
                         embedding: None,
                         metadata: None,
+                        entities: None,
+                        relations: None,
                         expected_version: Some(1),
                     },
                 )

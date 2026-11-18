@@ -1,15 +1,136 @@
 # Usage Guide
 
-This guide demonstrates how to initialize `MemoryManager` and perform the full memory lifecycle (`remember`, `recall`, `update`, `forget`, `flush`, `shutdown`) using the zero-infra `InMemoryBackend`.
+Aether SDK can be entered at any of five levels depending on how much of the pipeline you want to own. Every example below is runnable verbatim with `cargo run -p aether-sdk --example <name>`.
 
-## Quickstart (Rust)
+---
+
+## Level 1: Direct Connector (`level_1_connector.rs`)
+
+Use a single `RecordStore`, `VectorStore`, or `GraphStore` directly without middleware, indexers, or `MemoryManager`:
+
+```rust
+use aether_adapters::InMemoryBackend;
+use aether_core::{DistanceMetric, MemoryId, ProjectId, VectorRecord, VectorStore};
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> aether_core::Result<()> {
+    let store = InMemoryBackend::new();
+    let ns = ProjectId::new("level1-demo")?;
+    store.initialize(&ns, 3, DistanceMetric::Cosine).await?;
+
+    let id = MemoryId::new();
+    store
+        .upsert_batch(
+            &ns,
+            &[VectorRecord {
+                id,
+                vector: vec![1.0, 0.0, 0.0],
+                metadata: json!({"topic": "connectors"}),
+            }],
+        )
+        .await?;
+
+    let hits = store.search(&ns, &[1.0, 0.0, 0.0], 5, None).await?;
+    println!("level 1 hits: {} (top id={})", hits.len(), hits[0].id);
+    Ok(())
+}
+```
+
+---
+
+## Level 2: Middleware Decorators (`level_2_middleware.rs`)
+
+Wrap any connector in `Batcher`, `Timeout`, `Resilient`, and `Traced`:
+
+```rust
+use std::sync::Arc;
+use std::time::Duration;
+use aether_adapters::{Batcher, FaultPoint, InMemoryBackend, Resilient, RetryPolicy, Timeout};
+use aether_core::{DistanceMetric, MemoryId, ProjectId, VectorRecord, VectorStore};
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> aether_core::Result<()> {
+    let raw = Arc::new(InMemoryBackend::new());
+    let ns = ProjectId::new("level2-demo")?;
+    raw.initialize(&ns, 2, DistanceMetric::Cosine).await?;
+
+    let store = Resilient::new(
+        Timeout::new(Batcher::new(raw.clone()), Duration::from_secs(2)),
+        RetryPolicy {
+            max_retries: 3,
+            base_delay: Duration::from_millis(5),
+        },
+    );
+
+    raw.fail_next(FaultPoint::VectorUpsert, 1);
+    store
+        .upsert_batch(
+            &ns,
+            &[VectorRecord {
+                id: MemoryId::new(),
+                vector: vec![1.0, 0.0],
+                metadata: json!({"retry": true}),
+            }],
+        )
+        .await?;
+
+    let hits = store.search(&ns, &[1.0, 0.0], 5, None).await?;
+    println!("level 2 hits after retry: {}", hits.len());
+    Ok(())
+}
+```
+
+---
+
+## Level 3: Composable Hybrid Recall (`level_3_hybrid_recall.rs`)
+
+Call `aether_cortex::recall::{vector_search, graph_search, rrf, RRF_K}` and `PersonalizedPageRank` directly to fuse dense vector search with graph traversal:
+
+```rust
+let vec_cands =
+    recall::vector_search(&backend, &backend, &ns, &[1.0, 0.0], 5, None).await?;
+let (graph_cands, subgraph) = recall::graph_search(
+    &backend,
+    &backend,
+    &ns,
+    &[alice.id],
+    2,
+    10,
+    &TemporalFilter::default(),
+    &PersonalizedPageRank::default(),
+)
+.await?;
+
+let fused = recall::rrf(&[vec_cands, graph_cands], RRF_K);
+```
+
+---
+
+## Level 4: Durable Indexer Sync Engine (`level_4_sync_engine.rs`)
+
+Write authoritative records to a `RecordStore`, then drive derived vector and graph updates explicitly via `Indexer::run_pass()` (or opt into an interval loop with `Indexer::spawn`):
+
+```rust
+let indexer = Indexer::new(backend.clone())
+    .with_vector(backend.clone())
+    .with_graph(backend.clone());
+let report = indexer.run_pass().await?;
+```
+
+---
+
+## Level 5: `MemoryManager` Facade (`level_5_facade.rs`)
+
+Assemble an authoritative `RecordStore` with optional vector and graph indexes using `MemoryManager::builder`:
 
 ```rust
 use std::sync::Arc;
 use aether_adapters::InMemoryBackend;
 use aether_core::{
-    DistanceMetric, Entity, EntityId, MemoryInbound, MemoryInput, MemoryUpdate,
-    ProjectId, RecallMode, RecallQuery, Relation, VectorStore, WriteDurability,
+    DistanceMetric, Entity, EntityId, MemoryInput, MemoryUpdate, ProjectId, RecallMode,
+    RecallQuery, Relation, VectorStore, WriteDurability,
 };
 use aether_sdk::MemoryManager;
 use chrono::Utc;
@@ -17,62 +138,57 @@ use chrono::Utc;
 #[tokio::main]
 async fn main() -> aether_core::Result<()> {
     let backend = Arc::new(InMemoryBackend::new());
-    let project_id = ProjectId::new("proj-alpha")?;
+    let ns = ProjectId::new("level5-demo")?;
+    backend.initialize(&ns, 2, DistanceMetric::Cosine).await?;
 
-    // Initialize vector index dimensions & distance metric
-    backend.initialize(&project_id, 3, DistanceMetric::Cosine).await?;
+    let manager = MemoryManager::builder(backend.clone())
+        .vector(backend.clone())
+        .graph(backend)
+        .build();
 
-    // Construct the unified L1/L2/L3 MemoryManager facade
-    let manager: Arc<dyn MemoryInbound> = Arc::new(MemoryManager::new(
-        backend.clone(), // L2 KvStore
-        backend.clone(), // L3 VectorStore
-        backend.clone(), // L3 GraphStore
-    ));
-
-    // 1. Remember (with optional pre-computed embedding, entities, and relations)
-    let mut input = MemoryInput::new(project_id.clone(), "Alice uses Turbopuffer for vector recall.");
-    input.embedding = Some(vec![1.0, 0.0, 0.0]);
-    input.durability = WriteDurability::WaitFlush;
-    input.entities = vec![Entity {
+    let alice = Entity {
         id: EntityId::new("person:alice")?,
         name: "Alice".into(),
         entity_type: "Person".into(),
-    }];
+    };
+    let mut input = MemoryInput::new(ns.clone(), "Alice prefers Qdrant");
+    input.embedding = Some(vec![1.0, 0.0]);
+    input.durability = WriteDurability::Buffered;
+    input.entities = vec![alice.clone()];
     input.relations = vec![Relation {
-        source: EntityId::new("person:alice")?,
-        target: EntityId::new("db:turbopuffer")?,
-        relation_type: "USES".into(),
+        source: alice.id.clone(),
+        target: EntityId::new("db:qdrant")?,
+        relation_type: "PREFERS".into(),
         valid_at: Utc::now(),
         invalid_at: None,
     }];
-
     let receipt = manager.remember(input).await?;
+    manager.flush().await?;
 
-    // 2. Hybrid Recall (Vector + Graph neighborhood + ReadYourWrites)
-    let mut query = RecallQuery::new(project_id.clone(), "Alice vector database");
-    query.query_vector = Some(vec![1.0, 0.0, 0.0]);
-    query.seed_entities = vec![EntityId::new("person:alice")?];
-    query.mode = RecallMode::Hybrid;
+    let mut q = RecallQuery::new(ns.clone(), "What database does Alice prefer?");
+    q.query_vector = Some(vec![1.0, 0.0]);
+    q.seed_entities = vec![alice.id];
+    q.mode = RecallMode::Hybrid;
+    let res = manager.recall(q).await?;
+    println!("level 5 recalled hits: {}, edges: {}", res.hits.len(), res.subgraph.edges.len());
 
-    let result = manager.recall(query).await?;
-    println!("Hits: {}, Graph edges: {}", result.hits.len(), result.subgraph.edges.len());
+    let updated = manager
+        .update(
+            &ns,
+            receipt.memory_id,
+            MemoryUpdate {
+                content: Some("Alice now prefers pgvector".into()),
+                embedding: Some(vec![0.0, 1.0]),
+                metadata: None,
+                entities: None,
+                relations: None,
+                expected_version: Some(receipt.version),
+            },
+        )
+        .await?;
+    println!("level 5 updated version: {}", updated.version);
 
-    // 3. Optimistic Concurrency (CAS) Update
-    manager.update(
-        &project_id,
-        receipt.memory_id,
-        MemoryUpdate {
-            content: Some("Alice uses Turbopuffer and Neo4j.".into()),
-            embedding: None,
-            metadata: None,
-            expected_version: Some(receipt.version),
-        },
-    ).await?;
-
-    // 4. Forget (deletes vector + retracts graph provenance edges)
-    manager.forget(&project_id, receipt.memory_id).await?;
-
-    // 5. Graceful shutdown
+    manager.forget(&ns, receipt.memory_id).await?;
     manager.shutdown().await?;
     Ok(())
 }
