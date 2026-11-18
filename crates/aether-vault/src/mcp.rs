@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 
+use crate::auth::{ApiKeySecret, ScopedApiKey};
 use crate::engine::VaultEngine;
+use crate::kv::ModelId;
 use crate::types::{AmuId, RecallRequest, ScopeTag, StageMemoryRequest, TokenBudget, VaultTier};
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
@@ -13,6 +15,7 @@ const PROTOCOL_VERSION: &str = "2024-11-05";
 /// 3-tool Model Context Protocol (MCP) JSON-RPC 2.0 server backed by [`VaultEngine`].
 pub struct McpServer {
     engine: Arc<VaultEngine>,
+    agent: Option<ScopedApiKey>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,7 +46,27 @@ struct JsonRpcError {
 
 impl McpServer {
     pub fn new(engine: Arc<VaultEngine>) -> Self {
-        Self { engine }
+        Self {
+            engine,
+            agent: None,
+        }
+    }
+
+    /// Binds an MCP server session directly to a pre-authenticated `ScopedApiKey`.
+    pub fn scoped(engine: Arc<VaultEngine>, agent: ScopedApiKey) -> Self {
+        Self {
+            engine,
+            agent: Some(agent),
+        }
+    }
+
+    /// Authenticates `secret` against the vault engine and returns a scoped MCP session.
+    pub async fn with_api_key(engine: Arc<VaultEngine>, secret: &ApiKeySecret) -> Result<Self> {
+        let agent = engine
+            .authenticate_api_key(secret)
+            .await
+            .map_err(AetherError::from)?;
+        Ok(Self::scoped(engine, agent))
     }
 
     /// Handles a single JSON-RPC 2.0 request or notification.
@@ -145,13 +168,21 @@ impl McpServer {
         if let Some(include_hot) = args.get("include_hot_profile").and_then(Value::as_bool) {
             req.include_hot_profile = include_hot;
         }
+        if let Some(model_raw) = args.get("kv_model").and_then(Value::as_str) {
+            if !model_raw.trim().is_empty() {
+                req.kv_model = Some(ModelId::new(model_raw)?);
+            }
+        }
         let structured_flag = args
             .get("structured")
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
-        let res = self.engine.recall(req).await?;
-        let structured_val = json!({
+        let res = match &self.agent {
+            Some(agent) => self.engine.recall_as(agent, req).await?,
+            None => self.engine.recall(req).await?,
+        };
+        let mut structured_val = json!({
             "static_prefix": res.static_prefix,
             "dynamic_context": res.dynamic_context,
             "prefix_hash": res.prefix_hash.as_str(),
@@ -159,6 +190,9 @@ impl McpServer {
             "dynamic_tokens": res.dynamic_tokens,
             "tokens_used": res.tokens_used,
         });
+        if let Some(hint) = &res.kv_hint {
+            structured_val["kv_hint"] = serde_json::to_value(hint)?;
+        }
         let text = if structured_flag {
             serde_json::to_string(&structured_val)?
         } else if res.formatted_context.is_empty() {
@@ -187,6 +221,15 @@ impl McpServer {
         };
 
         let mut req = StageMemoryRequest::new(fact, tier);
+        if let Some(scope_raw) = args.get("scope").and_then(Value::as_str) {
+            if !scope_raw.trim().is_empty() {
+                req.scope = ScopeTag::new(scope_raw)?;
+            } else if let Some(agent) = &self.agent {
+                req.scope = agent.default_write_scope();
+            }
+        } else if let Some(agent) = &self.agent {
+            req.scope = agent.default_write_scope();
+        }
         if let Some(target) = args.get("target_note").and_then(Value::as_str) {
             if !target.trim().is_empty() {
                 req = req.with_target_note(target);
@@ -198,7 +241,10 @@ impl McpServer {
             }
         }
 
-        let candidate_id = self.engine.stage_memory(req).await?;
+        let candidate_id = match &self.agent {
+            Some(agent) => self.engine.stage_memory_as(agent, req).await?,
+            None => self.engine.stage_memory(req).await?,
+        };
         Ok(json!({
             "candidate_id": candidate_id.as_str(),
             "inbox_path": "Aether/Inbox.md"
@@ -213,7 +259,10 @@ impl McpServer {
             .ok_or_else(|| {
                 AetherError::InvalidInput("missing string argument `source_pointer`".into())
             })?;
-        self.engine.inspect_source(ptr).await
+        match &self.agent {
+            Some(agent) => self.engine.inspect_source_as(agent, ptr).await,
+            None => self.engine.inspect_source(ptr).await,
+        }
     }
 
     /// Serves newline-delimited JSON-RPC 2.0 messages over `stdin` and `stdout`.
@@ -282,7 +331,8 @@ fn tool_descriptors() -> Value {
                     "scope": { "type": "string", "description": "Active agent scope (e.g., 'engineering', 'global')." },
                     "max_tokens": { "type": "integer", "default": 1500, "description": "Strict token ceiling for returned context." },
                     "include_hot_profile": { "type": "boolean", "default": true },
-                    "structured": { "type": "boolean", "default": false, "description": "When true, returns JSON separating static_prefix (with prefix_hash) and dynamic_context for provider prompt caching." }
+                    "structured": { "type": "boolean", "default": false, "description": "When true, returns JSON separating static_prefix (with prefix_hash) and dynamic_context for provider prompt caching." },
+                    "kv_model": { "type": "string", "description": "Optional target model identifier for PagedAttention/CacheBlend KV-cache reuse hints." }
                 },
                 "required": ["query"]
             }
@@ -295,6 +345,7 @@ fn tool_descriptors() -> Value {
                 "properties": {
                     "proposed_fact": { "type": "string", "description": "Concise, atomic statement to remember." },
                     "suggested_tier": { "type": "string", "enum": ["hot", "warm", "cold"], "default": "warm" },
+                    "scope": { "type": "string", "description": "Target memory scope (defaults to the agent primary scope or global)." },
                     "target_note": { "type": "string", "description": "Suggested Obsidian note or [[wikilink]] topic." },
                     "supersedes_amu_id": { "type": "string", "description": "Optional ID of an older fact this replaces." }
                 },

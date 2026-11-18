@@ -1,7 +1,9 @@
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
+use chrono::{DateTime, Utc};
 use nytheris_aether_core::{AetherError, Result};
+use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -9,14 +11,22 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
+use crate::auth::{
+    AgentId, AgentRole, ApiKeySecret, AuthError, IssueApiKeyRequest, KeyId, ScopedApiKey,
+};
 use crate::engine::VaultEngine;
+use crate::git::GitSyncOptions;
 use crate::inbox::{APPROVED_MIRROR_REL_PATH, INBOX_REL_PATH};
-use crate::types::CandidateId;
+use crate::kv::{KvStorageTier, ModelId, WarmKvRequest};
+use crate::mcp::McpServer;
+use crate::types::{
+    AmuId, CandidateId, RecallRequest, ScopeTag, StageMemoryRequest, TokenBudget, VaultTier,
+};
 
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 
-/// Loopback-only HTTP/1.1 JSON control plane for Obsidian companion status,
-/// 1-click Inbox decisions, and Dream pass execution.
+/// HTTP/1.1 JSON control plane and team gateway for Obsidian status, scoped MCP/recall/stage/inspect,
+/// Git vault sync, API key management, and GPU KV-cache warming.
 pub struct ControlPlaneServer {
     local_addr: SocketAddr,
     shutdown_tx: watch::Sender<bool>,
@@ -29,12 +39,113 @@ struct DecideRequest {
     decision: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct RecallHttpRequest {
+    query: String,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    max_tokens: Option<usize>,
+    #[serde(default = "default_true")]
+    include_hot_profile: bool,
+    #[serde(default)]
+    kv_model: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StageHttpRequest {
+    proposed_fact: String,
+    #[serde(default)]
+    suggested_tier: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    target_note: Option<String>,
+    #[serde(default)]
+    supersedes_amu_id: Option<String>,
+    #[serde(default)]
+    proposed_by: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct InspectHttpRequest {
+    source_pointer: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct GitSyncHttpRequest {
+    #[serde(default)]
+    remote: Option<String>,
+    #[serde(default)]
+    branch: Option<String>,
+    #[serde(default)]
+    push: bool,
+    #[serde(default)]
+    commit_message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WarmKvHttpRequest {
+    model_id: String,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    amu_ids: Option<Vec<String>>,
+    #[serde(default)]
+    target_tier: Option<String>,
+    #[serde(default = "default_true")]
+    include_hot_prefix: bool,
+    #[serde(default = "default_true")]
+    include_cache_blend: bool,
+    #[serde(default)]
+    block_tokens: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IssueKeyHttpRequest {
+    agent_id: String,
+    role: String,
+    scopes: Vec<String>,
+    #[serde(default)]
+    expires_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RevokeKeyHttpRequest {
+    key_id: String,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+struct ParsedHttpRequest {
+    method: String,
+    path: String,
+    query: Option<String>,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+}
+
+type HttpTuple = (u16, &'static str, Value);
+
 impl ControlPlaneServer {
-    /// Binds an HTTP control-plane server strictly on a loopback address (`127.0.0.1` or `::1`).
+    /// Binds an unauthenticated HTTP control-plane server strictly on a loopback address (`127.0.0.1` or `::1`).
     pub async fn bind(addr: SocketAddr, engine: Arc<VaultEngine>) -> Result<Self> {
-        if !addr.ip().is_loopback() {
+        Self::bind_with_auth(addr, engine, false).await
+    }
+
+    /// Binds an HTTP control-plane server with optional mandatory bearer authentication.
+    ///
+    /// Non-loopback bind addresses are permitted only when `require_auth` is `true`.
+    pub async fn bind_with_auth(
+        addr: SocketAddr,
+        engine: Arc<VaultEngine>,
+        require_auth: bool,
+    ) -> Result<Self> {
+        if !require_auth && !addr.ip().is_loopback() {
             return Err(AetherError::InvalidInput(format!(
-                "control plane address `{addr}` must bind strictly to a loopback IP"
+                "unauthenticated control plane address `{addr}` must bind strictly to a loopback IP"
             )));
         }
 
@@ -62,7 +173,7 @@ impl ControlPlaneServer {
                         };
                         let eng = Arc::clone(&engine);
                         tokio::spawn(async move {
-                            let _ = handle_connection(stream, eng).await;
+                            let _ = handle_connection(stream, eng, require_auth).await;
                         });
                     }
                 }
@@ -97,8 +208,12 @@ impl ControlPlaneServer {
     }
 }
 
-async fn handle_connection(mut stream: TcpStream, engine: Arc<VaultEngine>) -> std::io::Result<()> {
-    let Some((method, path, body)) = read_http_request(&mut stream).await? else {
+async fn handle_connection(
+    mut stream: TcpStream,
+    engine: Arc<VaultEngine>,
+    require_auth: bool,
+) -> std::io::Result<()> {
+    let Some(req) = read_http_request(&mut stream).await? else {
         return write_json_response(
             &mut stream,
             400,
@@ -108,66 +223,175 @@ async fn handle_connection(mut stream: TcpStream, engine: Arc<VaultEngine>) -> s
         .await;
     };
 
-    if method == "OPTIONS" {
+    if req.method == "OPTIONS" {
         return write_no_content(&mut stream).await;
     }
 
-    // Green implementation of all HTTP control plane routes.
-    let (status_code, reason, json_body) = match (method.as_str(), path.as_str()) {
+    let agent = match authenticate_http_request(&engine, &req.headers, require_auth).await {
+        Ok(agent) => agent,
+        Err(err_resp) => {
+            return write_json_response(&mut stream, err_resp.0, err_resp.1, &err_resp.2).await;
+        }
+    };
+
+    let (status_code, reason, json_body) = dispatch_route(&engine, &req, agent.as_ref()).await;
+    write_json_response(&mut stream, status_code, reason, &json_body).await
+}
+
+async fn authenticate_http_request(
+    engine: &VaultEngine,
+    headers: &[(String, String)],
+    require_auth: bool,
+) -> std::result::Result<Option<ScopedApiKey>, HttpTuple> {
+    match find_bearer_header(headers) {
+        Some(Ok(raw_token)) => {
+            let secret = ApiKeySecret::parse(raw_token)
+                .map_err(|_| auth_err_payload(AuthError::InvalidToken))?;
+            let agent = engine
+                .authenticate_api_key(&secret)
+                .await
+                .map_err(auth_err_payload)?;
+            Ok(Some(agent))
+        }
+        Some(Err(err)) => Err(auth_err_payload(err)),
+        None if require_auth => Err(auth_err_payload(AuthError::MissingToken)),
+        None => Ok(None),
+    }
+}
+
+fn find_bearer_header(
+    headers: &[(String, String)],
+) -> Option<std::result::Result<&str, AuthError>> {
+    for (name, val) in headers {
+        if name.eq_ignore_ascii_case("authorization") {
+            let trimmed = val.trim();
+            if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("bearer ") {
+                let token = trimmed[7..].trim();
+                if token.is_empty() {
+                    return Some(Err(AuthError::InvalidToken));
+                }
+                return Some(Ok(token));
+            }
+            return Some(Err(AuthError::InvalidToken));
+        }
+    }
+    None
+}
+
+async fn dispatch_route(
+    engine: &Arc<VaultEngine>,
+    req: &ParsedHttpRequest,
+    agent: Option<&ScopedApiKey>,
+) -> HttpTuple {
+    match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/v1/status") => match engine.status().await {
             Ok(rep) => ok_payload(rep),
             Err(err) => err_payload(err),
         },
-        ("GET", "/v1/inbox") => match engine.pending_inbox().await {
-            Ok(pending) => (
-                200,
-                "OK",
-                json!({
-                    "inbox_path": INBOX_REL_PATH,
-                    "approved_mirror_path": APPROVED_MIRROR_REL_PATH,
-                    "pending": pending,
-                }),
-            ),
-            Err(err) => err_payload(err),
-        },
-        ("POST", "/v1/inbox/decide") => handle_decide(&engine, &body).await,
-        ("POST", "/v1/inbox/reconcile") => match engine.reconcile_inbox().await {
-            Ok(rep) => ok_payload(rep),
-            Err(err) => err_payload(err),
-        },
-        ("POST", "/v1/dream") => match engine.run_dream_pass().await {
-            Ok(rep) => ok_payload(rep),
-            Err(err) => err_payload(err),
-        },
-        ("POST", "/v1/sync") => match engine.sync_vault().await {
-            Ok(rep) => ok_payload(rep),
-            Err(err) => err_payload(err),
-        },
+        ("GET", "/v1/inbox") => handle_inbox(engine, agent).await,
+        ("POST", "/v1/inbox/decide") => handle_decide(engine, &req.body, agent).await,
+        ("POST", "/v1/inbox/reconcile") => {
+            if let Err(resp) = require_role(agent, AgentRole::Admin) {
+                return resp;
+            }
+            match engine.reconcile_inbox().await {
+                Ok(rep) => ok_payload(rep),
+                Err(err) => err_payload(err),
+            }
+        }
+        ("POST", "/v1/dream") => {
+            if let Err(resp) = require_role(agent, AgentRole::Admin) {
+                return resp;
+            }
+            match engine.run_dream_pass().await {
+                Ok(rep) => ok_payload(rep),
+                Err(err) => err_payload(err),
+            }
+        }
+        ("POST", "/v1/sync") => {
+            if let Err(resp) = require_role(agent, AgentRole::Admin) {
+                return resp;
+            }
+            match engine.sync_vault().await {
+                Ok(rep) => ok_payload(rep),
+                Err(err) => err_payload(err),
+            }
+        }
+        ("POST", "/v1/git/sync") => handle_git_sync(engine, &req.body, agent).await,
+        ("POST", "/v1/recall") => handle_recall(engine, &req.body, agent).await,
+        ("POST", "/v1/stage") => handle_stage(engine, &req.body, agent).await,
+        ("POST", "/v1/inspect") => handle_inspect(engine, &req.body, agent).await,
+        ("POST", "/v1/mcp") => handle_mcp(engine, &req.body, agent).await,
+        ("POST", "/v1/kv/warm") => handle_kv_warm(engine, &req.body, agent).await,
+        ("GET", "/v1/kv/stats") => handle_kv_stats(engine, req.query.as_deref()).await,
+        ("GET", "/v1/auth/keys") => {
+            if let Err(resp) = require_role(agent, AgentRole::Admin) {
+                return resp;
+            }
+            match engine.list_api_keys().await {
+                Ok(keys) => (200, "OK", json!({ "keys": keys })),
+                Err(err) => err_payload(err),
+            }
+        }
+        ("POST", "/v1/auth/keys") => handle_issue_key(engine, &req.body, agent).await,
+        ("POST", "/v1/auth/keys/revoke") => handle_revoke_key(engine, &req.body, agent).await,
         _ => (
             404,
             "Not Found",
-            json!({ "error": format!("unknown route {method} {path}") }),
+            json!({ "error": format!("unknown route {} {}", req.method, req.path) }),
         ),
-    };
-
-    write_json_response(&mut stream, status_code, reason, &json_body).await
+    }
 }
 
-async fn handle_decide(engine: &VaultEngine, body: &[u8]) -> (u16, &'static str, Value) {
-    let parsed: DecideRequest = match serde_json::from_slice(body) {
+async fn handle_inbox(engine: &VaultEngine, agent: Option<&ScopedApiKey>) -> HttpTuple {
+    let pending_res = match agent {
+        Some(a) => engine.pending_inbox_as(a).await,
+        None => engine.pending_inbox().await,
+    };
+    match pending_res {
+        Ok(pending) => (
+            200,
+            "OK",
+            json!({
+                "inbox_path": INBOX_REL_PATH,
+                "approved_mirror_path": APPROVED_MIRROR_REL_PATH,
+                "pending": pending,
+            }),
+        ),
+        Err(err) => err_payload(err),
+    }
+}
+
+async fn handle_decide(
+    engine: &VaultEngine,
+    body: &[u8],
+    agent: Option<&ScopedApiKey>,
+) -> HttpTuple {
+    if let Err(resp) = require_role(agent, AgentRole::Admin) {
+        return resp;
+    }
+    let parsed: DecideRequest = match parse_json_body(body) {
         Ok(req) => req,
-        Err(err) => {
-            return (
-                400,
-                "Bad Request",
-                json!({ "error": format!("invalid json body: {err}") }),
-            );
-        }
+        Err(resp) => return resp,
     };
     let cid = match CandidateId::parse(&parsed.candidate_id) {
         Ok(id) => id,
         Err(err) => return err_payload(err),
     };
+    if let Some(a) = agent {
+        if !a.has_wildcard_scope() {
+            match engine.pending_inbox().await {
+                Ok(pending) => {
+                    if let Some(entry) = pending.iter().find(|e| e.candidate_id == cid) {
+                        if let Err(err) = a.authorize_write_scope(&entry.scope) {
+                            return auth_err_payload(err);
+                        }
+                    }
+                }
+                Err(err) => return err_payload(err),
+            }
+        }
+    }
     let approve = match parsed.decision.trim().to_ascii_lowercase().as_str() {
         "approve" | "approved" => true,
         "reject" | "rejected" => false,
@@ -194,7 +418,411 @@ async fn handle_decide(engine: &VaultEngine, body: &[u8]) -> (u16, &'static str,
     }
 }
 
-fn ok_payload<T: serde::Serialize>(val: T) -> (u16, &'static str, Value) {
+async fn handle_git_sync(
+    engine: &VaultEngine,
+    body: &[u8],
+    agent: Option<&ScopedApiKey>,
+) -> HttpTuple {
+    if let Err(resp) = require_role(agent, AgentRole::Admin) {
+        return resp;
+    }
+    let parsed: GitSyncHttpRequest = if body.iter().all(|b| b.is_ascii_whitespace()) {
+        GitSyncHttpRequest::default()
+    } else {
+        match parse_json_body(body) {
+            Ok(req) => req,
+            Err(resp) => return resp,
+        }
+    };
+    let mut opts = GitSyncOptions::new().with_push(parsed.push);
+    if let Some(remote) = parsed.remote.filter(|r| !r.trim().is_empty()) {
+        opts = opts.with_remote(remote);
+    }
+    if let Some(branch) = parsed.branch.filter(|b| !b.trim().is_empty()) {
+        opts = opts.with_branch(branch);
+    }
+    if let Some(msg) = parsed.commit_message.filter(|m| !m.trim().is_empty()) {
+        opts = opts.with_commit_message(msg);
+    }
+    match engine.git_sync(opts).await {
+        Ok(rep) => ok_payload(rep),
+        Err(err) => err_payload(err),
+    }
+}
+
+async fn handle_recall(
+    engine: &VaultEngine,
+    body: &[u8],
+    agent: Option<&ScopedApiKey>,
+) -> HttpTuple {
+    let parsed: RecallHttpRequest = match parse_json_body(body) {
+        Ok(req) => req,
+        Err(resp) => return resp,
+    };
+    let mut req = RecallRequest::new(parsed.query);
+    req.include_hot_profile = parsed.include_hot_profile;
+    if let Some(scope_raw) = parsed.scope.filter(|s| !s.trim().is_empty()) {
+        match ScopeTag::new(scope_raw) {
+            Ok(s) => req.scope = Some(s),
+            Err(err) => return err_payload(err),
+        }
+    }
+    if let Some(max_tok) = parsed.max_tokens {
+        match TokenBudget::new(max_tok) {
+            Ok(b) => req.max_tokens = b,
+            Err(err) => return err_payload(err),
+        }
+    }
+    if let Some(model_raw) = parsed.kv_model.filter(|m| !m.trim().is_empty()) {
+        match ModelId::new(model_raw) {
+            Ok(m) => req.kv_model = Some(m),
+            Err(err) => return err_payload(err),
+        }
+    }
+
+    let res = match agent {
+        Some(a) => engine.recall_as(a, req).await,
+        None => engine.recall(req).await,
+    };
+    match res {
+        Ok(rep) => ok_payload(rep),
+        Err(err) => err_payload(err),
+    }
+}
+
+async fn handle_stage(
+    engine: &VaultEngine,
+    body: &[u8],
+    agent: Option<&ScopedApiKey>,
+) -> HttpTuple {
+    let parsed: StageHttpRequest = match parse_json_body(body) {
+        Ok(req) => req,
+        Err(resp) => return resp,
+    };
+    let tier = match parsed.suggested_tier {
+        Some(ref raw) => match VaultTier::parse_str(raw) {
+            Some(t) => t,
+            None => {
+                return (
+                    400,
+                    "Bad Request",
+                    json!({ "error": format!("suggested_tier must be hot, warm, or cold (got `{raw}`)") }),
+                );
+            }
+        },
+        None => VaultTier::Warm,
+    };
+
+    let mut req = StageMemoryRequest::new(parsed.proposed_fact, tier);
+    if let Some(scope_raw) = parsed.scope.filter(|s| !s.trim().is_empty()) {
+        match ScopeTag::new(scope_raw) {
+            Ok(s) => req.scope = s,
+            Err(err) => return err_payload(err),
+        }
+    } else if let Some(a) = agent {
+        req.scope = a.default_write_scope();
+    }
+    if let Some(target) = parsed.target_note.filter(|t| !t.trim().is_empty()) {
+        req = req.with_target_note(target);
+    }
+    if let Some(sup_raw) = parsed.supersedes_amu_id.filter(|s| !s.trim().is_empty()) {
+        match AmuId::parse(&sup_raw) {
+            Ok(id) => req = req.with_supersedes(id),
+            Err(err) => return err_payload(err),
+        }
+    }
+    if let Some(by) = parsed.proposed_by.filter(|p| !p.trim().is_empty()) {
+        req.proposed_by = by;
+    }
+
+    let res = match agent {
+        Some(a) => engine.stage_memory_as(a, req).await,
+        None => engine.stage_memory(req).await,
+    };
+    match res {
+        Ok(cid) => (
+            200,
+            "OK",
+            json!({
+                "candidate_id": cid.as_str(),
+                "inbox_path": INBOX_REL_PATH,
+            }),
+        ),
+        Err(err) => err_payload(err),
+    }
+}
+
+async fn handle_inspect(
+    engine: &VaultEngine,
+    body: &[u8],
+    agent: Option<&ScopedApiKey>,
+) -> HttpTuple {
+    let parsed: InspectHttpRequest = match parse_json_body(body) {
+        Ok(req) => req,
+        Err(resp) => return resp,
+    };
+    let res = match agent {
+        Some(a) => engine.inspect_source_as(a, &parsed.source_pointer).await,
+        None => engine.inspect_source(&parsed.source_pointer).await,
+    };
+    match res {
+        Ok(content) => (
+            200,
+            "OK",
+            json!({
+                "source_pointer": parsed.source_pointer,
+                "content": content,
+            }),
+        ),
+        Err(err) => err_payload(err),
+    }
+}
+
+async fn handle_mcp(
+    engine: &Arc<VaultEngine>,
+    body: &[u8],
+    agent: Option<&ScopedApiKey>,
+) -> HttpTuple {
+    let rpc_req: Value = match parse_json_body(body) {
+        Ok(v) => v,
+        Err(resp) => return resp,
+    };
+    let mcp = match agent {
+        Some(a) => McpServer::scoped(Arc::clone(engine), a.clone()),
+        None => McpServer::new(Arc::clone(engine)),
+    };
+    match mcp.handle_jsonrpc(rpc_req).await {
+        Some(resp) => (200, "OK", resp),
+        None => (200, "OK", json!({})),
+    }
+}
+
+async fn handle_kv_warm(
+    engine: &VaultEngine,
+    body: &[u8],
+    agent: Option<&ScopedApiKey>,
+) -> HttpTuple {
+    let parsed: WarmKvHttpRequest = match parse_json_body(body) {
+        Ok(req) => req,
+        Err(resp) => return resp,
+    };
+    let model_id = match ModelId::new(parsed.model_id) {
+        Ok(m) => m,
+        Err(err) => return err_payload(err),
+    };
+    let mut req = WarmKvRequest::new(model_id);
+    req.include_hot_prefix = parsed.include_hot_prefix;
+    req.include_cache_blend = parsed.include_cache_blend;
+
+    if let Some(scope_raw) = parsed.scope.filter(|s| !s.trim().is_empty()) {
+        match ScopeTag::new(scope_raw) {
+            Ok(s) => req.scope = Some(s),
+            Err(err) => return err_payload(err),
+        }
+    }
+    if let Some(raw_ids) = parsed.amu_ids {
+        let mut parsed_ids = Vec::with_capacity(raw_ids.len());
+        for raw in raw_ids {
+            match AmuId::parse(&raw) {
+                Ok(id) => parsed_ids.push(id),
+                Err(err) => return err_payload(err),
+            }
+        }
+        req.amu_ids = Some(parsed_ids);
+    }
+    if let Some(tier_raw) = parsed.target_tier {
+        match KvStorageTier::parse_str(&tier_raw) {
+            Some(t) => req.target_tier = t,
+            None => {
+                return (
+                    400,
+                    "Bad Request",
+                    json!({ "error": format!("invalid target_tier `{tier_raw}`") }),
+                );
+            }
+        }
+    }
+    if let Some(bt) = parsed.block_tokens {
+        if bt == 0 {
+            return (
+                400,
+                "Bad Request",
+                json!({ "error": "block_tokens must be greater than zero" }),
+            );
+        }
+        req.block_tokens = bt;
+    }
+
+    let res = match agent {
+        Some(a) => engine.warm_kv_cache_as(a, req).await,
+        None => engine.warm_kv_cache(req).await,
+    };
+    match res {
+        Ok(rep) => ok_payload(rep),
+        Err(err) => err_payload(err),
+    }
+}
+
+async fn handle_kv_stats(engine: &VaultEngine, query: Option<&str>) -> HttpTuple {
+    let model_id = match extract_query_param(query, "model_id") {
+        Some(raw) if !raw.trim().is_empty() => match ModelId::new(raw) {
+            Ok(m) => Some(m),
+            Err(err) => return err_payload(err),
+        },
+        _ => None,
+    };
+    match engine.kv_stats(model_id.as_ref()).await {
+        Ok(stats) => ok_payload(stats),
+        Err(err) => err_payload(err),
+    }
+}
+
+async fn handle_issue_key(
+    engine: &VaultEngine,
+    body: &[u8],
+    agent: Option<&ScopedApiKey>,
+) -> HttpTuple {
+    if let Err(resp) = require_role(agent, AgentRole::Admin) {
+        return resp;
+    }
+    let parsed: IssueKeyHttpRequest = match parse_json_body(body) {
+        Ok(req) => req,
+        Err(resp) => return resp,
+    };
+    let agent_id = match AgentId::new(parsed.agent_id) {
+        Ok(id) => id,
+        Err(err) => return err_payload(err),
+    };
+    let Some(role) = AgentRole::parse_str(&parsed.role) else {
+        return (
+            400,
+            "Bad Request",
+            json!({ "error": format!("role must be reader, contributor, or admin (got `{}`)", parsed.role) }),
+        );
+    };
+    let mut scopes = Vec::with_capacity(parsed.scopes.len());
+    for raw_scope in parsed.scopes {
+        match ScopeTag::new(raw_scope) {
+            Ok(s) => scopes.push(s),
+            Err(err) => return err_payload(err),
+        }
+    }
+    let mut req = match IssueApiKeyRequest::new(agent_id, role, scopes) {
+        Ok(r) => r,
+        Err(err) => return err_payload(err),
+    };
+    if let Some(exp_raw) = parsed.expires_at.filter(|s| !s.trim().is_empty()) {
+        match DateTime::parse_from_rfc3339(&exp_raw) {
+            Ok(dt) => req = req.with_expires_at(dt.with_timezone(&Utc)),
+            Err(err) => {
+                return (
+                    400,
+                    "Bad Request",
+                    json!({ "error": format!("invalid RFC 3339 expires_at `{exp_raw}`: {err}") }),
+                );
+            }
+        }
+    }
+
+    match engine.issue_api_key(req).await {
+        Ok(issued) => (
+            200,
+            "OK",
+            json!({
+                "key": issued.key,
+                "secret": issued.secret.expose_secret(),
+            }),
+        ),
+        Err(err) => err_payload(err),
+    }
+}
+
+async fn handle_revoke_key(
+    engine: &VaultEngine,
+    body: &[u8],
+    agent: Option<&ScopedApiKey>,
+) -> HttpTuple {
+    if let Err(resp) = require_role(agent, AgentRole::Admin) {
+        return resp;
+    }
+    let parsed: RevokeKeyHttpRequest = match parse_json_body(body) {
+        Ok(req) => req,
+        Err(resp) => return resp,
+    };
+    let key_id = match KeyId::parse(&parsed.key_id) {
+        Ok(id) => id,
+        Err(err) => return err_payload(err),
+    };
+    match engine.revoke_api_key(&key_id).await {
+        Ok(revoked) => (
+            200,
+            "OK",
+            json!({
+                "key_id": key_id.as_str(),
+                "revoked": revoked,
+            }),
+        ),
+        Err(err) => err_payload(err),
+    }
+}
+
+fn require_role(
+    agent: Option<&ScopedApiKey>,
+    required: AgentRole,
+) -> std::result::Result<(), HttpTuple> {
+    if let Some(a) = agent {
+        a.require_role(required).map_err(auth_err_payload)?;
+    }
+    Ok(())
+}
+
+fn parse_json_body<T: DeserializeOwned>(body: &[u8]) -> std::result::Result<T, HttpTuple> {
+    serde_json::from_slice(body).map_err(|err| {
+        (
+            400,
+            "Bad Request",
+            json!({ "error": format!("invalid json body: {err}") }),
+        )
+    })
+}
+
+fn extract_query_param(query: Option<&str>, key: &str) -> Option<String> {
+    let q = query?;
+    for pair in q.split('&') {
+        if let Some((k, v)) = pair.split_once('=') {
+            if k == key {
+                return Some(percent_decode(v));
+            }
+        }
+    }
+    None
+}
+
+fn percent_decode(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        if bytes[idx] == b'%' && idx + 2 < bytes.len() {
+            if let Ok(hex_str) = std::str::from_utf8(&bytes[idx + 1..idx + 3]) {
+                if let Ok(val) = u8::from_str_radix(hex_str, 16) {
+                    out.push(val);
+                    idx += 3;
+                    continue;
+                }
+            }
+        } else if bytes[idx] == b'+' {
+            out.push(b' ');
+            idx += 1;
+            continue;
+        }
+        out.push(bytes[idx]);
+        idx += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn ok_payload<T: serde::Serialize>(val: T) -> HttpTuple {
     match serde_json::to_value(val) {
         Ok(v) => (200, "OK", v),
         Err(err) => (
@@ -205,18 +833,40 @@ fn ok_payload<T: serde::Serialize>(val: T) -> (u16, &'static str, Value) {
     }
 }
 
-fn err_payload(err: AetherError) -> (u16, &'static str, Value) {
+fn auth_err_payload(err: AuthError) -> HttpTuple {
+    let (code, reason) = match &err {
+        AuthError::MissingToken
+        | AuthError::InvalidToken
+        | AuthError::RevokedToken(_)
+        | AuthError::ExpiredToken(_) => (401, "Unauthorized"),
+        AuthError::InsufficientRole { .. } | AuthError::ScopeDenied { .. } => (403, "Forbidden"),
+    };
+    (code, reason, json!({ "error": err.to_string() }))
+}
+
+fn err_payload(err: AetherError) -> HttpTuple {
     let (code, reason) = match &err {
         AetherError::InvalidInput(_) => (400, "Bad Request"),
         AetherError::NotFound(_) => (404, "Not Found"),
+        AetherError::Permanent {
+            connector: "vault-auth",
+            message,
+        } => {
+            if message.starts_with("missing bearer")
+                || message.starts_with("invalid API key")
+                || message.starts_with("API key ")
+            {
+                (401, "Unauthorized")
+            } else {
+                (403, "Forbidden")
+            }
+        }
         _ => (500, "Internal Server Error"),
     };
     (code, reason, json!({ "error": err.to_string() }))
 }
 
-async fn read_http_request(
-    stream: &mut TcpStream,
-) -> std::io::Result<Option<(String, String, Vec<u8>)>> {
+async fn read_http_request(stream: &mut TcpStream) -> std::io::Result<Option<ParsedHttpRequest>> {
     let mut buf = Vec::with_capacity(1024);
     let mut tmp = [0u8; 2048];
     let header_end = loop {
@@ -248,18 +898,21 @@ async fn read_http_request(
         return Ok(None);
     };
     let method = raw_method.to_ascii_uppercase();
-    let path = raw_target
-        .split('?')
-        .next()
-        .unwrap_or(raw_target)
-        .to_string();
+    let (path, query) = match raw_target.split_once('?') {
+        Some((p, q)) => (p.to_string(), Some(q.to_string())),
+        None => (raw_target.to_string(), None),
+    };
 
     let mut content_length: usize = 0;
+    let mut headers = Vec::new();
     for line in lines {
         if let Some((k, v)) = line.split_once(':') {
-            if k.trim().eq_ignore_ascii_case("content-length") {
-                content_length = v.trim().parse().unwrap_or(0);
+            let name = k.trim().to_string();
+            let val = v.trim().to_string();
+            if name.eq_ignore_ascii_case("content-length") {
+                content_length = val.parse().unwrap_or(0);
             }
+            headers.push((name, val));
         }
     }
     if content_length > MAX_REQUEST_BYTES {
@@ -276,7 +929,13 @@ async fn read_http_request(
     }
     let body_end = (body_start + content_length).min(buf.len());
     let body = buf[body_start..body_end].to_vec();
-    Ok(Some((method, path, body)))
+    Ok(Some(ParsedHttpRequest {
+        method,
+        path,
+        query,
+        headers,
+        body,
+    }))
 }
 
 fn find_double_crlf(buf: &[u8]) -> Option<usize> {
@@ -284,7 +943,7 @@ fn find_double_crlf(buf: &[u8]) -> Option<usize> {
 }
 
 async fn write_no_content(stream: &mut TcpStream) -> std::io::Result<()> {
-    let resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+    let resp = "HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, Authorization\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
     stream.write_all(resp.as_bytes()).await?;
     stream.flush().await
 }
@@ -297,7 +956,7 @@ async fn write_json_response(
 ) -> std::io::Result<()> {
     let body = serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_string());
     let header = format!(
-        "HTTP/1.1 {code} {reason}\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {code} {reason}\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Content-Type, Authorization\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     stream.write_all(header.as_bytes()).await?;
@@ -371,6 +1030,54 @@ mod tests {
         (code, parsed)
     }
 
+    async fn http_call_with_auth(
+        addr: SocketAddr,
+        method: &str,
+        path: &str,
+        bearer: Option<&str>,
+        body: Option<&str>,
+    ) -> (u16, Value) {
+        let mut stream = TcpStream::connect(addr).await.unwrap();
+        let body_str = body.unwrap_or("");
+        let auth_hdr = match bearer {
+            Some(tok) => format!("Authorization: Bearer {tok}\r\n"),
+            None => String::new(),
+        };
+        let req = format!(
+            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{auth_hdr}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body_str}",
+            body_str.len()
+        );
+        stream.write_all(req.as_bytes()).await.unwrap();
+        stream.flush().await.unwrap();
+        let mut raw = Vec::new();
+        stream.read_to_end(&mut raw).await.unwrap();
+        let text = String::from_utf8(raw).unwrap();
+        let (head, json_body) = text.split_once("\r\n\r\n").unwrap();
+        let status_line = head.lines().next().unwrap();
+        let code: u16 = status_line
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .parse()
+            .unwrap();
+        let parsed: Value = serde_json::from_str(json_body).unwrap();
+        (code, parsed)
+    }
+
+    fn git_run(dir: &std::path::Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
     #[tokio::test]
     async fn control_plane_rejects_non_loopback_bind_addresses() {
         let vault = TempVault::new();
@@ -438,6 +1145,275 @@ mod tests {
         assert_eq!(code, 200);
         assert_eq!(decided["reconcile"]["compiled"], 1);
         assert!(vault.root.join("Aether/Compiled/Approved.md").exists());
+
+        server.shutdown().await.unwrap();
+        engine.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn control_plane_with_auth_enforces_bearer_tokens_roles_and_team_endpoints() {
+        let remote_dir = TempVault::new();
+        git_run(&remote_dir.root, &["init", "--bare"]);
+
+        let vault = TempVault::new();
+        git_run(&vault.root, &["init"]);
+        git_run(&vault.root, &["config", "user.name", "Team Test"]);
+        git_run(&vault.root, &["config", "user.email", "team@aether.local"]);
+        git_run(
+            &vault.root,
+            &["remote", "add", "origin", remote_dir.root.to_str().unwrap()],
+        );
+
+        vault.write(
+            "Profile/Core.md",
+            "---\naether_tier: hot\naether_scope:\n  - global\naether_kind: profile\n---\n# Core\nAlways write idiomatic Rust.\n",
+        );
+        vault.write(
+            "Specs/Auth.md",
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Auth\nRotate API keys via SHA-256 hashing.\n",
+        );
+        vault.write(
+            "Finance/Budget.md",
+            "---\naether_tier: warm\naether_scope:\n  - finance\n---\n# Budget\nConfidential payroll ledger 9988.\n",
+        );
+        git_run(&vault.root, &["add", "."]);
+        git_run(&vault.root, &["commit", "-m", "initial team vault"]);
+        git_run(&vault.root, &["branch", "-M", "main"]);
+        git_run(&vault.root, &["push", "-u", "origin", "main"]);
+
+        let engine = Arc::new(
+            VaultEngine::open(VaultConfig::in_memory(&vault.root))
+                .await
+                .unwrap(),
+        );
+        let admin_secret = crate::auth::ApiKeySecret::generate();
+        engine
+            .ensure_bootstrap_admin_key(
+                crate::auth::AgentId::new("bootstrap-admin").unwrap(),
+                &admin_secret,
+            )
+            .await
+            .unwrap();
+        let admin_tok = admin_secret.expose_secret();
+
+        let non_loopback_server = ControlPlaneServer::bind_with_auth(
+            "0.0.0.0:0".parse().unwrap(),
+            Arc::clone(&engine),
+            true,
+        )
+        .await
+        .unwrap();
+        assert_ne!(non_loopback_server.local_addr().port(), 0);
+        non_loopback_server.shutdown().await.unwrap();
+
+        let server = ControlPlaneServer::bind_with_auth(
+            "127.0.0.1:0".parse().unwrap(),
+            Arc::clone(&engine),
+            true,
+        )
+        .await
+        .unwrap();
+        let addr = server.local_addr();
+
+        let (code, _) = http_call_with_auth(addr, "GET", "/v1/status", None, None).await;
+        assert_eq!(code, 401);
+
+        let (code, _) =
+            http_call_with_auth(addr, "GET", "/v1/status", Some("aek_invalid0000"), None).await;
+        assert_eq!(code, 401);
+
+        let (code, reader_issued) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/auth/keys",
+            Some(admin_tok),
+            Some(r#"{"agent_id":"eng-reader","role":"reader","scopes":["engineering"]}"#),
+        )
+        .await;
+        assert_eq!(code, 200);
+        let reader_tok = reader_issued["secret"].as_str().unwrap().to_string();
+        let reader_key_id = reader_issued["key"]["key_id"].as_str().unwrap().to_string();
+
+        let (code, contrib_issued) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/auth/keys",
+            Some(admin_tok),
+            Some(r#"{"agent_id":"eng-contrib","role":"contributor","scopes":["engineering"]}"#),
+        )
+        .await;
+        assert_eq!(code, 200);
+        let contrib_tok = contrib_issued["secret"].as_str().unwrap().to_string();
+
+        let (code, listed) =
+            http_call_with_auth(addr, "GET", "/v1/auth/keys", Some(admin_tok), None).await;
+        assert_eq!(code, 200);
+        assert!(listed["keys"].as_array().unwrap().len() >= 3);
+
+        let (code, _) =
+            http_call_with_auth(addr, "GET", "/v1/auth/keys", Some(&reader_tok), None).await;
+        assert_eq!(code, 403);
+
+        let (code, recall_res) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/recall",
+            Some(&reader_tok),
+            Some(r#"{"query":"payroll ledger Auth SHA-256"}"#),
+        )
+        .await;
+        assert_eq!(code, 200);
+        let dyn_ctx = recall_res["dynamic_context"].as_str().unwrap();
+        assert!(dyn_ctx.contains("Rotate API keys via SHA-256"));
+        assert!(!dyn_ctx.contains("9988"));
+
+        let (code, _) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/recall",
+            Some(&reader_tok),
+            Some(r#"{"query":"payroll","scope":"finance"}"#),
+        )
+        .await;
+        assert_eq!(code, 403);
+
+        let (code, _) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/stage",
+            Some(&reader_tok),
+            Some(r#"{"proposed_fact":"Reader cannot stage."}"#),
+        )
+        .await;
+        assert_eq!(code, 403);
+
+        let (code, staged) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/stage",
+            Some(&contrib_tok),
+            Some(r#"{"proposed_fact":"Use PKCE for team OAuth."}"#),
+        )
+        .await;
+        assert_eq!(code, 200);
+        let staged_cid = staged["candidate_id"].as_str().unwrap().to_string();
+        let pending = engine.pending_inbox().await.unwrap();
+        let entry = pending
+            .iter()
+            .find(|e| e.candidate_id.as_str() == staged_cid)
+            .unwrap();
+        assert_eq!(entry.scope.as_str(), "engineering");
+        assert_eq!(entry.proposed_by, "eng-contrib");
+
+        let (code, _) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/stage",
+            Some(&contrib_tok),
+            Some(r#"{"proposed_fact":"Cross scope blocked.","scope":"finance"}"#),
+        )
+        .await;
+        assert_eq!(code, 403);
+
+        let (code, inspected) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/inspect",
+            Some(&reader_tok),
+            Some(r#"{"source_pointer":"Specs/Auth.md#Auth"}"#),
+        )
+        .await;
+        assert_eq!(code, 200);
+        assert!(inspected["content"]
+            .as_str()
+            .unwrap()
+            .contains("SHA-256 hashing"));
+
+        let (code, _) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/inspect",
+            Some(&reader_tok),
+            Some(r#"{"source_pointer":"Finance/Budget.md#Budget"}"#),
+        )
+        .await;
+        assert_eq!(code, 403);
+
+        let (code, mcp_res) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/mcp",
+            Some(&reader_tok),
+            Some(
+                r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"aether_recall","arguments":{"query":"payroll Auth","structured":true}}}"#,
+            ),
+        )
+        .await;
+        assert_eq!(code, 200);
+        assert_eq!(mcp_res["result"]["isError"], false);
+        let mcp_dyn = mcp_res["result"]["structuredContent"]["dynamic_context"]
+            .as_str()
+            .unwrap();
+        assert!(mcp_dyn.contains("SHA-256"));
+        assert!(!mcp_dyn.contains("9988"));
+
+        let (code, _) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/kv/warm",
+            Some(&reader_tok),
+            Some(r#"{"model_id":"llama-3.1-8b"}"#),
+        )
+        .await;
+        assert_eq!(code, 403);
+
+        let (code, warm_res) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/kv/warm",
+            Some(&contrib_tok),
+            Some(r#"{"model_id":"llama-3.1-8b"}"#),
+        )
+        .await;
+        assert_eq!(code, 200);
+        assert!(warm_res["blocks_warmed"].as_u64().unwrap() >= 1);
+        assert!(warm_res["ttft_reduction_pct"].as_f64().unwrap() >= 80.0);
+
+        let (code, kv_stats) = http_call_with_auth(
+            addr,
+            "GET",
+            "/v1/kv/stats?model_id=llama-3.1-8b",
+            Some(&reader_tok),
+            None,
+        )
+        .await;
+        assert_eq!(code, 200);
+        assert!(kv_stats["persisted_blocks"].as_u64().unwrap() >= 1);
+
+        let (code, _) =
+            http_call_with_auth(addr, "POST", "/v1/git/sync", Some(&contrib_tok), Some("{}")).await;
+        assert_eq!(code, 403);
+
+        let (code, git_res) =
+            http_call_with_auth(addr, "POST", "/v1/git/sync", Some(admin_tok), Some("{}")).await;
+        assert_eq!(code, 200);
+        assert_eq!(git_res["merged_cleanly"], true);
+
+        let revoke_body = json!({ "key_id": reader_key_id }).to_string();
+        let (code, revoked) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/auth/keys/revoke",
+            Some(admin_tok),
+            Some(&revoke_body),
+        )
+        .await;
+        assert_eq!(code, 200);
+        assert_eq!(revoked["revoked"], true);
+
+        let (code, _) =
+            http_call_with_auth(addr, "GET", "/v1/status", Some(&reader_tok), None).await;
+        assert_eq!(code, 401);
 
         server.shutdown().await.unwrap();
         engine.shutdown().await.unwrap();

@@ -335,6 +335,15 @@ impl ScopedApiKey {
             .iter()
             .any(|s| s.as_str() == "global" || self.scopes.contains(s))
     }
+
+    /// Returns the first concrete scope bound to this key, falling back to `global` for wildcard keys.
+    pub fn default_write_scope(&self) -> ScopeTag {
+        self.scopes
+            .iter()
+            .find(|s| s.as_str() != "*")
+            .cloned()
+            .unwrap_or_else(ScopeTag::global)
+    }
 }
 
 /// Input to `VaultEngine::issue_api_key`. Enforces non-empty `scopes` at construction.
