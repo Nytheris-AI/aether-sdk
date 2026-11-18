@@ -55,6 +55,10 @@ const config: Config = {
     },
     navbar: {
       title: 'Aether SDK',
+      logo: {
+        alt: 'Aether SDK Logo',
+        src: 'img/aether-logo.png',
+      },
       items: [
         {
           type: 'docSidebar',
