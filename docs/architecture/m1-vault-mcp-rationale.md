@@ -1,6 +1,6 @@
 # Project Aether Milestone 1 vault and MCP architecture
 
-Status: **implemented** (2026-11-18). `crates/aether-vault` (`nytheris-aether-vault` and `aether-mcp`) is implemented in the workspace.
+Status: **implemented** (M1 & M2, 2026-11-18). `crates/aether-vault` (`nytheris-aether-vault` and `aether-mcp`) and `obsidian-aether-plugin` are implemented in the workspace.
 
 ## Problem
 

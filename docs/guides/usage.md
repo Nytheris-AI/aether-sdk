@@ -200,39 +200,52 @@ async fn main() -> nytheris_aether_core::Result<()> {
 
 Use `nytheris-aether-vault` when you want an Obsidian-native local memory daemon backed by a single SQLite WAL database and a 3-tool `stdio` MCP server.
 
-### Run the `aether-mcp` Stdio Server
+### Run the `aether-mcp` Stdio & Control-Plane Server
 
 ```bash
 # Default DB: <vault>/.aether/aether.sqlite, default polling: 2000ms (0 disables polling)
+# Optional --http-addr (or AETHER_HTTP_ADDR) binds the loopback HTTP control plane for Obsidian
 cargo run -p nytheris-aether-vault --bin aether-mcp -- \
   --vault /path/to/obsidian-vault \
   --db /path/to/aether.sqlite \
-  --watch-ms 2000
+  --watch-ms 2000 \
+  --http-addr 127.0.0.1:4771
 ```
 
 When `--vault` is omitted, `aether-mcp` reads `AETHER_VAULT_PATH` or falls back to `.`. It serves newline-delimited JSON-RPC 2.0 (`protocolVersion` `"2024-11-05"`) over `stdin` and `stdout` with three tools:
 
-- `aether_recall`: `query` (required), `scope` (optional), `max_tokens` (optional, default `1500`), `include_hot_profile` (optional, default `true`).
+- `aether_recall`: `query` (required), `scope` (optional), `max_tokens` (optional, default `1500`), `include_hot_profile` (optional, default `true`), `structured` (optional, default `false` — returns JSON separating `static_prefix`, `dynamic_context`, and `prefix_hash`; `structuredContent` is always included).
 - `aether_stage_memory`: `proposed_fact` (required), `suggested_tier` (optional `"hot"`, `"warm"`, or `"cold"`, default `"warm"`), `target_note` (optional), `supersedes_amu_id` (optional). Appends a pending candidate to `Aether/Inbox.md`.
-- `aether_inspect_source`: `source_pointer` (required, for example `"Arch/DB.md#Schema"`). Returns the verbatim Markdown section from disk while enforcing `.aetherignore` and `aether_tier: private` guards.
+- `aether_inspect_source`: `source_pointer` (required, for example `"Arch/DB.md#Schema"` or `"Aether/Compiled/Approved.md#cand_9f82a1"`). Returns the verbatim Markdown section from disk while enforcing `.aetherignore` and `aether_tier: private` guards.
+
+When `--http-addr` is provided (loopback `127.0.0.1` or `::1` only), `ControlPlaneServer` exposes `GET /v1/status`, `GET /v1/inbox`, `POST /v1/inbox/decide`, `POST /v1/inbox/reconcile`, `POST /v1/dream`, and `POST /v1/sync` for [`obsidian-aether-plugin`](../../obsidian-aether-plugin/manifest.json).
 
 ### Embed `VaultEngine` and `McpServer` in Rust
 
 ```rust
 use std::sync::Arc;
 use nytheris_aether_vault::{
-    McpServer, RecallRequest, StageMemoryRequest, TokenBudget, VaultConfig, VaultEngine, VaultTier,
+    DenseSubwordEmbedder, McpServer, RecallRequest, StageMemoryRequest, TokenBudget,
+    VaultConfig, VaultEngine, VaultTier,
 };
 
 #[tokio::main]
 async fn main() -> nytheris_aether_core::Result<()> {
-    let engine = Arc::new(VaultEngine::open(VaultConfig::new("/path/to/obsidian-vault")).await?);
+    let config = VaultConfig::new("/path/to/obsidian-vault")
+        .with_embedder(Arc::new(DenseSubwordEmbedder::default()));
+    let engine = Arc::new(VaultEngine::open(config).await?);
     engine.sync_vault().await?;
 
     let mut req = RecallRequest::new("SQLite WAL transactions");
     req.max_tokens = TokenBudget::new(1500)?;
     let recall = engine.recall(req).await?;
-    println!("tokens={}, prefix_hash={}", recall.tokens_used, recall.prefix_hash);
+    println!(
+        "tokens={}, static_tokens={}, prefix_hash={}",
+        recall.tokens_used, recall.static_prefix_tokens, recall.prefix_hash
+    );
+
+    let dream = engine.run_dream_pass().await?;
+    println!("dream staged {} candidate(s)", dream.candidates_staged);
 
     let candidate_id = engine
         .stage_memory(
