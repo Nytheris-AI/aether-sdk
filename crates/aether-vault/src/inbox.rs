@@ -91,10 +91,9 @@ fn parse_task_header(trimmed: &str) -> Option<InboxEntry> {
         .or_else(|| trimmed.strip_prefix("- [X] "))
     {
         (InboxCheckbox::Approved, r.trim())
-    } else if let Some(r) = trimmed.strip_prefix("- [-] ") {
-        (InboxCheckbox::Rejected, r.trim())
     } else {
-        return None;
+        let r = trimmed.strip_prefix("- [-] ")?;
+        (InboxCheckbox::Rejected, r.trim())
     };
 
     let (tier, scope, proposed_fact) = if let Some(after_open) = rest.strip_prefix("**[") {
