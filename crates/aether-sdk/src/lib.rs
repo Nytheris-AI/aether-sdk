@@ -1,6 +1,7 @@
 //! Public facade and composition root for Aether SDK.
 
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -118,6 +119,7 @@ impl MemoryManagerBuilder {
             ppr: PersonalizedPageRank::default(),
             session_ttl: self.session_ttl,
             bg_task: Mutex::new(bg_task),
+            closed: AtomicBool::new(false),
         }
     }
 }
@@ -195,6 +197,7 @@ pub struct MemoryManager {
     ppr: PersonalizedPageRank,
     session_ttl: Option<Duration>,
     bg_task: Mutex<Option<JoinHandle<()>>>,
+    closed: AtomicBool,
 }
 
 impl Drop for MemoryManager {
@@ -239,6 +242,15 @@ impl MemoryManager {
         spec.check(vector)
     }
 
+    fn ensure_open(&self) -> Result<()> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(AetherError::InvalidInput(
+                "memory manager is shut down".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Persists a new memory in the authoritative record store and optionally syncs derived indexes.
     pub async fn remember(&self, input: MemoryInput) -> Result<MemoryReceipt> {
         let span = tracing::info_span!(
@@ -249,6 +261,7 @@ impl MemoryManager {
             otel.status_code = tracing::field::Empty,
         );
         run_spanned(span, async {
+            self.ensure_open()?;
             input.validate()?;
             if let Some(vec) = &input.embedding {
                 if !matches!(input.scope, MemoryScope::Session(_)) {
@@ -303,6 +316,7 @@ impl MemoryManager {
             otel.status_code = tracing::field::Empty,
         );
         run_spanned(span, async {
+            self.ensure_open()?;
             query.validate()?;
             self.validate_store_availability(&query)?;
 
@@ -381,32 +395,34 @@ impl MemoryManager {
             AetherError::InvalidInput("query_vector is required for vector or hybrid recall".into())
         })?;
 
-        let metric = match vs.describe(&query.project_id).await? {
+        let (spec_exists, metric) = match vs.describe(&query.project_id).await? {
             Some(spec) => {
                 spec.check(qv)?;
-                spec.metric
+                (true, spec.metric)
             }
-            None => DistanceMetric::Cosine,
+            None => (false, DistanceMetric::Cosine),
         };
 
         let mut lists = Vec::new();
         let overfetch = query.top_k.saturating_mul(2).max(1);
 
-        if let Some(scope_expr) = recall::scope_filter(&query.scopes) {
-            let combined = match &query.filters {
-                Some(extra) => FilterExpr::And(vec![scope_expr, extra.clone()]),
-                None => scope_expr,
-            };
-            let indexed = recall::vector_search(
-                &**vs,
-                &*self.record_store,
-                &query.project_id,
-                qv,
-                overfetch,
-                Some(&combined),
-            )
-            .await?;
-            lists.push(recall::in_scopes(indexed, &query.scopes));
+        if spec_exists {
+            if let Some(scope_expr) = recall::scope_filter(&query.scopes) {
+                let combined = match &query.filters {
+                    Some(extra) => FilterExpr::And(vec![scope_expr, extra.clone()]),
+                    None => scope_expr,
+                };
+                let indexed = recall::vector_search(
+                    &**vs,
+                    &*self.record_store,
+                    &query.project_id,
+                    qv,
+                    overfetch,
+                    Some(&combined),
+                )
+                .await?;
+                lists.push(recall::in_scopes(indexed, &query.scopes));
+            }
         }
 
         if query.consistency == ConsistencyMode::ReadYourWrites {
@@ -456,6 +472,7 @@ impl MemoryManager {
             otel.status_code = tracing::field::Empty,
         );
         run_spanned(span, async {
+            self.ensure_open()?;
             patch.validate()?;
             let mut current = self
                 .record_store
@@ -528,6 +545,7 @@ impl MemoryManager {
             otel.status_code = tracing::field::Empty,
         );
         run_spanned(span, async {
+            self.ensure_open()?;
             if let Some(item) = self.record_store.tombstone(project_id, memory_id).await? {
                 let pending = PendingRecord {
                     item,
@@ -544,6 +562,7 @@ impl MemoryManager {
     pub async fn flush(&self) -> Result<()> {
         let span = tracing::info_span!("aether.flush", otel.status_code = tracing::field::Empty);
         run_spanned(span, async {
+            self.ensure_open()?;
             self.indexer.run_pass().await?;
             Ok(())
         })
@@ -554,6 +573,9 @@ impl MemoryManager {
     pub async fn shutdown(&self) -> Result<()> {
         let span = tracing::info_span!("aether.shutdown", otel.status_code = tracing::field::Empty);
         run_spanned(span, async {
+            if self.closed.swap(true, Ordering::AcqRel) {
+                return Ok(());
+            }
             let handle = self.bg_task.lock().ok().and_then(|mut g| g.take());
             if let Some(h) = handle {
                 h.abort();
@@ -585,15 +607,25 @@ fn filter_graph_candidates(candidates: Vec<Candidate>, query: &RecallQuery) -> V
 }
 
 fn resolve_hybrid_seeds(explicit: &[EntityId], vec_candidates: &[Candidate]) -> Vec<EntityId> {
-    if !explicit.is_empty() {
-        return explicit.to_vec();
-    }
     let mut seen = HashSet::new();
     let mut seeds = Vec::new();
+    for id in explicit {
+        if seen.insert(id.as_str().to_owned()) {
+            seeds.push(id.clone());
+        }
+    }
     for cand in vec_candidates {
         for entity in &cand.item.entities {
             if seen.insert(entity.id.as_str().to_owned()) {
                 seeds.push(entity.id.clone());
+            }
+        }
+        for rel in &cand.item.relations {
+            if seen.insert(rel.source.as_str().to_owned()) {
+                seeds.push(rel.source.clone());
+            }
+            if seen.insert(rel.target.as_str().to_owned()) {
+                seeds.push(rel.target.clone());
             }
         }
     }

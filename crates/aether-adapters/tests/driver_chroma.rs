@@ -169,7 +169,7 @@ async fn create_collection(
                 name: existing.name.clone(),
                 tenant,
                 database,
-                metadata: json!({ "hnsw:space": existing.space }),
+                metadata: existing.metadata.clone(),
             }));
         }
         return Err((StatusCode::CONFLICT, "collection already exists".into()));
@@ -682,6 +682,18 @@ async fn chroma_distance_metrics_filters_and_validation() {
     );
     let missing = ProjectId::new("missing-chroma-proj").unwrap();
     assert_eq!(fresh.describe(&missing).await.unwrap(), None);
+
+    let dim_mismatch = fresh
+        .initialize(&ns_edge, 4, DistanceMetric::Cosine)
+        .await
+        .unwrap_err();
+    assert!(matches!(dim_mismatch, AetherError::InvalidInput(_)));
+
+    let metric_mismatch = fresh
+        .initialize(&ns_edge, 2, DistanceMetric::Dot)
+        .await
+        .unwrap_err();
+    assert!(matches!(metric_mismatch, AetherError::InvalidInput(_)));
 }
 
 #[tokio::test]

@@ -316,6 +316,28 @@ impl VectorStore for ChromaVectorStore {
         let resp = self.post_json(&self.collections_url(), &req).await?;
         let created: CollectionResponse = Self::decode_json(resp).await?;
 
+        if let Some(meta) = created.metadata.as_ref().and_then(|m| m.as_object()) {
+            if let Some(existing_dims) = meta
+                .get("_aether_dimensions")
+                .and_then(|v| v.as_u64())
+                .and_then(|d| usize::try_from(d).ok())
+            {
+                if existing_dims != dimensions {
+                    return Err(AetherError::InvalidInput(format!(
+                        "existing chroma collection `{name}` has dimensions={existing_dims}; expected {dimensions}"
+                    )));
+                }
+            }
+            if let Some(existing_space) = meta.get("hnsw:space").and_then(|v| v.as_str()) {
+                let expected_space = metric_to_hnsw_space(metric);
+                if existing_space != expected_space {
+                    return Err(AetherError::InvalidInput(format!(
+                        "existing chroma collection `{name}` has hnsw:space={existing_space}; expected {expected_space}"
+                    )));
+                }
+            }
+        }
+
         let mut guard = self
             .collections
             .write()

@@ -661,4 +661,19 @@ async fn turbopuffer_http_status_error_mapping() {
             ..
         }
     ));
+
+    let empty_range_err = bad_auth_store
+        .search(
+            &ns,
+            &[1.0, 0.0],
+            5,
+            Some(&FilterExpr::Range {
+                field: "age".into(),
+                gte: None,
+                lte: None,
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(empty_range_err, AetherError::InvalidInput(_)));
 }

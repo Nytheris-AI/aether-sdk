@@ -340,6 +340,11 @@ fn translate_filter(expr: &FilterExpr) -> Result<Value> {
         }
         FilterExpr::Range { field, gte, lte } => {
             validate_field_name(field)?;
+            if gte.is_none() && lte.is_none() {
+                return Err(AetherError::InvalidInput(
+                    "range filter requires at least one of gte or lte".into(),
+                ));
+            }
             let mut clauses = Vec::with_capacity(2);
             if let Some(min) = gte {
                 if !min.is_finite() {

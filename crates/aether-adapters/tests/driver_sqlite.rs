@@ -386,3 +386,70 @@ async fn sqlite_concurrent_create_and_cas_are_atomic() {
 
     store.close().await.expect("close store");
 }
+
+#[tokio::test]
+async fn sqlite_migrates_pre_phase5_schema_cleanly() {
+    let db = TempDb::new("legacy-migrate");
+    let ns = fresh_project("legacy");
+    let legacy_mem_id = MemoryId::new();
+    {
+        let conn = rusqlite::Connection::open(db.path_str()).expect("open raw legacy sqlite");
+        conn.execute_batch(
+            "CREATE TABLE records (
+                 project_id TEXT NOT NULL,
+                 memory_id TEXT NOT NULL,
+                 scope TEXT NOT NULL,
+                 version INTEGER NOT NULL,
+                 seq INTEGER NOT NULL,
+                 expires_at_us INTEGER,
+                 payload TEXT NOT NULL,
+                 PRIMARY KEY (project_id, memory_id)
+             );
+             CREATE TABLE idempotency_keys (
+                 project_id TEXT NOT NULL,
+                 idempotency_key TEXT NOT NULL,
+                 expires_at_us INTEGER,
+                 receipt_json TEXT NOT NULL,
+                 PRIMARY KEY (project_id, idempotency_key)
+             );",
+        )
+        .expect("create legacy schema");
+        let legacy_item = MemoryItem::from_input(MemoryInput::new(ns.clone(), "legacy row"), 1);
+        let payload = serde_json::to_string(&legacy_item).unwrap();
+        let receipt_json = serde_json::json!({
+            "memory_id": legacy_mem_id,
+            "state": "persisted",
+            "version": 1
+        })
+        .to_string();
+        conn.execute(
+            "INSERT INTO records (project_id, memory_id, scope, version, seq, expires_at_us, payload)
+             VALUES (?1, ?2, 'project', 1, 1, NULL, ?3)",
+            rusqlite::params![ns.as_str(), legacy_item.id.to_string(), payload],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idempotency_keys (project_id, idempotency_key, expires_at_us, receipt_json)
+             VALUES (?1, 'old-key', NULL, ?2)",
+            rusqlite::params![ns.as_str(), receipt_json],
+        )
+        .unwrap();
+    }
+
+    let store = SqliteRecordStore::open(SqliteConfig::from_path(db.path_str()))
+        .await
+        .expect("open migrated sqlite store");
+
+    let mut input = MemoryInput::new(ns.clone(), "post migration insert");
+    input.idempotency_key = Some("new-key".into());
+    let item = MemoryItem::from_input(input, 1);
+    assert_eq!(
+        store
+            .create(&ns, &item, None)
+            .await
+            .expect("create after migration"),
+        CreateOutcome::Created
+    );
+    assert!(store.get(&ns, item.id).await.unwrap().is_some());
+    store.close().await.unwrap();
+}

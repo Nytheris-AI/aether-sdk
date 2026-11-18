@@ -549,3 +549,111 @@ async fn default_manager_retries_transient_connector_failures() {
     assert_eq!(r.state, ReceiptState::Persisted);
     assert!(backend.has_vector(&ns, r.memory_id));
 }
+
+#[tokio::test]
+async fn hybrid_combines_explicit_seeds_with_vector_hit_entities_and_relations() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let ns = test_ns();
+    backend
+        .initialize(&ns, 2, DistanceMetric::Cosine)
+        .await
+        .unwrap();
+    let mgr = no_retry_manager(backend);
+
+    let alice = Entity {
+        id: EntityId::new("person:alice").unwrap(),
+        name: "Alice".into(),
+        entity_type: "Person".into(),
+    };
+    let bob = Entity {
+        id: EntityId::new("person:bob").unwrap(),
+        name: "Bob".into(),
+        entity_type: "Person".into(),
+    };
+    let carol = Entity {
+        id: EntityId::new("person:carol").unwrap(),
+        name: "Carol".into(),
+        entity_type: "Person".into(),
+    };
+
+    let mut m_vec = MemoryInput::new(ns.clone(), "Alice partnered with Bob");
+    m_vec.embedding = Some(vec![1.0, 0.0]);
+    m_vec.durability = WriteDurability::WaitFlush;
+    m_vec.entities = vec![alice.clone(), bob.clone()];
+    mgr.remember(m_vec).await.unwrap();
+
+    let mut m_bob_neighbor = MemoryInput::new(ns.clone(), "Bob leads core");
+    m_bob_neighbor.durability = WriteDurability::WaitFlush;
+    m_bob_neighbor.relations = vec![Relation {
+        source: bob.id.clone(),
+        target: EntityId::new("team:core").unwrap(),
+        relation_type: "LEADS".into(),
+        valid_at: Utc::now(),
+        invalid_at: None,
+    }];
+    let r_bob = mgr.remember(m_bob_neighbor).await.unwrap();
+
+    let mut m_carol_neighbor = MemoryInput::new(ns.clone(), "Carol leads auth");
+    m_carol_neighbor.durability = WriteDurability::WaitFlush;
+    m_carol_neighbor.entities = vec![carol.clone()];
+    m_carol_neighbor.relations = vec![Relation {
+        source: carol.id.clone(),
+        target: EntityId::new("team:auth").unwrap(),
+        relation_type: "LEADS".into(),
+        valid_at: Utc::now(),
+        invalid_at: None,
+    }];
+    let r_carol = mgr.remember(m_carol_neighbor).await.unwrap();
+
+    // Even when explicit seed_entities only contains carol, vector-hit entity `bob` is also expanded.
+    let mut q = RecallQuery::new(ns, "partner");
+    q.query_vector = Some(vec![1.0, 0.0]);
+    q.seed_entities = vec![carol.id];
+    q.mode = RecallMode::Hybrid;
+    q.top_k = 10;
+    let res = mgr.recall(q).await.unwrap();
+    assert!(res.hits.iter().any(|h| h.memory_id == r_bob.memory_id));
+    assert!(res.hits.iter().any(|h| h.memory_id == r_carol.memory_id));
+}
+
+#[tokio::test]
+async fn session_recall_with_default_scopes_does_not_fail_when_vector_index_uninitialized() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let ns = test_ns();
+    // Note: backend.initialize is NOT called.
+    let mgr = MemoryManager::builder(backend.clone())
+        .vector(backend)
+        .with_retry(None)
+        .build();
+
+    let sid = SessionId::new("sess-uninit").unwrap();
+    let mut input = MemoryInput::new(ns.clone(), "session turn");
+    input.scope = MemoryScope::Session(sid.clone());
+    input.embedding = Some(vec![1.0, 0.0]);
+    let r = mgr.remember(input).await.unwrap();
+
+    let mut q = RecallQuery::new(ns, "turn");
+    q.query_vector = Some(vec![1.0, 0.0]);
+    q.mode = RecallMode::Vector;
+    q.scopes = vec![MemoryScope::Project, MemoryScope::Session(sid)];
+    let res = mgr.recall(q).await.unwrap();
+    assert_eq!(res.hits.len(), 1);
+    assert_eq!(res.hits[0].memory_id, r.memory_id);
+}
+
+#[tokio::test]
+async fn remember_after_shutdown_returns_invalid_input() {
+    let backend = Arc::new(InMemoryBackend::new());
+    let ns = test_ns();
+    backend
+        .initialize(&ns, 2, DistanceMetric::Cosine)
+        .await
+        .unwrap();
+    let mgr = no_retry_manager(backend);
+    mgr.shutdown().await.unwrap();
+
+    let mut input = MemoryInput::new(ns, "after shutdown");
+    input.embedding = Some(vec![1.0, 0.0]);
+    let err = mgr.remember(input).await.unwrap_err();
+    assert!(matches!(err, AetherError::InvalidInput(_)));
+}

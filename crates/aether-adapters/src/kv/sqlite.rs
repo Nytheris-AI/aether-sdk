@@ -176,6 +176,15 @@ fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
             [],
         )?;
     }
+    if idem_cols.contains("receipt_json") {
+        conn.execute(
+            "UPDATE idempotency_keys
+             SET memory_id = COALESCE(json_extract(receipt_json, '$.memory_id'), '')
+             WHERE memory_id = ''",
+            [],
+        )?;
+        conn.execute("ALTER TABLE idempotency_keys DROP COLUMN receipt_json", [])?;
+    }
     conn.execute(
         "UPDATE seq_counter SET val = MAX(val, COALESCE((SELECT MAX(seq) FROM records), 0)) WHERE id = 1",
         [],
