@@ -5,14 +5,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-use aether_core::{
+use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use nytheris_aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome, DistanceMetric, Entity,
     EntityId, FilterExpr, GraphEdge, GraphStore, IndexSpec, MemoryId, MemoryItem, MemoryReceipt,
     MemoryScope, OutboundConnector, PendingRecord, ProjectId, ReceiptState, RecordStore, Relation,
     Result, SessionId, Subgraph, TemporalFilter, VectorMatch, VectorRecord, VectorStore,
 };
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Direction;

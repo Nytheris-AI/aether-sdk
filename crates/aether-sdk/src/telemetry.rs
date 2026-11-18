@@ -2,7 +2,7 @@
 
 use std::fmt as std_fmt;
 
-use aether_core::{redact_url_userinfo, AetherError, Result};
+use nytheris_aether_core::{redact_url_userinfo, AetherError, Result};
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::{LogExporter, SpanExporter, WithExportConfig};

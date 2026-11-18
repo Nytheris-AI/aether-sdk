@@ -3,78 +3,6 @@
 version = 4
 
 [[package]]
-name = "aether-adapters"
-version = "0.1.0"
-dependencies = [
- "aether-adapters",
- "aether-core",
- "async-trait",
- "axum",
- "chrono",
- "petgraph",
- "pgvector",
- "redis",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "sqlx",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "aether-core"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "chrono",
- "serde",
- "serde_json",
- "thiserror",
- "uuid",
-]
-
-[[package]]
-name = "aether-cortex"
-version = "0.1.0"
-dependencies = [
- "aether-adapters",
- "aether-core",
- "async-trait",
- "chrono",
- "petgraph",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "aether-sdk"
-version = "0.1.0"
-dependencies = [
- "aether-adapters",
- "aether-core",
- "aether-cortex",
- "async-trait",
- "chrono",
- "opentelemetry",
- "opentelemetry-appender-tracing",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1333,6 +1261,78 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "nytheris-aether-adapters"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "nytheris-aether-adapters",
+ "nytheris-aether-core",
+ "petgraph",
+ "pgvector",
+ "redis",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "nytheris-aether-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "nytheris-aether-cortex"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "nytheris-aether-adapters",
+ "nytheris-aether-core",
+ "petgraph",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "nytheris-aether-sdk"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "nytheris-aether-adapters",
+ "nytheris-aether-core",
+ "nytheris-aether-cortex",
+ "opentelemetry",
+ "opentelemetry-appender-tracing",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

@@ -7,11 +7,11 @@ Architecture decisions live in the [pieces-first SDK design](../architecture/sdk
 
 | Area | Status | Notes |
 |------|--------|-------|
-| `aether-core` contracts | Done | Newtypes (`ProjectId`, `MemoryId`, `EntityId`, `UserId`, `SessionId`), `RecordStore` / `VectorStore` / `GraphStore`, `IndexSpec`, shared scoring & filters, `AetherError`. |
-| `aether-adapters::in_memory` + `contract-suite` | Done | Thread-safe `InMemoryBackend` with `FaultPoint` injection + reusable `contract::{record_store, record_store_concurrent_idempotency, vector_store, graph_store}`. |
+| `nytheris-aether-core` contracts | Done | Newtypes (`ProjectId`, `MemoryId`, `EntityId`, `UserId`, `SessionId`), `RecordStore` / `VectorStore` / `GraphStore`, `IndexSpec`, shared scoring & filters, `AetherError`. |
+| `nytheris-aether-adapters::in_memory` + `contract-suite` | Done | Thread-safe `InMemoryBackend` with `FaultPoint` injection + reusable `contract::{record_store, record_store_concurrent_idempotency, vector_store, graph_store}`. |
 | Middleware (`Batcher`, `Timeout`, `Resilient`, `Traced`) | Done | `Batcher` -> `Timeout` -> `Resilient` (exponential backoff + full jitter via `jittered`) -> `Traced`. Applied by default in `MemoryManager::builder`. |
-| `aether-cortex` (`Indexer`, `recall`, `ppr`) | Done | Durable `RecordStore`-driven sync engine (`run_pass`, `apply`, opt-in `spawn`), composable recall steps, `PersonalizedPageRank` + `graph_scores`, `RRF` fusion. |
-| `MemoryManager` facade (`aether-sdk`) | Done | Optional builder accepting `RecordStore` + optional `.vector(...)`, `.graph(...)`, `.background_indexing(...)`, middleware toggles. |
+| `nytheris-aether-cortex` (`Indexer`, `recall`, `ppr`) | Done | Durable `RecordStore`-driven sync engine (`run_pass`, `apply`, opt-in `spawn`), composable recall steps, `PersonalizedPageRank` + `graph_scores`, `RRF` fusion. |
+| `MemoryManager` facade (`nytheris-aether-sdk`) | Done | Optional builder accepting `RecordStore` + optional `.vector(...)`, `.graph(...)`, `.background_indexing(...)`, middleware toggles. |
 | Production drivers (`sqlite`, `redis`, `turbopuffer`, `qdrant`, `chroma`, `pgvector`, `neo4j`) | Done | Implemented behind feature flags and verified via contract unit tests + live local Docker verification (`Valkey`, `Qdrant`, `Chroma`, `pgvector`, `Neo4j`) + `SQLite`. |
 | Observability & Rust CI | Done | End-to-end `tracing` spans + `otel` OTLP preset; GitHub Actions checks `cargo fmt`, `clippy -D warnings`, `cargo test --workspace --all-features`, and docs build. |
 
@@ -19,7 +19,7 @@ Architecture decisions live in the [pieces-first SDK design](../architecture/sdk
 
 ### Phase 5 - Pieces-First SDK & Consistency Hardening (Completed 2026-11-18)
 
-- Replaced in-process `IngestionBuffer`, `HotContextCache`, `PolicyRouter`, and `QueryPlanner` with `RecordStore` versioned durability (`create`, `get_many`, `cas_update`, `tombstone`, `pending`, `pending_for`, `session_items`, `mark_indexed`) and `aether_cortex::{Indexer, recall}`.
+- Replaced in-process `IngestionBuffer`, `HotContextCache`, `PolicyRouter`, and `QueryPlanner` with `RecordStore` versioned durability (`create`, `get_many`, `cas_update`, `tombstone`, `pending`, `pending_for`, `session_items`, `mark_indexed`) and `nytheris_aether_cortex::{Indexer, recall}`.
 - Removed `MemoryInbound` in favor of inherent methods on `MemoryManager` assembled solely from public pieces.
 - Enforced `VectorStore::describe` / `IndexSpec` validation at ingest/update/query boundaries and required matching embeddings when updating content.
 - Added identity-carrying `MemoryScope::{Project, User(UserId), Session(SessionId)}` with record-only TTL-bound session storage.

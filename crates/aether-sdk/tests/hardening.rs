@@ -1,14 +1,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_adapters::{FaultPoint, InMemoryBackend};
-use aether_core::{
+use chrono::Utc;
+use nytheris_aether_adapters::{FaultPoint, InMemoryBackend};
+use nytheris_aether_core::{
     AetherError, ConsistencyMode, DistanceMetric, Entity, EntityId, MemoryInput, MemoryScope,
     MemoryUpdate, ProjectId, RecallMode, RecallQuery, ReceiptState, RecordStore, Relation,
     SessionId, UserId, VectorStore, WriteDurability,
 };
-use aether_sdk::MemoryManager;
-use chrono::Utc;
+use nytheris_aether_sdk::MemoryManager;
 
 fn test_ns() -> ProjectId {
     ProjectId::new(format!("t-hard-{}", uuid::Uuid::new_v4())).unwrap()

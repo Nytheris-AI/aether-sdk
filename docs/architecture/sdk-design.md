@@ -74,11 +74,11 @@ Each level is built only from the ones above it.
 
 | Level | Pieces | What you get | Crate |
 |-------|--------|--------------|-------|
-| 1. Connectors | `RecordStore`, `VectorStore`, `GraphStore` and their drivers; `Traced`, `Resilient`, `Timeout`, `Batcher` | One portable client per store kind, with tenant isolation, portable filters, retries, and tracing | `aether-core`, `aether-adapters` |
-| 2. Functions | `DistanceMetric::score`, `FilterExpr::matches`, `rrf`, `PersonalizedPageRank`, `graph_scores` | Scoring, filtering, and fusion over your own data, no I/O | `aether-core`, `aether-cortex` |
-| 3. Sync engine | `Indexer` over a `RecordStore` | Multi-store consistency: nothing lost, nothing resurrected, retried until indexed | `aether-cortex` |
-| 4. Recall steps | `recall::vector_search`, `recall::unindexed`, `recall::session`, `recall::graph_search`, `recall::merge`, `recall::in_scopes` | Each retrieval step on its own, composable with your steps | `aether-cortex` |
-| 5. Facade | `MemoryManager` | All of the above in `remember`, `recall`, `update`, `forget` | `aether-sdk` |
+| 1. Connectors | `RecordStore`, `VectorStore`, `GraphStore` and their drivers; `Traced`, `Resilient`, `Timeout`, `Batcher` | One portable client per store kind, with tenant isolation, portable filters, retries, and tracing | `nytheris-aether-core`, `nytheris-aether-adapters` |
+| 2. Functions | `DistanceMetric::score`, `FilterExpr::matches`, `rrf`, `PersonalizedPageRank`, `graph_scores` | Scoring, filtering, and fusion over your own data, no I/O | `nytheris-aether-core`, `nytheris-aether-cortex` |
+| 3. Sync engine | `Indexer` over a `RecordStore` | Multi-store consistency: nothing lost, nothing resurrected, retried until indexed | `nytheris-aether-cortex` |
+| 4. Recall steps | `recall::vector_search`, `recall::unindexed`, `recall::session`, `recall::graph_search`, `recall::merge`, `recall::in_scopes` | Each retrieval step on its own, composable with your steps | `nytheris-aether-cortex` |
+| 5. Facade | `MemoryManager` | All of the above in `remember`, `recall`, `update`, `forget` | `nytheris-aether-sdk` |
 
 ### 4.2 Rules every piece follows
 
@@ -89,7 +89,7 @@ Each level is built only from the ones above it.
    No piece spawns a task, starts a timer, or keeps global state.
    Background indexing exists only as an explicit helper the developer calls.
 3. **Facade has no private powers.**
-   `aether-sdk` depends on `aether-cortex` and `aether-adapters` as an outside crate would.
+   `nytheris-aether-sdk` depends on `nytheris-aether-cortex` and `nytheris-aether-adapters` as an outside crate would.
    If the facade needs something, it must be public, so developers have it too.
 4. **Guarantees are attributed.**
    Each piece's documentation states which guarantee it provides and what the caller must do to keep it.
@@ -192,7 +192,7 @@ The fault-injection methods stay, documented as test aids.
 | G3 honest read-your-writes scores | `recall::unindexed` | Pass the index's metric from `VectorStore::describe` |
 | G4 no expired or out-of-scope results | Resolve inside recall steps; `scope_filter`; `in_scopes` | Apply `in_scopes` last |
 | G5 bad input fails early | `MemoryInput::validate`, `RecallQuery::validate`, `IndexSpec::check` | Call them before writing |
-| G6 any backend passes the same tests | `aether_adapters::contract` | Run it against a custom driver |
+| G6 any backend passes the same tests | `nytheris_aether_adapters::contract` | Run it against a custom driver |
 
 The facade does every item in the right-hand column for the developer.
 That is its whole reason to exist.
@@ -241,7 +241,7 @@ The public Rust API changes in breaking ways on top of those already listed in t
 - Servers and MCP leave the roadmap; language bindings are deferred, not rejected.
 - Crate names and the `MemoryManager` name stay as they are.
 - `memory_test` is renamed `in_memory`.
-- The empty driver feature flags in `aether-adapters` are removed until each driver exists.
+- The empty driver feature flags in `nytheris-aether-adapters` are removed until each driver exists.
 - The planned `config.rs` and `ConnectorRegistry` are dropped: developers construct the stores they use.
 - `docs/architecture/rust-migration.md` is deleted once the work lands; the two design docs and rustdoc replace it.
 

@@ -2,13 +2,13 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use aether_core::{
+use async_trait::async_trait;
+use chrono::{DateTime, SecondsFormat, Utc};
+use nytheris_aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, Entity, EntityId, GraphEdge, GraphStore,
     MemoryId, OutboundConnector, ProjectId, Relation, Result, SecretString, Subgraph,
     TemporalFilter,
 };
-use async_trait::async_trait;
-use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;

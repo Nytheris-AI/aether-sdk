@@ -5,10 +5,10 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::io;
 
-use aether_adapters::storage::pgvector::{
+use nytheris_aether_adapters::storage::pgvector::{
     build_search_query, map_sqlx_error, validate_sql_identifier, PgVectorConfig, PgVectorStore,
 };
-use aether_core::{
+use nytheris_aether_core::{
     AetherError, DistanceMetric, FilterExpr, FilterValue, OutboundConnector, ProjectId,
     SecretString, VectorStore,
 };
@@ -463,9 +463,9 @@ async fn live_pgvector_contract_vector_store() {
     assert_eq!(store.name(), "pgvector");
     assert_eq!(
         store.health_check().await.expect("health_check"),
-        aether_core::ConnectorHealth::Healthy
+        nytheris_aether_core::ConnectorHealth::Healthy
     );
-    aether_adapters::contract::vector_store(&store).await;
+    nytheris_aether_adapters::contract::vector_store(&store).await;
 
     let ns = ProjectId::new(format!("pg-desc-{}", uuid::Uuid::new_v4())).unwrap();
     store
@@ -481,7 +481,7 @@ async fn live_pgvector_contract_vector_store() {
     .expect("reconnect fresh pgvector");
     assert_eq!(
         fresh.describe(&ns).await.unwrap(),
-        Some(aether_core::IndexSpec {
+        Some(nytheris_aether_core::IndexSpec {
             dimensions: 3,
             metric: DistanceMetric::Euclidean,
         })

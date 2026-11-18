@@ -5,12 +5,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_adapters::{InMemoryBackend, RetryPolicy};
-use aether_core::{
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use nytheris_aether_adapters::{InMemoryBackend, RetryPolicy};
+use nytheris_aether_core::{
     Entity, EntityId, MemoryInput, MemoryScope, MemoryTier, ProjectId, Relation, WriteDurability,
 };
-use aether_sdk::MemoryManager;
-use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use nytheris_aether_sdk::MemoryManager;
 use serde::Deserialize;
 use serde_json::{json, Value};
 

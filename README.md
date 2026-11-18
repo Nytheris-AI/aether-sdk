@@ -51,11 +51,11 @@ Start with a raw connector or adopt the full facade. Every higher level is built
 
 | Level | Component | Role | Example |
 | :--- | :--- | :--- | :--- |
-| **Level 1** | Storage Connectors (`aether-core`, `aether-adapters`) | Call `RecordStore`, `VectorStore`, or `GraphStore` directly | [`level_1_connector.rs`](crates/aether-sdk/examples/level_1_connector.rs) |
-| **Level 2** | Middleware Stack (`aether-adapters`) | Wrap any driver with `Batcher`, `Timeout`, `Resilient`, `Traced` | [`level_2_middleware.rs`](crates/aether-sdk/examples/level_2_middleware.rs) |
-| **Level 3** | Recall Primitives (`aether-cortex::recall`, `ppr`) | Compose `vector_search`, `graph_search`, `rrf`, `PersonalizedPageRank` | [`level_3_hybrid_recall.rs`](crates/aether-sdk/examples/level_3_hybrid_recall.rs) |
-| **Level 4** | Sync Engine (`aether-cortex::Indexer`) | Derive vector and graph indexes from durable `RecordStore` cursors | [`level_4_sync_engine.rs`](crates/aether-sdk/examples/level_4_sync_engine.rs) |
-| **Level 5** | Orchestration Facade (`aether-sdk::MemoryManager`) | One builder (`remember`, `recall`, `update`, `forget`, `flush`, `shutdown`) | [`level_5_facade.rs`](crates/aether-sdk/examples/level_5_facade.rs) |
+| **Level 1** | Storage Connectors (`nytheris-aether-core`, `nytheris-aether-adapters`) | Call `RecordStore`, `VectorStore`, or `GraphStore` directly | [`level_1_connector.rs`](crates/aether-sdk/examples/level_1_connector.rs) |
+| **Level 2** | Middleware Stack (`nytheris-aether-adapters`) | Wrap any driver with `Batcher`, `Timeout`, `Resilient`, `Traced` | [`level_2_middleware.rs`](crates/aether-sdk/examples/level_2_middleware.rs) |
+| **Level 3** | Recall Primitives (`nytheris-aether-cortex::recall`, `ppr`) | Compose `vector_search`, `graph_search`, `rrf`, `PersonalizedPageRank` | [`level_3_hybrid_recall.rs`](crates/aether-sdk/examples/level_3_hybrid_recall.rs) |
+| **Level 4** | Sync Engine (`nytheris-aether-cortex::Indexer`) | Derive vector and graph indexes from durable `RecordStore` cursors | [`level_4_sync_engine.rs`](crates/aether-sdk/examples/level_4_sync_engine.rs) |
+| **Level 5** | Orchestration Facade (`nytheris-aether-sdk::MemoryManager`) | One builder (`remember`, `recall`, `update`, `forget`, `flush`, `shutdown`) | [`level_5_facade.rs`](crates/aether-sdk/examples/level_5_facade.rs) |
 
 ---
 
@@ -63,16 +63,16 @@ Start with a raw connector or adopt the full facade. Every higher level is built
 
 | Crate | Purpose |
 | :--- | :--- |
-| **`aether-core`** | Pure domain DTOs, validated newtypes (`ProjectId`, `MemoryId`, `EntityId`, `UserId`, `SessionId`), `IndexSpec`, `DistanceMetric::score`, `FilterExpr::matches`, `AetherError`, and storage traits. |
-| **`aether-cortex`** | Composable [`Indexer`](crates/aether-cortex/src/indexer.rs) sync engine, [`PersonalizedPageRank`](crates/aether-cortex/src/ppr.rs) + `graph_scores`, and [`recall`](crates/aether-cortex/src/recall.rs) retrieval & RRF primitives. |
-| **`aether-adapters`** | `InMemoryBackend` (`in_memory` with `FaultPoint` injection), middleware decorators, reusable [`contract`](crates/aether-adapters/src/contract.rs) test suite (`contract-suite`), and 7 backend drivers. |
-| **`aether-sdk`** | Public `MemoryManager` / `MemoryManagerBuilder` composition root, runnable examples, and optional OpenTelemetry OTLP preset (`otel`). |
+| **`nytheris-aether-core`** | Pure domain DTOs, validated newtypes (`ProjectId`, `MemoryId`, `EntityId`, `UserId`, `SessionId`), `IndexSpec`, `DistanceMetric::score`, `FilterExpr::matches`, `AetherError`, and storage traits. |
+| **`nytheris-aether-cortex`** | Composable [`Indexer`](crates/aether-cortex/src/indexer.rs) sync engine, [`PersonalizedPageRank`](crates/aether-cortex/src/ppr.rs) + `graph_scores`, and [`recall`](crates/aether-cortex/src/recall.rs) retrieval & RRF primitives. |
+| **`nytheris-aether-adapters`** | `InMemoryBackend` (`in_memory` with `FaultPoint` injection), middleware decorators, reusable [`contract`](crates/aether-adapters/src/contract.rs) test suite (`contract-suite`), and 7 backend drivers. |
+| **`nytheris-aether-sdk`** | Public `MemoryManager` / `MemoryManagerBuilder` composition root, runnable examples, and optional OpenTelemetry OTLP preset (`otel`). |
 
 ---
 
 ## Storage Providers
 
-All drivers implement `OutboundConnector` + the same [`contract`](crates/aether-adapters/src/contract.rs) suite and are enabled individually via Cargo feature flags on `aether-adapters`.
+All drivers implement `OutboundConnector` + the same [`contract`](crates/aether-adapters/src/contract.rs) suite and are enabled individually via Cargo feature flags on `nytheris-aether-adapters`.
 
 | Role | Provider | Feature Flag | Highlights |
 | :--- | :--- | :--- | :--- |
@@ -96,28 +96,28 @@ All drivers implement `OutboundConnector` + the same [`contract`](crates/aether-
 cargo test --workspace --all-features
 
 # Run each SDK level example
-cargo run -p aether-sdk --example level_1_connector
-cargo run -p aether-sdk --example level_2_middleware
-cargo run -p aether-sdk --example level_3_hybrid_recall
-cargo run -p aether-sdk --example level_4_sync_engine
-cargo run -p aether-sdk --example level_5_facade
-cargo run -p aether-sdk --example otel_demo --features otel
+cargo run -p nytheris-aether-sdk --example level_1_connector
+cargo run -p nytheris-aether-sdk --example level_2_middleware
+cargo run -p nytheris-aether-sdk --example level_3_hybrid_recall
+cargo run -p nytheris-aether-sdk --example level_4_sync_engine
+cargo run -p nytheris-aether-sdk --example level_5_facade
+cargo run -p nytheris-aether-sdk --example otel_demo --features otel
 ```
 
 ### 2. Use `MemoryManager` in Rust
 
 ```rust
 use std::sync::Arc;
-use aether_adapters::InMemoryBackend;
-use aether_core::{
+use nytheris_aether_adapters::InMemoryBackend;
+use nytheris_aether_core::{
     DistanceMetric, Entity, EntityId, MemoryInput, ProjectId, RecallMode, RecallQuery, Relation,
     VectorStore, WriteDurability,
 };
-use aether_sdk::MemoryManager;
+use nytheris_aether_sdk::MemoryManager;
 use chrono::Utc;
 
 #[tokio::main]
-async fn main() -> aether_core::Result<()> {
+async fn main() -> nytheris_aether_core::Result<()> {
     let backend = Arc::new(InMemoryBackend::new());
     let project_id = ProjectId::new("my-project")?;
     backend.initialize(&project_id, 3, DistanceMetric::Cosine).await?;
@@ -167,8 +167,8 @@ cp .env.example .env
 ./scripts/dev-infra.sh up
 
 # Run live provider contract tests and multi-backend MemoryManager E2E tests
-cargo test -p aether-adapters --all-features -- --ignored --test-threads=1
-cargo test -p aether-sdk --all-features --test live_docker -- --ignored --test-threads=1
+cargo test -p nytheris-aether-adapters --all-features -- --ignored --test-threads=1
+cargo test -p nytheris-aether-sdk --all-features --test live_docker -- --ignored --test-threads=1
 ```
 
 ---

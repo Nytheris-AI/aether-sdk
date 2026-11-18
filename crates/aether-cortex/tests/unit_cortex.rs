@@ -1,6 +1,6 @@
-use aether_core::{Entity, EntityId, GraphEdge, MemoryId, Subgraph};
-use aether_cortex::PersonalizedPageRank;
 use chrono::Utc;
+use nytheris_aether_core::{Entity, EntityId, GraphEdge, MemoryId, Subgraph};
+use nytheris_aether_cortex::PersonalizedPageRank;
 
 #[test]
 fn personalized_page_rank_ranks_seed_neighborhood_higher() {

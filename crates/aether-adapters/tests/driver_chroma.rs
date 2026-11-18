@@ -6,17 +6,17 @@ use std::sync::{
     Arc, Mutex,
 };
 
-use aether_adapters::contract;
-use aether_adapters::storage::chroma::{ChromaConfig, ChromaVectorStore};
-use aether_core::{
-    AetherError, ConnectorHealth, DistanceMetric, FilterExpr, FilterValue, MemoryId,
-    OutboundConnector, ProjectId, SecretString, VectorRecord, VectorStore,
-};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     routing::{get, post},
     Json, Router,
+};
+use nytheris_aether_adapters::contract;
+use nytheris_aether_adapters::storage::chroma::{ChromaConfig, ChromaVectorStore};
+use nytheris_aether_core::{
+    AetherError, ConnectorHealth, DistanceMetric, FilterExpr, FilterValue, MemoryId,
+    OutboundConnector, ProjectId, SecretString, VectorRecord, VectorStore,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -675,7 +675,7 @@ async fn chroma_distance_metrics_filters_and_validation() {
     let fresh = ChromaVectorStore::new(test_config(base_url, None)).unwrap();
     assert_eq!(
         fresh.describe(&ns_edge).await.unwrap(),
-        Some(aether_core::IndexSpec {
+        Some(nytheris_aether_core::IndexSpec {
             dimensions: 2,
             metric: DistanceMetric::Cosine,
         })
@@ -719,7 +719,7 @@ async fn live_chroma_contract_vector_store() {
     let fresh = ChromaVectorStore::new(cfg).unwrap();
     assert_eq!(
         fresh.describe(&ns).await.unwrap(),
-        Some(aether_core::IndexSpec {
+        Some(nytheris_aether_core::IndexSpec {
             dimensions: 3,
             metric: DistanceMetric::Euclidean,
         })

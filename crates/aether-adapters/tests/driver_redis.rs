@@ -4,8 +4,8 @@ use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
-use aether_adapters::kv::redis::{map_redis_error, RedisConfig, RedisRecordStore};
-use aether_core::{
+use nytheris_aether_adapters::kv::redis::{map_redis_error, RedisConfig, RedisRecordStore};
+use nytheris_aether_core::{
     AetherError, ConnectorHealth, CreateOutcome, MemoryId, MemoryInput, MemoryItem, MemoryScope,
     OutboundConnector, ProjectId, ReceiptState, RecordStore, SessionId,
 };
@@ -194,8 +194,9 @@ async fn live_redis_contract_record_store() {
     );
     assert!(!format!("{store:?}").contains("s3cr3t"));
 
-    aether_adapters::contract::record_store(store.as_ref()).await;
-    aether_adapters::contract::record_store_concurrent_idempotency(Arc::clone(&store)).await;
+    nytheris_aether_adapters::contract::record_store(store.as_ref()).await;
+    nytheris_aether_adapters::contract::record_store_concurrent_idempotency(Arc::clone(&store))
+        .await;
 
     // Empty and zero-limit queries return empty without error.
     let empty_ns = ProjectId::new(format!("empty-{}", Uuid::new_v4())).unwrap();

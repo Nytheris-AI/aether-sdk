@@ -3,12 +3,12 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-use aether_core::{
+use async_trait::async_trait;
+use nytheris_aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, FilterExpr, FilterValue,
     IndexSpec, MemoryId, OutboundConnector, ProjectId, Result, SecretString, VectorMatch,
     VectorRecord, VectorStore,
 };
-use async_trait::async_trait;
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
