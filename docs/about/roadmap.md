@@ -13,6 +13,7 @@ Architecture decisions live in the [pieces-first SDK design](../architecture/sdk
 | `nytheris-aether-cortex` (`Indexer`, `recall`, `ppr`) | Done | Durable `RecordStore`-driven sync engine (`run_pass`, `apply`, opt-in `spawn`), composable recall steps, `PersonalizedPageRank` + `graph_scores`, `RRF` fusion. |
 | `MemoryManager` facade (`nytheris-aether-sdk`) | Done | Optional builder accepting `RecordStore` + optional `.vector(...)`, `.graph(...)`, `.background_indexing(...)`, middleware toggles. |
 | Production drivers (`sqlite`, `redis`, `turbopuffer`, `qdrant`, `chroma`, `pgvector`, `neo4j`) | Done | Implemented behind feature flags and verified via contract unit tests + live local Docker verification (`Valkey`, `Qdrant`, `Chroma`, `pgvector`, `Neo4j`) + `SQLite`. |
+| Obsidian vault & MCP server (`nytheris-aether-vault`, `aether-mcp`) | Done | `VaultEngine` over SQLite WAL + FTS5 + 256-dim hashed n-gram vectors + `PersonalizedPageRank`, `HOT` prefix packing, `Aether/Inbox.md` staging and reconciliation, and 3-tool stdio `McpServer`. |
 | Observability & Rust CI | Done | End-to-end `tracing` spans + `otel` OTLP preset; GitHub Actions checks `cargo fmt`, `clippy -D warnings`, `cargo test --workspace --all-features`, and docs build. |
 
 ## Completed Milestones
@@ -30,7 +31,14 @@ Architecture decisions live in the [pieces-first SDK design](../architecture/sdk
 - Implemented and upgraded all 7 backend drivers (`sqlite`, `redis`, `turbopuffer`, `qdrant`, `chroma`, `pgvector`, `neo4j`) to Phase 5 contracts including persistent cross-restart `describe` resolution on `qdrant`, `chroma`, and `pgvector`.
 - Verified `sqlite` + mocked suites (`turbopuffer`, `qdrant`, `chroma`, `neo4j`, `pgvector`) offline in CI, plus live Docker integration and end-to-end `MemoryManager` suites against Valkey, Qdrant, Chroma, pgvector, and Neo4j.
 
+### Milestone 1 - Obsidian Vault Daemon & Stdio MCP Server (Completed 2026-11-18)
+
+- Added the fifth workspace crate `nytheris-aether-vault` (`crates/aether-vault`) and the `aether-mcp` stdio binary (`--vault`, `--db`, `--watch-ms`, `AETHER_VAULT_PATH`), documented in [M1 vault and MCP architecture](../architecture/m1-vault-mcp-rationale.md).
+- Implemented validated vault types (`VaultPath`, `SourcePointer`, `AmuId`, `CandidateId`, `ContentHash`, `ScopeTag`, `TokenBudget`, `VaultTier`, `AmuKind`, `AmuStatus`), `.aetherignore` plus built-in path exclusions, and parse-boundary rejection of `aether_tier: private` notes.
+- Implemented single-file SQLite WAL storage (`vault_files`, `amus`, `amus_fts`, `amu_edges`, `self_write_ledger`, `staged_candidates`), hybrid FTS5 + 256-dim `HashedNgramEmbedder` + `PersonalizedPageRank` RRF recall, deterministic `[AETHER_HOT_PROFILE]` prefix packing (`HOT_PROFILE_MAX_TOKENS = 2000`), and atomic `Aether/Inbox.md` staging and reconciliation.
+- Exposed `McpServer` over newline-delimited JSON-RPC 2.0 (`initialize`, `ping`, `tools/list`, `tools/call`) with `aether_recall`, `aether_stage_memory`, and `aether_inspect_source`.
+
 ## Scope & Next Directions
 
 - **Language Bindings (deferred)**: Foreign-language bindings (for example Python via `PyO3`) remain deferred until demanded by concrete downstream users.
-- **Model-free invariant**: Aether does not call embedders, chunkers, or LLMs; callers bring their own vectors and extracted entities/relations.
+- **Model-free core SDK & Milestone 2 vault embeddings**: The four core SDK crates (`nytheris-aether-core`, `nytheris-aether-cortex`, `nytheris-aether-adapters`, `nytheris-aether-sdk`) do not call embedders, chunkers, or LLMs. `nytheris-aether-vault` Milestone 1 uses deterministic 256-dim signed trigram feature hashing behind an internal `Embedder` trait so Milestone 2 can add dense neural embeddings without changing `VaultEngine` callers.

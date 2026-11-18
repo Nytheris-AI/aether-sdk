@@ -1,0 +1,929 @@
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use chrono::Utc;
+use nytheris_aether_core::{AetherError, Result};
+use nytheris_aether_cortex::{
+    graph_scores,
+    recall::{self, Candidate, RRF_K},
+    PersonalizedPageRank,
+};
+use tokio::sync::{watch, Mutex as AsyncMutex};
+use tokio::task::JoinHandle;
+use walkdir::WalkDir;
+
+use crate::inbox::{self, INBOX_REL_PATH};
+use crate::parser::{self, Embedder, HashedNgramEmbedder, IgnoreRules, ParsedNote, ParsedSection};
+use crate::prefix;
+use crate::store::{to_memory_item, VaultStore};
+use crate::types::{
+    Amu, AmuId, AmuKind, AmuStatus, CandidateId, ContentHash, InboxCheckbox, InboxEntry,
+    InboxReconcileReport, RecallEntry, RecallRequest, RecallResponse, SourcePointer,
+    StageMemoryRequest, SyncReport, VaultConfig, VaultPath,
+};
+
+/// Single-owner orchestrator for Obsidian vault compilation, hybrid recall,
+/// atomic Inbox staging, and live source provenance checks.
+pub struct VaultEngine {
+    vault_root: PathBuf,
+    config: VaultConfig,
+    store: VaultStore,
+    embedder: Arc<dyn Embedder>,
+    write_gate: Arc<AsyncMutex<()>>,
+    shutdown_tx: watch::Sender<bool>,
+    watcher_handle: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl VaultEngine {
+    /// Opens the SQLite WAL index, performs an initial sync, and starts the optional poller.
+    pub async fn open(config: VaultConfig) -> Result<Self> {
+        let vault_root = std::fs::canonicalize(&config.vault_root).map_err(|err| {
+            AetherError::InvalidInput(format!(
+                "vault_root `{}` inaccessible: {err}",
+                config.vault_root.display()
+            ))
+        })?;
+        let store = VaultStore::open(config.db_target.clone(), config.project_id.clone()).await?;
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+        let embedder: Arc<dyn Embedder> = Arc::new(HashedNgramEmbedder::default());
+        tracing::debug!(
+            embed_dims = embedder.dimensions(),
+            "initialized vault engine"
+        );
+        let engine = Self {
+            vault_root,
+            config,
+            store,
+            embedder,
+            write_gate: Arc::new(AsyncMutex::new(())),
+            shutdown_tx,
+            watcher_handle: Mutex::new(None),
+        };
+
+        engine.sync_vault().await?;
+        engine.maybe_spawn_watcher(shutdown_rx)?;
+        Ok(engine)
+    }
+
+    fn maybe_spawn_watcher(&self, mut shutdown_rx: watch::Receiver<bool>) -> Result<()> {
+        let Some(interval) = self.config.watch_interval else {
+            return Ok(());
+        };
+        let vault_root = self.vault_root.clone();
+        let store = self.store.clone();
+        let embedder = Arc::clone(&self.embedder);
+        let write_gate = Arc::clone(&self.write_gate);
+        let project_id = self.config.project_id.clone();
+
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = shutdown_rx.changed() => break,
+                    _ = tokio::time::sleep(interval) => {
+                        let _guard = write_gate.lock().await;
+                        if let Err(err) = sync_vault_inner(&vault_root, &store, embedder.as_ref(), &project_id).await {
+                            tracing::warn!(error = %err, "background vault sync failed");
+                        }
+                    }
+                }
+            }
+        });
+
+        let mut guard = self
+            .watcher_handle
+            .lock()
+            .map_err(|_| AetherError::Permanent {
+                connector: "vault-engine",
+                message: "watcher mutex poisoned".into(),
+            })?;
+        *guard = Some(handle);
+        Ok(())
+    }
+
+    /// Scans the vault, reconciles `Aether/Inbox.md`, and updates changed Markdown files.
+    pub async fn sync_vault(&self) -> Result<SyncReport> {
+        let _guard = self.write_gate.lock().await;
+        sync_vault_inner(
+            &self.vault_root,
+            &self.store,
+            self.embedder.as_ref(),
+            &self.config.project_id,
+        )
+        .await
+    }
+
+    /// Processes a single filesystem path event, skipping self-originated writes via SHA-256 ledger.
+    pub async fn handle_fs_event(&self, path: &Path) -> Result<bool> {
+        let _guard = self.write_gate.lock().await;
+        let rel_path = match self.relative_vault_path(path) {
+            Ok(rel) => rel,
+            Err(_) => return Ok(false),
+        };
+
+        if rel_path.eq_ignore_ascii_case(INBOX_REL_PATH) {
+            let Ok(bytes) = tokio::fs::read(path).await else {
+                return Ok(false);
+            };
+            let hash = ContentHash::compute(&bytes);
+            if self.store.consume_self_write(INBOX_REL_PATH, &hash).await? {
+                return Ok(false);
+            }
+            let manifest = self.store.file_manifest().await?;
+            if manifest.get(INBOX_REL_PATH) == Some(&hash) {
+                return Ok(false);
+            }
+            let report =
+                reconcile_inbox_inner(&self.vault_root, &self.store, self.embedder.as_ref())
+                    .await?;
+            return Ok(report.compiled > 0 || report.rejected > 0);
+        }
+
+        let rules = IgnoreRules::load(&self.vault_root);
+        if rules.is_ignored(&rel_path) || !rel_path.to_ascii_lowercase().ends_with(".md") {
+            return Ok(false);
+        }
+
+        let Ok(bytes) = tokio::fs::read(path).await else {
+            return self.store.remove_file(&rel_path, None).await;
+        };
+        let hash = ContentHash::compute(&bytes);
+        if self.store.consume_self_write(&rel_path, &hash).await? {
+            return Ok(false);
+        }
+        let manifest = self.store.file_manifest().await?;
+        if manifest.get(&rel_path) == Some(&hash) {
+            return Ok(false);
+        }
+
+        let vault_path = VaultPath::parse(&rel_path)?;
+        let raw_md = String::from_utf8(bytes).map_err(|err| {
+            AetherError::InvalidInput(format!("note `{rel_path}` is not valid UTF-8: {err}"))
+        })?;
+        match parser::parse_note(&rel_path, &raw_md, Utc::now(), self.embedder.as_ref())? {
+            ParsedNote::Private => {
+                self.store.remove_file(&rel_path, Some(&hash)).await?;
+                Ok(true)
+            }
+            ParsedNote::Public(sections) => {
+                self.store
+                    .commit_file_sections(&vault_path, &hash, &sections)
+                    .await?;
+                Ok(true)
+            }
+        }
+    }
+
+    fn relative_vault_path(&self, path: &Path) -> Result<String> {
+        let candidate = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.vault_root.join(path)
+        };
+        let canonical = if candidate.exists() {
+            std::fs::canonicalize(&candidate).map_err(|err| {
+                AetherError::InvalidInput(format!("path `{}` error: {err}", path.display()))
+            })?
+        } else {
+            candidate
+        };
+        let rel = canonical.strip_prefix(&self.vault_root).map_err(|_| {
+            AetherError::InvalidInput(format!("path `{}` escapes vault root", path.display()))
+        })?;
+        Ok(rel
+            .to_string_lossy()
+            .replace('\\', "/")
+            .trim_start_matches('/')
+            .to_string())
+    }
+
+    /// Stages a proposed memory non-destructively into `Aether/Inbox.md`.
+    pub async fn stage_memory(&self, req: StageMemoryRequest) -> Result<CandidateId> {
+        if req.proposed_fact.trim().is_empty() {
+            return Err(AetherError::InvalidInput(
+                "proposed_fact must not be empty".into(),
+            ));
+        }
+        let _guard = self.write_gate.lock().await;
+
+        let target_link = match req.target_note {
+            Some(raw) => {
+                let cleaned = raw
+                    .trim()
+                    .trim_start_matches("[[")
+                    .trim_end_matches("]]")
+                    .trim()
+                    .replace('\\', "/");
+                if cleaned.is_empty() {
+                    None
+                } else {
+                    let probe = if cleaned.to_ascii_lowercase().ends_with(".md") {
+                        cleaned.clone()
+                    } else {
+                        format!("{cleaned}.md")
+                    };
+                    let _ = VaultPath::parse(&probe)?;
+                    let rules = IgnoreRules::load(&self.vault_root);
+                    if rules.is_ignored(&probe) {
+                        return Err(AetherError::InvalidInput(format!(
+                            "target_note `{cleaned}` is in an ignored vault path"
+                        )));
+                    }
+                    Some(cleaned)
+                }
+            }
+            None => None,
+        };
+
+        let _ =
+            reconcile_inbox_inner(&self.vault_root, &self.store, self.embedder.as_ref()).await?;
+
+        let candidate_id = CandidateId::from_proposal(
+            &req.proposed_fact,
+            target_link.as_deref(),
+            req.suggested_tier,
+        );
+        let entry = InboxEntry {
+            checkbox: InboxCheckbox::Pending,
+            tier: req.suggested_tier,
+            scope: req.scope,
+            proposed_fact: req.proposed_fact.trim().to_string(),
+            candidate_id: candidate_id.clone(),
+            target_link,
+            proposed_by: req.proposed_by,
+            proposed_date: req.proposed_date,
+            supersedes_amu_id: req.supersedes_amu_id,
+        };
+
+        self.store.stage_candidate(&entry).await?;
+        let pending = self.store.list_pending_candidates().await?;
+        write_inbox_atomically(&self.vault_root, &self.store, &pending).await?;
+        Ok(candidate_id)
+    }
+
+    /// Compiles checked `[x]` entries and drops `[-]` entries in `Aether/Inbox.md`.
+    pub async fn reconcile_inbox(&self) -> Result<InboxReconcileReport> {
+        let _guard = self.write_gate.lock().await;
+        reconcile_inbox_inner(&self.vault_root, &self.store, self.embedder.as_ref()).await
+    }
+
+    /// Runs hybrid FTS5, cosine vector, and `PersonalizedPageRank` recall fused via RRF.
+    pub async fn recall(&self, req: RecallRequest) -> Result<RecallResponse> {
+        let query_trimmed = req.query.trim();
+        if query_trimmed.is_empty() && !req.include_hot_profile {
+            return Err(AetherError::InvalidInput(
+                "recall query must not be empty when include_hot_profile is false".into(),
+            ));
+        }
+
+        let query_vec = if query_trimmed.is_empty() {
+            Vec::new()
+        } else {
+            self.embedder.embed(query_trimmed)
+        };
+
+        let bundle = self
+            .store
+            .recall_bundle(query_trimmed, &query_vec, req.scope.as_ref(), 32)
+            .await?;
+
+        if query_trimmed.is_empty() {
+            return Ok(prefix::format_recall_response(
+                bundle.hot_amus,
+                Vec::new(),
+                self.config.hot_budget,
+                req.max_tokens,
+                req.include_hot_profile,
+            ));
+        }
+
+        let ppr = PersonalizedPageRank::default();
+        let entity_ranks = ppr.rank(&bundle.subgraph, &bundle.seed_entities);
+        let mem_graph_scores = graph_scores(&bundle.subgraph, &entity_ranks);
+
+        let mut graph_candidates: Vec<Candidate> = mem_graph_scores
+            .into_iter()
+            .filter_map(|(mem_id, score)| {
+                bundle.amus_by_memory_id.get(&mem_id).map(|amu| Candidate {
+                    item: to_memory_item(amu, &self.config.project_id),
+                    score,
+                })
+            })
+            .collect();
+        graph_candidates.sort_by(|a, b| {
+            b.score
+                .total_cmp(&a.score)
+                .then_with(|| a.item.id.cmp(&b.item.id))
+        });
+
+        let mut lists = Vec::new();
+        if !bundle.fts_candidates.is_empty() {
+            lists.push(bundle.fts_candidates);
+        }
+        if !bundle.vector_candidates.is_empty() {
+            lists.push(bundle.vector_candidates);
+        }
+        if !graph_candidates.is_empty() {
+            lists.push(graph_candidates);
+        }
+
+        let fused = recall::rrf(&lists, RRF_K);
+        let mut ranked_entries: Vec<RecallEntry> = fused
+            .into_iter()
+            .filter_map(|cand| {
+                bundle
+                    .amus_by_memory_id
+                    .get(&cand.item.id)
+                    .map(|amu| RecallEntry {
+                        amu: amu.clone(),
+                        score: cand.score * amu.authority_weight,
+                    })
+            })
+            .collect();
+        ranked_entries.sort_by(|a, b| {
+            b.score
+                .total_cmp(&a.score)
+                .then_with(|| a.amu.amu_id.cmp(&b.amu.amu_id))
+        });
+
+        Ok(prefix::format_recall_response(
+            bundle.hot_amus,
+            ranked_entries,
+            self.config.hot_budget,
+            req.max_tokens,
+            req.include_hot_profile,
+        ))
+    }
+
+    /// Returns the exact verbatim Markdown section for `raw_pointer`, enforcing traversal and privacy guards.
+    pub async fn inspect_source(&self, raw_pointer: &str) -> Result<String> {
+        let pointer = SourcePointer::parse(raw_pointer)?;
+        let rules = IgnoreRules::load(&self.vault_root);
+        if rules.is_ignored(pointer.relative_path()) {
+            return Err(AetherError::InvalidInput(format!(
+                "path `{}` is excluded by vault ignore rules",
+                pointer.relative_path()
+            )));
+        }
+
+        let joined = pointer.vault_path().join_on(&self.vault_root);
+        let canonical = std::fs::canonicalize(&joined).map_err(|err| {
+            AetherError::NotFound(format!(
+                "source `{}` not found: {err}",
+                pointer.relative_path()
+            ))
+        })?;
+        if !canonical.starts_with(&self.vault_root) {
+            return Err(AetherError::InvalidInput(format!(
+                "source `{}` resolves outside vault root",
+                pointer.relative_path()
+            )));
+        }
+
+        let raw_md = tokio::fs::read_to_string(&canonical).await.map_err(|err| {
+            AetherError::NotFound(format!(
+                "failed to read `{}`: {err}",
+                pointer.relative_path()
+            ))
+        })?;
+
+        parser::extract_verbatim_section(&raw_md, &pointer)
+    }
+
+    /// Stops any active background polling loop and closes the SQLite connection.
+    pub async fn shutdown(&self) -> Result<()> {
+        let _ = self.shutdown_tx.send(true);
+        let handle = self
+            .watcher_handle
+            .lock()
+            .map_err(|_| AetherError::Permanent {
+                connector: "vault-engine",
+                message: "watcher mutex poisoned".into(),
+            })?
+            .take();
+        if let Some(h) = handle {
+            let _ = h.await;
+        }
+        self.store.close().await
+    }
+}
+
+async fn sync_vault_inner(
+    vault_root: &Path,
+    store: &VaultStore,
+    embedder: &dyn Embedder,
+    _project_id: &nytheris_aether_core::ProjectId,
+) -> Result<SyncReport> {
+    let mut report = SyncReport::default();
+    let inbox_rep = reconcile_inbox_inner(vault_root, store, embedder).await?;
+    report.inbox_approved = inbox_rep.compiled;
+    report.inbox_rejected = inbox_rep.rejected;
+
+    let rules = IgnoreRules::load(vault_root);
+    let manifest = store.file_manifest().await?;
+    let vault_root_owned = vault_root.to_path_buf();
+
+    let scanned_files = tokio::task::spawn_blocking(move || -> Vec<(String, Vec<u8>)> {
+        let mut files = Vec::new();
+        for entry in WalkDir::new(&vault_root_owned)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let Ok(canon) = std::fs::canonicalize(entry.path()) else {
+                continue;
+            };
+            if !canon.starts_with(&vault_root_owned) {
+                continue;
+            }
+            let Ok(rel) = entry.path().strip_prefix(&vault_root_owned) else {
+                continue;
+            };
+            let rel_posix = rel.to_string_lossy().replace('\\', "/");
+            if rules.is_ignored(&rel_posix) || !rel_posix.to_ascii_lowercase().ends_with(".md") {
+                continue;
+            }
+            if let Ok(bytes) = std::fs::read(&canon) {
+                files.push((rel_posix, bytes));
+            }
+        }
+        files
+    })
+    .await
+    .map_err(|err| AetherError::Permanent {
+        connector: "vault-fs",
+        message: format!("vault scan task error: {err}"),
+    })?;
+
+    let mut seen_paths = HashSet::new();
+    let mut pending_updates: Vec<(VaultPath, ContentHash, String)> = Vec::new();
+    let mut note_stem_to_entity: HashMap<String, String> = HashMap::new();
+    let mut ambiguous_basenames: HashSet<String> = HashSet::new();
+
+    for (rel_posix, _) in &scanned_files {
+        let lower_stem = rel_posix
+            .to_ascii_lowercase()
+            .strip_suffix(".md")
+            .unwrap_or(&rel_posix.to_ascii_lowercase())
+            .to_string();
+        let full_entity = format!("note:{lower_stem}");
+        note_stem_to_entity.insert(lower_stem.clone(), full_entity.clone());
+
+        let base = lower_stem
+            .rsplit('/')
+            .next()
+            .unwrap_or(&lower_stem)
+            .to_string();
+        if !ambiguous_basenames.contains(&base) {
+            if let Some(prev) = note_stem_to_entity.get(&base) {
+                if prev != &full_entity {
+                    note_stem_to_entity.remove(&base);
+                    ambiguous_basenames.insert(base);
+                }
+            } else {
+                note_stem_to_entity.insert(base, full_entity);
+            }
+        }
+    }
+
+    for (rel_posix, bytes) in scanned_files {
+        report.files_scanned += 1;
+        seen_paths.insert(rel_posix.clone());
+        let hash = ContentHash::compute(&bytes);
+
+        if store.consume_self_write(&rel_posix, &hash).await? {
+            report.files_skipped_self_write += 1;
+            continue;
+        }
+        if manifest.get(&rel_posix) == Some(&hash) {
+            report.files_skipped_unchanged += 1;
+            continue;
+        }
+
+        let vault_path = VaultPath::parse(&rel_posix)?;
+        let raw_md = match String::from_utf8(bytes) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        pending_updates.push((vault_path, hash, raw_md));
+    }
+
+    for (vault_path, hash, raw_md) in pending_updates {
+        match parser::parse_note(vault_path.as_str(), &raw_md, Utc::now(), embedder)? {
+            ParsedNote::Private => {
+                store.remove_file(vault_path.as_str(), Some(&hash)).await?;
+                report.private_skipped += 1;
+            }
+            ParsedNote::Public(mut sections) => {
+                resolve_wikilink_targets(&mut sections, &note_stem_to_entity);
+                let count = store
+                    .commit_file_sections(&vault_path, &hash, &sections)
+                    .await?;
+                report.files_updated += 1;
+                report.amus_indexed += count;
+            }
+        }
+    }
+
+    for old_path in manifest.keys() {
+        if old_path.eq_ignore_ascii_case(INBOX_REL_PATH) {
+            continue;
+        }
+        if !seen_paths.contains(old_path) && store.remove_file(old_path, None).await? {
+            report.files_removed += 1;
+        }
+    }
+
+    Ok(report)
+}
+
+fn resolve_wikilink_targets(sections: &mut [ParsedSection], stem_map: &HashMap<String, String>) {
+    for sec in sections {
+        for edge in &mut sec.amu.graph_edges {
+            if let Some(target_stem) = edge.strip_prefix("note:") {
+                if let Some(resolved) = stem_map.get(target_stem) {
+                    *edge = resolved.clone();
+                }
+            }
+        }
+    }
+}
+
+async fn reconcile_inbox_inner(
+    vault_root: &Path,
+    store: &VaultStore,
+    embedder: &dyn Embedder,
+) -> Result<InboxReconcileReport> {
+    let inbox_path = vault_root.join(INBOX_REL_PATH);
+    let pending_in_db = store.list_pending_candidates().await?;
+
+    if !inbox_path.exists() {
+        if pending_in_db.is_empty() {
+            return Ok(InboxReconcileReport::default());
+        }
+        write_inbox_atomically(vault_root, store, &pending_in_db).await?;
+        return Ok(InboxReconcileReport {
+            compiled: 0,
+            rejected: 0,
+            remaining_pending: pending_in_db.len(),
+        });
+    }
+
+    let bytes = tokio::fs::read(&inbox_path)
+        .await
+        .map_err(|err| AetherError::Permanent {
+            connector: "vault-fs",
+            message: format!("failed to read `{}`: {err}", inbox_path.display()),
+        })?;
+    let hash = ContentHash::compute(&bytes);
+    if store.consume_self_write(INBOX_REL_PATH, &hash).await? {
+        return Ok(InboxReconcileReport {
+            compiled: 0,
+            rejected: 0,
+            remaining_pending: pending_in_db.len(),
+        });
+    }
+
+    let raw_inbox = String::from_utf8_lossy(&bytes);
+    let parsed_entries = inbox::parse_inbox(&raw_inbox);
+
+    let mut compiled_amus = Vec::new();
+    let mut disk_ids = HashSet::new();
+    let mut remaining_pending = Vec::new();
+
+    for entry in &parsed_entries {
+        disk_ids.insert(entry.candidate_id.as_str().to_string());
+        match entry.checkbox {
+            InboxCheckbox::Pending => remaining_pending.push(entry.clone()),
+            InboxCheckbox::Approved => {
+                let (amu, emb) = build_compiled_amu(entry, embedder)?;
+                compiled_amus.push((entry.clone(), amu, emb));
+            }
+            InboxCheckbox::Rejected => {}
+        }
+    }
+
+    for db_pending in pending_in_db {
+        if !disk_ids.contains(db_pending.candidate_id.as_str()) {
+            remaining_pending.push(db_pending);
+        }
+    }
+
+    let (compiled, rejected) = store
+        .apply_inbox_decisions(&parsed_entries, &compiled_amus)
+        .await?;
+
+    if compiled > 0 || rejected > 0 || remaining_pending.len() != parsed_entries.len() {
+        write_inbox_atomically(vault_root, store, &remaining_pending).await?;
+    } else {
+        store.update_file_watermark(INBOX_REL_PATH, &hash).await?;
+    }
+
+    Ok(InboxReconcileReport {
+        compiled,
+        rejected,
+        remaining_pending: remaining_pending.len(),
+    })
+}
+
+fn build_compiled_amu(entry: &InboxEntry, embedder: &dyn Embedder) -> Result<(Amu, Vec<f32>)> {
+    let target_rel = match &entry.target_link {
+        Some(raw) => {
+            let cleaned = raw
+                .trim()
+                .trim_start_matches("[[")
+                .trim_end_matches("]]")
+                .trim()
+                .replace('\\', "/");
+            let with_ext = if cleaned.to_ascii_lowercase().ends_with(".md") {
+                cleaned
+            } else {
+                format!("{cleaned}.md")
+            };
+            if VaultPath::parse(&with_ext).is_ok() {
+                with_ext
+            } else {
+                "Aether/Compiled/Approved.md".to_string()
+            }
+        }
+        None => "Aether/Compiled/Approved.md".to_string(),
+    };
+
+    let pointer_raw = format!("{target_rel}#{}", entry.candidate_id);
+    let source_pointer = SourcePointer::parse(&pointer_raw)?;
+    let amu_id = AmuId::from_pointer(&source_pointer);
+    let distilled_fact = entry.proposed_fact.trim().to_string();
+    let embedding = embedder.embed(&distilled_fact);
+
+    let mut graph_edges = Vec::new();
+    if let Some(link) = &entry.target_link {
+        let stem = link
+            .trim()
+            .trim_start_matches("[[")
+            .trim_end_matches("]]")
+            .replace('\\', "/")
+            .to_ascii_lowercase();
+        let stem = stem.strip_suffix(".md").unwrap_or(&stem);
+        if !stem.is_empty() {
+            graph_edges.push(format!("note:{stem}"));
+        }
+    }
+
+    let amu = Amu {
+        amu_id,
+        tier: entry.tier,
+        kind: AmuKind::Decision,
+        status: AmuStatus::Active,
+        heading_path: source_pointer.as_str().to_string(),
+        distilled_fact: distilled_fact.clone(),
+        source_pointer,
+        graph_edges,
+        valid_from: Utc::now(),
+        superseded_by: None,
+        scopes: vec![entry.scope.clone()],
+        authority_weight: 1.0,
+        content_hash: ContentHash::compute(distilled_fact.as_bytes()),
+    };
+    Ok((amu, embedding))
+}
+
+async fn write_inbox_atomically(
+    vault_root: &Path,
+    store: &VaultStore,
+    entries: &[InboxEntry],
+) -> Result<()> {
+    let inbox_path = vault_root.join(INBOX_REL_PATH);
+    let rendered = inbox::render_inbox(entries);
+    let hash = ContentHash::compute(rendered.as_bytes());
+    store.record_self_write(INBOX_REL_PATH, &hash).await?;
+    inbox::atomic_write_file(&inbox_path, rendered.as_bytes())?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::types::{ScopeTag, TokenBudget, VaultTier};
+
+    struct TempVault {
+        root: PathBuf,
+    }
+
+    impl TempVault {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("aether_vault_test_{}", Uuid::new_v4()));
+            fs::create_dir_all(&root).unwrap();
+            Self { root }
+        }
+
+        fn write(&self, rel: &str, content: &str) {
+            let full = self.root.join(rel);
+            if let Some(parent) = full.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(full, content).unwrap();
+        }
+    }
+
+    impl Drop for TempVault {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[tokio::test]
+    async fn sync_excludes_private_and_ignored_notes_and_inspect_guards_source() {
+        let vault = TempVault::new();
+        vault.write(".aetherignore", "SecretFolder/\n");
+        vault.write("SecretFolder/Keys.md", "# Keys\nSECRET_API_KEY=12345\n");
+        vault.write(
+            "Personal/Diary.md",
+            "---\naether_tier: private\n---\n# Thoughts\nPrivate diary entry.\n",
+        );
+        vault.write(
+            "Arch/DB.md",
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Schema\nUse `--port 5432` and `PRAGMA journal_mode = WAL;`.\n",
+        );
+
+        let engine = VaultEngine::open(VaultConfig::in_memory(&vault.root))
+            .await
+            .unwrap();
+
+        let verbatim = engine.inspect_source("Arch/DB.md#Schema").await.unwrap();
+        assert!(verbatim.contains("--port 5432"));
+        assert!(verbatim.contains("PRAGMA journal_mode = WAL;"));
+
+        assert!(matches!(
+            engine.inspect_source("../../etc/passwd").await,
+            Err(AetherError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            engine.inspect_source("Personal/Diary.md#Thoughts").await,
+            Err(AetherError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            engine.inspect_source("SecretFolder/Keys.md#Keys").await,
+            Err(AetherError::InvalidInput(_))
+        ));
+
+        let mut req = RecallRequest::new("SECRET_API_KEY diary");
+        req.scope = Some(ScopeTag::new("engineering").unwrap());
+        let res = engine.recall(req).await.unwrap();
+        assert!(!res.formatted_context.contains("SECRET_API_KEY"));
+        assert!(!res.formatted_context.contains("Private diary"));
+
+        engine.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stage_memory_prevents_self_write_watcher_loops_and_reconciles_approvals() {
+        let vault = TempVault::new();
+        vault.write(
+            "Arch/Vector.md",
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Engine\nOriginally used Qdrant for local vector search.\n",
+        );
+
+        let engine = VaultEngine::open(VaultConfig::in_memory(&vault.root))
+            .await
+            .unwrap();
+
+        let old_ptr = SourcePointer::parse("Arch/Vector.md#Engine").unwrap();
+        let old_amu = AmuId::from_pointer(&old_ptr);
+
+        let cand_id = engine
+            .stage_memory(
+                StageMemoryRequest::new(
+                    "Switched primary local vector store to LanceDB for zero-copy arrow reads.",
+                    VaultTier::Warm,
+                )
+                .with_scope("engineering")
+                .unwrap()
+                .with_target_note("Architecture/Storage-Engine")
+                .with_supersedes(old_amu),
+            )
+            .await
+            .unwrap();
+
+        let inbox_path = vault.root.join("Aether/Inbox.md");
+        assert!(inbox_path.exists());
+
+        assert!(!engine.handle_fs_event(&inbox_path).await.unwrap());
+
+        let inbox_text = fs::read_to_string(&inbox_path).unwrap();
+        let approved_text = inbox_text.replace("- [ ] ", "- [x] ");
+        fs::write(&inbox_path, approved_text).unwrap();
+
+        assert!(engine.handle_fs_event(&inbox_path).await.unwrap());
+        assert!(!engine.handle_fs_event(&inbox_path).await.unwrap());
+
+        let mut req = RecallRequest::new("primary local vector store LanceDB Qdrant");
+        req.scope = Some(ScopeTag::new("engineering").unwrap());
+        let res = engine.recall(req).await.unwrap();
+        assert!(res.formatted_context.contains("LanceDB"));
+        assert!(!res.formatted_context.contains("Originally used Qdrant"));
+        let _ = cand_id;
+
+        engine.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn hybrid_recall_enforces_scope_hot_prefix_hash_and_graph_ppr() {
+        let vault = TempVault::new();
+        vault.write(
+            "Profile/Identity.md",
+            "---\naether_tier: hot\naether_scope:\n  - global\naether_kind: profile\n---\n# Identity\nAlways respond concisely in Rust.\n",
+        );
+        vault.write(
+            "Specs/Hub.md",
+            "---\naether_tier: warm\naether_scope:\n  - backend\n---\n# Hub\nSee [[Specs/Spoke]] for PostgreSQL connection pooling.\n",
+        );
+        vault.write(
+            "Specs/Spoke.md",
+            "---\naether_tier: warm\naether_scope:\n  - backend\n---\n# Spoke\nPgBouncer transaction pooling uses max 64 connections.\n",
+        );
+        vault.write(
+            "Frontend/Theme.md",
+            "---\naether_tier: warm\naether_scope:\n  - frontend\n---\n# Theme\nUse Tailwind CSS tokens and connection pooling UI colors.\n",
+        );
+
+        let engine = VaultEngine::open(VaultConfig::in_memory(&vault.root))
+            .await
+            .unwrap();
+
+        let mut cold_start = RecallRequest::new("");
+        cold_start.include_hot_profile = true;
+        let cold_res = engine.recall(cold_start).await.unwrap();
+        assert!(cold_res
+            .hot_prefix
+            .contains("Always respond concisely in Rust."));
+        assert!(cold_res.dynamic_context.is_empty());
+
+        let mut q1 = RecallRequest::new("PgBouncer connection pooling");
+        q1.scope = Some(ScopeTag::new("backend").unwrap());
+        q1.max_tokens = TokenBudget::new(300).unwrap();
+        let r1 = engine.recall(q1).await.unwrap();
+
+        let mut q2 = RecallRequest::new("Rust PostgreSQL");
+        q2.scope = Some(ScopeTag::new("backend").unwrap());
+        q2.max_tokens = TokenBudget::new(300).unwrap();
+        let r2 = engine.recall(q2).await.unwrap();
+
+        assert_eq!(r1.prefix_hash, r2.prefix_hash);
+        assert!(r1.tokens_used <= 300);
+        assert!(r1.formatted_context.contains("PgBouncer"));
+        assert!(!r1.formatted_context.contains("Tailwind CSS"));
+
+        engine.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn inbox_rejection_and_note_deletion_remove_or_skip_memories() {
+        let vault = TempVault::new();
+        vault.write(
+            "Notes/Temp.md",
+            "---\naether_tier: warm\naether_scope:\n  - ops\n---\n# Temp\nEphemeral operational note about Redis cluster.\n",
+        );
+
+        let engine = VaultEngine::open(VaultConfig::in_memory(&vault.root))
+            .await
+            .unwrap();
+
+        let _cand = engine
+            .stage_memory(
+                StageMemoryRequest::new("Rejected memory proposal.", VaultTier::Warm)
+                    .with_scope("ops")
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let inbox_path = vault.root.join("Aether/Inbox.md");
+        let text = fs::read_to_string(&inbox_path).unwrap();
+        fs::write(&inbox_path, text.replace("- [ ] ", "- [-] ")).unwrap();
+
+        let rep = engine.reconcile_inbox().await.unwrap();
+        assert_eq!(rep.compiled, 0);
+        assert_eq!(rep.rejected, 1);
+        assert_eq!(rep.remaining_pending, 0);
+
+        fs::remove_file(vault.root.join("Notes/Temp.md")).unwrap();
+        let sync_rep = engine.sync_vault().await.unwrap();
+        assert_eq!(sync_rep.files_removed, 1);
+
+        let mut req = RecallRequest::new("Redis cluster Rejected memory");
+        req.scope = Some(ScopeTag::new("ops").unwrap());
+        let res = engine.recall(req).await.unwrap();
+        assert!(!res.formatted_context.contains("Ephemeral operational"));
+        assert!(!res.formatted_context.contains("Rejected memory proposal"));
+
+        engine.shutdown().await.unwrap();
+    }
+}

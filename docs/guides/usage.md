@@ -193,3 +193,62 @@ async fn main() -> nytheris_aether_core::Result<()> {
     Ok(())
 }
 ```
+
+---
+
+## Obsidian Vault & MCP Server (`nytheris-aether-vault`)
+
+Use `nytheris-aether-vault` when you want an Obsidian-native local memory daemon backed by a single SQLite WAL database and a 3-tool `stdio` MCP server.
+
+### Run the `aether-mcp` Stdio Server
+
+```bash
+# Default DB: <vault>/.aether/aether.sqlite, default polling: 2000ms (0 disables polling)
+cargo run -p nytheris-aether-vault --bin aether-mcp -- \
+  --vault /path/to/obsidian-vault \
+  --db /path/to/aether.sqlite \
+  --watch-ms 2000
+```
+
+When `--vault` is omitted, `aether-mcp` reads `AETHER_VAULT_PATH` or falls back to `.`. It serves newline-delimited JSON-RPC 2.0 (`protocolVersion` `"2024-11-05"`) over `stdin` and `stdout` with three tools:
+
+- `aether_recall`: `query` (required), `scope` (optional), `max_tokens` (optional, default `1500`), `include_hot_profile` (optional, default `true`).
+- `aether_stage_memory`: `proposed_fact` (required), `suggested_tier` (optional `"hot"`, `"warm"`, or `"cold"`, default `"warm"`), `target_note` (optional), `supersedes_amu_id` (optional). Appends a pending candidate to `Aether/Inbox.md`.
+- `aether_inspect_source`: `source_pointer` (required, for example `"Arch/DB.md#Schema"`). Returns the verbatim Markdown section from disk while enforcing `.aetherignore` and `aether_tier: private` guards.
+
+### Embed `VaultEngine` and `McpServer` in Rust
+
+```rust
+use std::sync::Arc;
+use nytheris_aether_vault::{
+    McpServer, RecallRequest, StageMemoryRequest, TokenBudget, VaultConfig, VaultEngine, VaultTier,
+};
+
+#[tokio::main]
+async fn main() -> nytheris_aether_core::Result<()> {
+    let engine = Arc::new(VaultEngine::open(VaultConfig::new("/path/to/obsidian-vault")).await?);
+    engine.sync_vault().await?;
+
+    let mut req = RecallRequest::new("SQLite WAL transactions");
+    req.max_tokens = TokenBudget::new(1500)?;
+    let recall = engine.recall(req).await?;
+    println!("tokens={}, prefix_hash={}", recall.tokens_used, recall.prefix_hash);
+
+    let candidate_id = engine
+        .stage_memory(
+            StageMemoryRequest::new("Use TransactionBehavior::Immediate for writes.", VaultTier::Warm)
+                .with_scope("engineering")?
+                .with_target_note("Arch/DB.md"),
+        )
+        .await?;
+    println!("staged {candidate_id} into Aether/Inbox.md");
+
+    let _server = McpServer::new(Arc::clone(&engine));
+    engine.shutdown().await?;
+    Ok(())
+}
+```
+
+### Note Frontmatter and Exclusions
+
+Notes support optional YAML frontmatter keys `aether_tier` (`hot`, `warm`, `cold`, `private`), `aether_scope`, `aether_kind` (`profile`, `rule`, `decision`, `spec`, `fleeting`), `aether_status` (`active`, `superseded`, `archived`), `valid_from`, `superseded_by`, and `tags`. Built-in exclusions skip `.obsidian`, `.git`, `.trash`, `.aether`, `Aether/Inbox.md`, `Aether/Compiled`, `.canvas`, `.excalidraw`, and `.excalidraw.md`; add custom rules in `.aetherignore` at the vault root.

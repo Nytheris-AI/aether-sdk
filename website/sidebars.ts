@@ -11,6 +11,7 @@ const sidebars: SidebarsConfig = {
         'architecture/connectors',
         'architecture/sdk-design',
         'architecture/hardening-design',
+        'architecture/m1-vault-mcp-rationale',
         'architecture/change-overview',
       ],
     },
