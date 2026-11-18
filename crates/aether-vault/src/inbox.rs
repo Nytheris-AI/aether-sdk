@@ -64,6 +64,12 @@ pub(crate) fn parse_inbox(markdown: &str) -> Vec<InboxEntry> {
 
     for raw_line in markdown.lines() {
         let trimmed = raw_line.trim();
+        if trimmed.starts_with("<<<<<<<")
+            || trimmed.starts_with("=======")
+            || trimmed.starts_with(">>>>>>>")
+        {
+            continue;
+        }
         if let Some(entry) = parse_task_header(trimmed) {
             if let Some(prev) = current.take() {
                 entries.push(prev);

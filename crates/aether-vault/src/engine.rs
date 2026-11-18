@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
-use nytheris_aether_core::{AetherError, Result};
+use nytheris_aether_core::{redact_url_userinfo, AetherError, Result};
 use nytheris_aether_cortex::{
     graph_scores,
     recall::{self, Candidate, RRF_K},
@@ -19,6 +19,7 @@ use crate::auth::{
 };
 use crate::dream;
 use crate::embedder::{embed_amu_text, Embedder, HashedNgramEmbedder};
+use crate::git::{self, GitSyncOptions, GitSyncReport};
 use crate::inbox::{self, APPROVED_MIRROR_REL_PATH, INBOX_REL_PATH};
 use crate::parser::{self, IgnoreRules, ParsedNote, ParsedSection};
 use crate::prefix;
@@ -283,6 +284,10 @@ impl VaultEngine {
         let raw_md = String::from_utf8(bytes).map_err(|err| {
             AetherError::InvalidInput(format!("note `{rel_path}` is not valid UTF-8: {err}"))
         })?;
+        if git::has_unresolved_conflict_markers(&raw_md) {
+            tracing::warn!(rel_path = %rel_path, "skipping note with unresolved git conflict markers");
+            return Ok(false);
+        }
         match parser::parse_note(&rel_path, &raw_md, Utc::now(), self.embedder.as_ref())? {
             ParsedNote::Private => {
                 self.store.remove_file(&rel_path, Some(&hash)).await?;
@@ -847,6 +852,104 @@ impl VaultEngine {
             .collect())
     }
 
+    /// Synchronizes a Git-backed team vault, resolving Aether Inbox/Approved conflicts via
+    /// monotonic lattice merge and preserving prior active AMUs for conflicted human notes.
+    pub async fn git_sync(&self, opts: GitSyncOptions) -> Result<GitSyncReport> {
+        let _guard = self.write_gate.lock().await;
+        let _ =
+            reconcile_inbox_inner(&self.vault_root, &self.store, self.embedder.as_ref()).await?;
+
+        let vault_root_ignore = self.vault_root.clone();
+        tokio::task::spawn_blocking(move || {
+            git::ensure_aether_gitignored_blocking(&vault_root_ignore)
+        })
+        .await
+        .map_err(|err| AetherError::Permanent {
+            connector: "vault-git",
+            message: format!("gitignore task join error: {err}"),
+        })??;
+
+        let vault_root_fetch = self.vault_root.clone();
+        let remote_fetch = opts.remote.clone();
+        let branch_fetch = opts.branch.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            git::run_git_fetch_merge_blocking(
+                &vault_root_fetch,
+                &remote_fetch,
+                branch_fetch.as_deref(),
+            )
+        })
+        .await
+        .map_err(|err| AetherError::Permanent {
+            connector: "vault-git",
+            message: format!("git fetch/merge task join error: {err}"),
+        })??;
+
+        let aether_conflicts_resolved = reconcile_aether_lattice_inner(
+            &self.vault_root,
+            &self.store,
+            self.embedder.as_ref(),
+            &outcome,
+        )
+        .await?;
+
+        let mut remaining_unmerged = Vec::new();
+        let mut conflicted_files = Vec::new();
+        for rel in &outcome.unmerged_paths {
+            if rel.eq_ignore_ascii_case(INBOX_REL_PATH)
+                || rel.eq_ignore_ascii_case(APPROVED_MIRROR_REL_PATH)
+            {
+                continue;
+            }
+            remaining_unmerged.push(rel.clone());
+            if let Ok(vp) = VaultPath::parse(rel) {
+                conflicted_files.push(vp);
+            }
+        }
+
+        let commit_merge = outcome.in_merge_state && remaining_unmerged.is_empty();
+        let do_push = opts.push && remaining_unmerged.is_empty();
+        let vault_root_fin = self.vault_root.clone();
+        let remote_fin = opts.remote.clone();
+        let branch_fin = outcome.branch.clone();
+        let msg_fin = opts.commit_message.clone();
+        let (head_commit, pushed) = tokio::task::spawn_blocking(move || {
+            git::finalize_git_merge_and_push_blocking(
+                &vault_root_fin,
+                &[INBOX_REL_PATH, APPROVED_MIRROR_REL_PATH],
+                commit_merge,
+                &remote_fin,
+                &branch_fin,
+                do_push,
+                msg_fin.as_deref(),
+            )
+        })
+        .await
+        .map_err(|err| AetherError::Permanent {
+            connector: "vault-git",
+            message: format!("git finalize task join error: {err}"),
+        })??;
+
+        let sync_report = sync_vault_inner(
+            &self.vault_root,
+            &self.store,
+            self.embedder.as_ref(),
+            &self.config.project_id,
+        )
+        .await?;
+
+        Ok(GitSyncReport {
+            remote: redact_url_userinfo(&opts.remote),
+            branch: outcome.branch,
+            head_commit,
+            merged_cleanly: remaining_unmerged.is_empty() && conflicted_files.is_empty(),
+            aether_conflicts_resolved,
+            conflicted_files,
+            sync_report,
+            pushed,
+        })
+    }
+
     /// Stops any active background polling loop and closes the SQLite connection.
     pub async fn shutdown(&self) -> Result<()> {
         let _ = self.shutdown_tx.send(true);
@@ -873,6 +976,34 @@ async fn sync_vault_inner(
     _project_id: &nytheris_aether_core::ProjectId,
 ) -> Result<SyncReport> {
     let mut report = SyncReport::default();
+    let manifest = store.file_manifest().await?;
+    let inbox_has_conflicts = tokio::fs::read_to_string(vault_root.join(INBOX_REL_PATH))
+        .await
+        .ok()
+        .is_some_and(|s| git::has_unresolved_conflict_markers(&s));
+    let approved_path = vault_root.join(APPROVED_MIRROR_REL_PATH);
+    let approved_changed_externally = if let Ok(bytes) = tokio::fs::read(&approved_path).await {
+        let hash = ContentHash::compute(&bytes);
+        let text = String::from_utf8_lossy(&bytes);
+        git::has_unresolved_conflict_markers(&text)
+            || (!store
+                .consume_self_write(APPROVED_MIRROR_REL_PATH, &hash)
+                .await?
+                && manifest.get(APPROVED_MIRROR_REL_PATH) != Some(&hash))
+    } else {
+        false
+    };
+    if inbox_has_conflicts || approved_changed_externally {
+        let empty_outcome = git::GitMergeOutcome {
+            branch: String::new(),
+            unmerged_paths: Vec::new(),
+            inbox_stages: Vec::new(),
+            approved_stages: Vec::new(),
+            in_merge_state: false,
+        };
+        let _ = reconcile_aether_lattice_inner(vault_root, store, embedder, &empty_outcome).await?;
+    }
+
     let inbox_rep = reconcile_inbox_inner(vault_root, store, embedder).await?;
     report.inbox_approved = inbox_rep.compiled;
     report.inbox_rejected = inbox_rep.rejected;
@@ -931,6 +1062,10 @@ async fn sync_vault_inner(
             Ok(s) => s,
             Err(_) => continue,
         };
+        if git::has_unresolved_conflict_markers(&raw_md) {
+            tracing::warn!(rel_path = %rel_posix, "skipping note with unresolved git conflict markers");
+            continue;
+        }
         pending_updates.push((vault_path, hash, raw_md));
     }
 
@@ -1016,6 +1151,103 @@ fn resolve_wikilink_targets(sections: &mut [ParsedSection], stem_map: &HashMap<S
             }
         }
     }
+}
+
+async fn reconcile_aether_lattice_inner(
+    vault_root: &Path,
+    store: &VaultStore,
+    embedder: &dyn Embedder,
+    outcome: &git::GitMergeOutcome,
+) -> Result<usize> {
+    let inbox_path = vault_root.join(INBOX_REL_PATH);
+    let mirror_path = vault_root.join(APPROVED_MIRROR_REL_PATH);
+    let disk_inbox = tokio::fs::read_to_string(&inbox_path).await.ok();
+    let disk_approved = tokio::fs::read_to_string(&mirror_path).await.ok();
+
+    let mut conflicts_resolved = 0usize;
+    if outcome
+        .unmerged_paths
+        .iter()
+        .any(|p| p.eq_ignore_ascii_case(INBOX_REL_PATH))
+        || disk_inbox
+            .as_deref()
+            .is_some_and(git::has_unresolved_conflict_markers)
+    {
+        conflicts_resolved += 1;
+    }
+    if outcome
+        .unmerged_paths
+        .iter()
+        .any(|p| p.eq_ignore_ascii_case(APPROVED_MIRROR_REL_PATH))
+        || disk_approved
+            .as_deref()
+            .is_some_and(git::has_unresolved_conflict_markers)
+    {
+        conflicts_resolved += 1;
+    }
+
+    let db_pending = store.list_pending_candidates().await?;
+    let db_approved = store.list_approved_candidates().await?;
+    let db_rejected = store.list_rejected_candidates().await?;
+
+    let mut inbox_snapshots: Vec<&str> = Vec::new();
+    if let Some(ref s) = disk_inbox {
+        inbox_snapshots.push(s.as_str());
+    }
+    for s in &outcome.inbox_stages {
+        inbox_snapshots.push(s.as_str());
+    }
+
+    let mut approved_snapshots: Vec<&str> = Vec::new();
+    if let Some(ref s) = disk_approved {
+        approved_snapshots.push(s.as_str());
+    }
+    for s in &outcome.approved_stages {
+        approved_snapshots.push(s.as_str());
+    }
+
+    let merged = git::merge_aether_lattice(
+        &db_pending,
+        &db_approved,
+        &db_rejected,
+        &inbox_snapshots,
+        &approved_snapshots,
+    );
+    if merged.is_empty() {
+        return Ok(conflicts_resolved);
+    }
+
+    let mut pending = Vec::new();
+    let mut approved_compiled = Vec::new();
+    let mut rejected = Vec::new();
+    for item in merged.into_values() {
+        match item.status {
+            git::CandidateLatticeStatus::Pending => pending.push(item.entry),
+            git::CandidateLatticeStatus::Rejected => rejected.push(item.entry),
+            git::CandidateLatticeStatus::Approved => {
+                let (amu, emb) = build_compiled_amu(&item.entry, embedder)?;
+                approved_compiled.push((item.entry, amu, emb));
+            }
+        }
+    }
+
+    store
+        .apply_lattice_state(&pending, &approved_compiled, &rejected)
+        .await?;
+
+    let mut all_approved = store.list_approved_candidates().await?;
+    all_approved.sort_by(|a, b| a.candidate_id.cmp(&b.candidate_id));
+    if !all_approved.is_empty() || mirror_path.exists() {
+        write_approved_mirror_atomically(vault_root, store, &all_approved).await?;
+    }
+
+    let mut all_pending = store.list_pending_candidates().await?;
+    all_pending.sort_by(|a, b| a.candidate_id.cmp(&b.candidate_id));
+    if !all_pending.is_empty() || inbox_path.exists() {
+        write_inbox_atomically(vault_root, store, &all_pending).await?;
+    }
+
+    Ok(conflicts_resolved)
 }
 
 async fn reconcile_inbox_inner(
@@ -1731,5 +1963,151 @@ mod tests {
         assert_eq!(engine.list_api_keys().await.unwrap().len(), 3);
 
         engine.shutdown().await.unwrap();
+    }
+
+    fn run_git_ok(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "Test User")
+            .env("GIT_AUTHOR_EMAIL", "test@aether.local")
+            .env("GIT_COMMITTER_NAME", "Test User")
+            .env("GIT_COMMITTER_EMAIL", "test@aether.local")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {:?} failed in {}: {}",
+            args,
+            dir.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[tokio::test]
+    async fn git_sync_resolves_aether_lattice_conflicts_and_preserves_conflicted_note_amus() {
+        let base_dir = std::env::temp_dir().join(format!("aether_git_team_{}", Uuid::new_v4()));
+        let bare_dir = base_dir.join("origin.git");
+        let alice_dir = base_dir.join("alice");
+        let bob_dir = base_dir.join("bob");
+        fs::create_dir_all(&bare_dir).unwrap();
+        fs::create_dir_all(&alice_dir).unwrap();
+
+        run_git_ok(&bare_dir, &["init", "--bare", "-b", "main"]);
+        run_git_ok(&alice_dir, &["init", "-b", "main"]);
+        fs::write(
+            alice_dir.join("Arch.md"),
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Engine\nOriginal clean architecture rule.\n",
+        )
+        .unwrap();
+        run_git_ok(&alice_dir, &["add", "."]);
+        run_git_ok(&alice_dir, &["commit", "-m", "initial vault"]);
+        run_git_ok(
+            &alice_dir,
+            &["remote", "add", "origin", bare_dir.to_str().unwrap()],
+        );
+        run_git_ok(&alice_dir, &["push", "-u", "origin", "main"]);
+        run_git_ok(
+            &base_dir,
+            &[
+                "clone",
+                bare_dir.to_str().unwrap(),
+                bob_dir.to_str().unwrap(),
+            ],
+        );
+
+        let alice_engine = VaultEngine::open(VaultConfig::new(&alice_dir))
+            .await
+            .unwrap();
+        let bob_engine = VaultEngine::open(VaultConfig::new(&bob_dir)).await.unwrap();
+
+        // Both stage one shared candidate; Alice approves it and modifies Arch.md.
+        let shared_req = StageMemoryRequest::new("Shared WAL rule.", VaultTier::Warm)
+            .with_scope("engineering")
+            .unwrap();
+        let shared_cid = alice_engine.stage_memory(shared_req.clone()).await.unwrap();
+        let bob_shared_cid = bob_engine.stage_memory(shared_req).await.unwrap();
+        assert_eq!(shared_cid, bob_shared_cid);
+
+        alice_engine
+            .decide_inbox_candidate(&shared_cid, true)
+            .await
+            .unwrap();
+        let alice_only_cid = alice_engine
+            .stage_memory(
+                StageMemoryRequest::new("Alice pending rule.", VaultTier::Warm)
+                    .with_scope("engineering")
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        fs::write(
+            alice_dir.join("Arch.md"),
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Engine\nAlice updated architecture rule.\n",
+        )
+        .unwrap();
+        run_git_ok(&alice_dir, &["add", "Arch.md", "Aether/"]);
+        run_git_ok(&alice_dir, &["commit", "-m", "alice updates"]);
+        run_git_ok(&alice_dir, &["push", "origin", "main"]);
+
+        // Bob stages another candidate and edits Arch.md differently, creating conflicts on both.
+        let bob_only_cid = bob_engine
+            .stage_memory(
+                StageMemoryRequest::new("Bob pending rule.", VaultTier::Warm)
+                    .with_scope("engineering")
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        fs::write(
+            bob_dir.join("Arch.md"),
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Engine\nBob updated architecture rule.\n",
+        )
+        .unwrap();
+        run_git_ok(&bob_dir, &["add", "Arch.md", "Aether/"]);
+        run_git_ok(&bob_dir, &["commit", "-m", "bob updates"]);
+
+        let report = bob_engine
+            .git_sync(GitSyncOptions::new().with_push(false))
+            .await
+            .unwrap();
+
+        assert!(!report.merged_cleanly);
+        assert!(report.aether_conflicts_resolved >= 1);
+        assert_eq!(
+            report.conflicted_files,
+            vec![VaultPath::parse("Arch.md").unwrap()]
+        );
+        assert!(!report.pushed);
+
+        // .gitignore must exclude .aether/ and never stage sqlite files.
+        let gitignore = fs::read_to_string(bob_dir.join(".gitignore")).unwrap();
+        assert!(gitignore.contains(".aether/"));
+
+        // Approved shared_cid must win the monotonic lattice and both pending items remain.
+        let approved_md = fs::read_to_string(bob_dir.join("Aether/Compiled/Approved.md")).unwrap();
+        assert!(approved_md.contains(shared_cid.as_str()));
+        let inbox_md = fs::read_to_string(bob_dir.join("Aether/Inbox.md")).unwrap();
+        assert!(!inbox_md.contains(shared_cid.as_str()));
+        assert!(inbox_md.contains(alice_only_cid.as_str()));
+        assert!(inbox_md.contains(bob_only_cid.as_str()));
+
+        // SQLite retains Bob's last valid AMU for conflicted Arch.md (does not drop or index `<<<<<<<`).
+        let recalled = bob_engine
+            .recall(RecallRequest::new(
+                "Original clean architecture rule Shared WAL",
+            ))
+            .await
+            .unwrap();
+        assert!(recalled.formatted_context.contains("Shared WAL rule."));
+        assert!(recalled
+            .formatted_context
+            .contains("Original clean architecture rule."));
+        assert!(!recalled.formatted_context.contains("<<<<<<<"));
+
+        alice_engine.shutdown().await.unwrap();
+        bob_engine.shutdown().await.unwrap();
+        let _ = fs::remove_dir_all(&base_dir);
     }
 }

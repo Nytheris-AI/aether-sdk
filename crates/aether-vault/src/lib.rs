@@ -4,6 +4,7 @@ mod auth;
 mod dream;
 mod embedder;
 mod engine;
+mod git;
 mod http;
 mod inbox;
 mod mcp;
@@ -17,12 +18,12 @@ pub use auth::{
     AgentId, AgentRole, ApiKeySecret, AuthError, IssueApiKeyRequest, IssuedApiKey, KeyId,
     ScopedApiKey,
 };
-
 pub use embedder::{
     ComputeDevice, DenseSubwordEmbedder, Embedder, GpuEmbedderConfig, HashedNgramEmbedder,
     LocalGpuEmbedder, DEFAULT_DENSE_EMBED_DIM, DEFAULT_EMBED_DIM,
 };
 pub use engine::VaultEngine;
+pub use git::{GitSyncOptions, GitSyncReport};
 pub use http::ControlPlaneServer;
 pub use mcp::McpServer;
 pub use reranker::{CrossEncoderReranker, NoopReranker, Reranker, DEFAULT_RERANK_TOP_K};

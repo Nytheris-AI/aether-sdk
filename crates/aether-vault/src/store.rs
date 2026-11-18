@@ -399,18 +399,32 @@ impl VaultStore {
     }
 
     pub(crate) async fn list_pending_candidates(&self) -> Result<Vec<InboxEntry>> {
-        self.with_conn(|conn| {
+        self.list_candidates_by_status("pending", InboxCheckbox::Pending)
+            .await
+    }
+
+    pub(crate) async fn list_rejected_candidates(&self) -> Result<Vec<InboxEntry>> {
+        self.list_candidates_by_status("rejected", InboxCheckbox::Rejected)
+            .await
+    }
+
+    async fn list_candidates_by_status(
+        &self,
+        status: &'static str,
+        checkbox: InboxCheckbox,
+    ) -> Result<Vec<InboxEntry>> {
+        self.with_conn(move |conn| {
             let mut stmt = conn
                 .prepare(
                     "SELECT candidate_id, tier, scope, proposed_fact, target_link,
                             proposed_by, proposed_date, supersedes_amu_id
                      FROM staged_candidates
-                     WHERE status = 'pending'
+                     WHERE status = ?1
                      ORDER BY rowid ASC",
                 )
                 .map_err(map_sqlite_err)?;
             let rows = stmt
-                .query_map([], |row| {
+                .query_map(params![status], |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
@@ -432,7 +446,7 @@ impl VaultStore {
                     continue;
                 };
                 out.push(InboxEntry {
-                    checkbox: InboxCheckbox::Pending,
+                    checkbox,
                     tier: VaultTier::parse_str(&tier).unwrap_or_default(),
                     scope: ScopeTag::new(scope).unwrap_or_default(),
                     proposed_fact: fact,
@@ -444,6 +458,136 @@ impl VaultStore {
                 });
             }
             Ok(out)
+        })
+        .await
+    }
+
+    pub(crate) async fn apply_lattice_state(
+        &self,
+        pending: &[InboxEntry],
+        approved: &[(InboxEntry, Amu, Vec<f32>)],
+        rejected: &[InboxEntry],
+    ) -> Result<()> {
+        let pending = pending.to_vec();
+        let approved = approved.to_vec();
+        let rejected = rejected.to_vec();
+
+        self.with_conn(move |conn| {
+            let tx = conn
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(map_sqlite_err)?;
+
+            for (entry, amu, emb) in &approved {
+                let cid = entry.candidate_id.as_str();
+                let amu_id_str = amu.amu_id.to_string();
+                let existing_compiled: Option<(String, Option<String>)> = tx
+                    .query_row(
+                        "SELECT status, compiled_amu_id FROM staged_candidates WHERE candidate_id = ?1",
+                        params![cid],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()
+                    .map_err(map_sqlite_err)?;
+                let already_compiled = existing_compiled
+                    .as_ref()
+                    .is_some_and(|(st, aid)| st == "approved" && aid.as_deref() == Some(amu_id_str.as_str()));
+
+                if !already_compiled {
+                    let rel_path = amu.source_pointer.relative_path().to_string();
+                    tx.execute(
+                        "DELETE FROM amus_fts WHERE amu_id = ?1",
+                        params![amu_id_str],
+                    )
+                    .map_err(map_sqlite_err)?;
+                    tx.execute(
+                        "DELETE FROM amus WHERE amu_id = ?1",
+                        params![amu_id_str],
+                    )
+                    .map_err(map_sqlite_err)?;
+                    insert_amu_tx(&tx, &rel_path, amu, emb).map_err(map_sqlite_err)?;
+                    if let Some(old_id) = entry.supersedes_amu_id {
+                        supersede_amu_tx(&tx, old_id, amu.amu_id, amu.valid_from)
+                            .map_err(map_sqlite_err)?;
+                    }
+                }
+
+                tx.execute(
+                    "INSERT INTO staged_candidates (
+                         candidate_id, tier, scope, proposed_fact, target_link,
+                         proposed_by, proposed_date, supersedes_amu_id, status, compiled_amu_id
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'approved', ?9)
+                     ON CONFLICT(candidate_id) DO UPDATE SET
+                         tier = excluded.tier,
+                         scope = excluded.scope,
+                         proposed_fact = excluded.proposed_fact,
+                         target_link = COALESCE(excluded.target_link, staged_candidates.target_link),
+                         proposed_by = excluded.proposed_by,
+                         proposed_date = excluded.proposed_date,
+                         supersedes_amu_id = COALESCE(excluded.supersedes_amu_id, staged_candidates.supersedes_amu_id),
+                         status = 'approved',
+                         compiled_amu_id = excluded.compiled_amu_id",
+                    params![
+                        cid,
+                        entry.tier.as_str(),
+                        entry.scope.as_str(),
+                        entry.proposed_fact,
+                        entry.target_link,
+                        entry.proposed_by,
+                        entry.proposed_date,
+                        entry.supersedes_amu_id.map(|id| id.to_string()),
+                        amu_id_str,
+                    ],
+                )
+                .map_err(map_sqlite_err)?;
+            }
+
+            for entry in &rejected {
+                tx.execute(
+                    "INSERT INTO staged_candidates (
+                         candidate_id, tier, scope, proposed_fact, target_link,
+                         proposed_by, proposed_date, supersedes_amu_id, status, compiled_amu_id
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'rejected', NULL)
+                     ON CONFLICT(candidate_id) DO UPDATE SET
+                         status = CASE
+                             WHEN staged_candidates.status = 'approved' THEN 'approved'
+                             ELSE 'rejected'
+                         END",
+                    params![
+                        entry.candidate_id.as_str(),
+                        entry.tier.as_str(),
+                        entry.scope.as_str(),
+                        entry.proposed_fact,
+                        entry.target_link,
+                        entry.proposed_by,
+                        entry.proposed_date,
+                        entry.supersedes_amu_id.map(|id| id.to_string()),
+                    ],
+                )
+                .map_err(map_sqlite_err)?;
+            }
+
+            for entry in &pending {
+                tx.execute(
+                    "INSERT OR IGNORE INTO staged_candidates (
+                         candidate_id, tier, scope, proposed_fact, target_link,
+                         proposed_by, proposed_date, supersedes_amu_id, status, compiled_amu_id
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending', NULL)",
+                    params![
+                        entry.candidate_id.as_str(),
+                        entry.tier.as_str(),
+                        entry.scope.as_str(),
+                        entry.proposed_fact,
+                        entry.target_link,
+                        entry.proposed_by,
+                        entry.proposed_date,
+                        entry.supersedes_amu_id.map(|id| id.to_string()),
+                    ],
+                )
+                .map_err(map_sqlite_err)?;
+            }
+
+            tx.commit().map_err(map_sqlite_err)?;
+            Ok(())
         })
         .await
     }
