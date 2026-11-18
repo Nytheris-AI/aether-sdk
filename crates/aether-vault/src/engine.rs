@@ -13,11 +13,11 @@ use tokio::sync::{watch, Mutex as AsyncMutex};
 use tokio::task::JoinHandle;
 use walkdir::WalkDir;
 
+use crate::embedder::{embed_amu_text, Embedder, HashedNgramEmbedder};
 use crate::inbox::{self, APPROVED_MIRROR_REL_PATH, INBOX_REL_PATH};
-use crate::parser::{
-    self, embed_amu_text, Embedder, HashedNgramEmbedder, IgnoreRules, ParsedNote, ParsedSection,
-};
+use crate::parser::{self, IgnoreRules, ParsedNote, ParsedSection};
 use crate::prefix;
+use crate::reranker::{CrossEncoderReranker, Reranker};
 use crate::store::{to_memory_item, VaultStore};
 use crate::types::{
     Amu, AmuId, AmuKind, AmuStatus, CandidateId, ContentHash, InboxCheckbox, InboxEntry,
@@ -32,6 +32,7 @@ pub struct VaultEngine {
     config: VaultConfig,
     store: VaultStore,
     embedder: Arc<dyn Embedder>,
+    reranker: Arc<dyn Reranker>,
     write_gate: Arc<AsyncMutex<()>>,
     shutdown_tx: watch::Sender<bool>,
     watcher_handle: Mutex<Option<JoinHandle<()>>>,
@@ -54,9 +55,14 @@ impl VaultEngine {
             .embedder_override
             .clone()
             .unwrap_or_else(|| Arc::new(HashedNgramEmbedder::default()));
+        let reranker: Arc<dyn Reranker> = config
+            .reranker_override
+            .clone()
+            .unwrap_or_else(|| Arc::new(CrossEncoderReranker::default()));
         tracing::debug!(
             embedder_id = embedder.id(),
             embed_dims = embedder.dimensions(),
+            reranker_id = reranker.id(),
             "initialized vault engine"
         );
         let engine = Self {
@@ -64,6 +70,7 @@ impl VaultEngine {
             config,
             store,
             embedder,
+            reranker,
             write_gate: Arc::new(AsyncMutex::new(())),
             shutdown_tx,
             watcher_handle: Mutex::new(None),
@@ -455,6 +462,7 @@ impl VaultEngine {
                 .total_cmp(&a.score)
                 .then_with(|| a.amu.amu_id.cmp(&b.amu.amu_id))
         });
+        self.reranker.rerank(query_trimmed, &mut ranked_entries);
 
         Ok(prefix::format_recall_response(
             bundle.hot_amus,
@@ -1059,10 +1067,9 @@ mod tests {
         engine256.shutdown().await.unwrap();
 
         let embedder384: Arc<dyn Embedder> = Arc::new(HashedNgramEmbedder::with_dimensions(384));
-        let engine384 =
-            VaultEngine::open(VaultConfig::new(&vault.root).with_test_embedder(embedder384))
-                .await
-                .unwrap();
+        let engine384 = VaultEngine::open(VaultConfig::new(&vault.root).with_embedder(embedder384))
+            .await
+            .unwrap();
         let meta384 = engine384.vault_meta().await.unwrap().unwrap();
         assert_eq!(meta384.embedder_id, "hashed-ngram-384-v1");
         assert_eq!(meta384.embedding_dim, 384);
@@ -1106,7 +1113,7 @@ mod tests {
         let engine384 = VaultEngine::open(
             VaultConfig::new(&vault.root)
                 .with_sync_reindex_threshold(1)
-                .with_test_embedder(embedder384),
+                .with_embedder(embedder384),
         )
         .await
         .unwrap();
@@ -1128,6 +1135,44 @@ mod tests {
         assert_eq!(
             engine384.store.active_embedding_dim().await.unwrap(),
             Some(384)
+        );
+
+        engine384.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dense_subword_embedder_auto_reindexes_and_reranker_scores_accurately() {
+        use crate::embedder::DenseSubwordEmbedder;
+
+        let vault = TempVault::new();
+        vault.write(
+            "Specs/General.md",
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# General\nPrefix notes and cache comments.\n",
+        );
+        vault.write(
+            "Specs/Cache.md",
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Prefix Cache\nPrefix cache canonicalization removes volatile timestamps.\n",
+        );
+
+        let engine256 = VaultEngine::open(VaultConfig::new(&vault.root))
+            .await
+            .unwrap();
+        engine256.shutdown().await.unwrap();
+
+        let dense: Arc<dyn Embedder> = Arc::new(DenseSubwordEmbedder::default());
+        let engine384 = VaultEngine::open(VaultConfig::new(&vault.root).with_embedder(dense))
+            .await
+            .unwrap();
+        let meta = engine384.vault_meta().await.unwrap().unwrap();
+        assert_eq!(meta.embedder_id, "dense-subword-384-v1");
+        assert_eq!(meta.embedding_dim, 384);
+
+        let mut req = RecallRequest::new("prefix cache");
+        req.scope = Some(ScopeTag::new("engineering").unwrap());
+        let resp = engine384.recall(req).await.unwrap();
+        assert_eq!(
+            resp.warm_cold_amus[0].source_pointer.as_str(),
+            "Specs/Cache.md#Prefix-Cache"
         );
 
         engine384.shutdown().await.unwrap();

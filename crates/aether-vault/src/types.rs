@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::parser::Embedder;
+use crate::embedder::Embedder;
+use crate::reranker::Reranker;
 
 /// Hard token ceiling for the byte-stable static `HOT` prefix block.
 pub const HOT_PROFILE_MAX_TOKENS: usize = 2000;
@@ -589,6 +590,7 @@ pub struct VaultConfig {
     pub hot_budget: TokenBudget,
     pub sync_reindex_threshold: usize,
     pub(crate) embedder_override: Option<Arc<dyn Embedder>>,
+    pub(crate) reranker_override: Option<Arc<dyn Reranker>>,
 }
 
 impl fmt::Debug for VaultConfig {
@@ -603,6 +605,10 @@ impl fmt::Debug for VaultConfig {
             .field(
                 "embedder_id",
                 &self.embedder_override.as_ref().map(|e| e.id()),
+            )
+            .field(
+                "reranker_id",
+                &self.reranker_override.as_ref().map(|r| r.id()),
             )
             .finish()
     }
@@ -620,6 +626,7 @@ impl VaultConfig {
             hot_budget: TokenBudget(HOT_PROFILE_MAX_TOKENS),
             sync_reindex_threshold: DEFAULT_SYNC_REINDEX_THRESHOLD,
             embedder_override: None,
+            reranker_override: None,
         }
     }
 
@@ -650,9 +657,13 @@ impl VaultConfig {
         self
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_test_embedder(mut self, embedder: Arc<dyn Embedder>) -> Self {
+    pub fn with_embedder(mut self, embedder: Arc<dyn Embedder>) -> Self {
         self.embedder_override = Some(embedder);
+        self
+    }
+
+    pub fn with_reranker(mut self, reranker: Arc<dyn Reranker>) -> Self {
+        self.reranker_override = Some(reranker);
         self
     }
 }

@@ -11,7 +11,8 @@ use rusqlite::{
     params, Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior,
 };
 
-use crate::parser::{embed_amu_text, Embedder, ParsedSection};
+use crate::embedder::{embed_amu_text, Embedder};
+use crate::parser::ParsedSection;
 use crate::types::{
     Amu, AmuId, AmuKind, AmuStatus, ApprovedMirrorEntry, CandidateId, ContentHash, DbTarget,
     InboxCheckbox, InboxEntry, ScopeTag, SourcePointer, VaultMeta, VaultPath, VaultTier,

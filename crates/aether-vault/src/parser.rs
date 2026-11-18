@@ -3,13 +3,11 @@ use std::path::Path;
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use nytheris_aether_core::{AetherError, Result};
-use sha2::{Digest, Sha256};
 
+use crate::embedder::{embed_amu_text, Embedder};
 use crate::types::{
     Amu, AmuId, AmuKind, AmuStatus, ContentHash, ScopeTag, SourcePointer, VaultPath, VaultTier,
 };
-
-pub(crate) const DEFAULT_EMBED_DIM: usize = 256;
 
 const BUILTIN_IGNORED_DIRS: &[&str] = &[".obsidian", ".git", ".trash", ".aether"];
 const BUILTIN_IGNORED_PREFIXES: &[&str] = &["aether/inbox.md", "aether/compiled"];
@@ -32,80 +30,6 @@ pub(crate) struct ParsedSection {
     pub(crate) amu: Amu,
     pub(crate) verbatim_section: String,
     pub(crate) embedding: Vec<f32>,
-}
-
-/// Pluggable local embedding seam (Milestone 1 uses `HashedNgramEmbedder`).
-pub(crate) trait Embedder: Send + Sync {
-    fn id(&self) -> &str;
-    fn dimensions(&self) -> usize;
-    fn embed(&self, text: &str) -> Vec<f32>;
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct HashedNgramEmbedder {
-    id: String,
-    dims: usize,
-}
-
-impl HashedNgramEmbedder {
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn with_dimensions(dims: usize) -> Self {
-        Self {
-            id: format!("hashed-ngram-{dims}-v1"),
-            dims,
-        }
-    }
-}
-
-impl Default for HashedNgramEmbedder {
-    fn default() -> Self {
-        Self::with_dimensions(DEFAULT_EMBED_DIM)
-    }
-}
-
-impl Embedder for HashedNgramEmbedder {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn dimensions(&self) -> usize {
-        self.dims
-    }
-
-    fn embed(&self, text: &str) -> Vec<f32> {
-        if self.dims == 0 {
-            return Vec::new();
-        }
-        let mut vec = vec![0.0f32; self.dims];
-        let lower = text.to_ascii_lowercase();
-        for token in lower.split(|c: char| !c.is_alphanumeric()) {
-            if token.is_empty() {
-                continue;
-            }
-            add_hashed_feature(&mut vec, token.as_bytes(), 2.0);
-            let bytes = token.as_bytes();
-            if bytes.len() >= 3 {
-                for gram in bytes.windows(3) {
-                    add_hashed_feature(&mut vec, gram, 1.0);
-                }
-            }
-        }
-        let norm = vec.iter().map(|v| v * v).sum::<f32>().sqrt();
-        if norm > 0.0 {
-            for val in &mut vec {
-                *val /= norm;
-            }
-        }
-        vec
-    }
-}
-
-fn add_hashed_feature(vec: &mut [f32], feature: &[u8], weight: f32) {
-    let digest: [u8; 32] = Sha256::digest(feature).into();
-    let idx =
-        u64::from_le_bytes(digest[..8].try_into().expect("8-byte slice")) as usize % vec.len();
-    let sign = if digest[8] & 1 == 0 { 1.0 } else { -1.0 };
-    vec[idx] += sign * weight;
 }
 
 /// Canonical `.aetherignore` plus built-in exclusion evaluator.
@@ -900,10 +824,6 @@ fn distill_section(heading_path: &str, verbatim: &str) -> String {
     truncate_chars(&joined, 400)
 }
 
-pub(crate) fn embed_amu_text(heading_path: &str, distilled_fact: &str) -> String {
-    format!("{heading_path}\n{distilled_fact}")
-}
-
 fn truncate_chars(text: &str, max_chars: usize) -> String {
     let count = text.chars().count();
     if count <= max_chars {
@@ -916,6 +836,7 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::embedder::{HashedNgramEmbedder, DEFAULT_EMBED_DIM};
 
     #[test]
     fn ignore_rules_filter_builtin_and_aetherignore_entries() {
