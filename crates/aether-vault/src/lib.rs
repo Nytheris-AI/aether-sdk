@@ -1,5 +1,7 @@
 //! Obsidian-native memory compiler, hybrid recall engine, and stdio MCP server for Project Aether.
 
+#[allow(dead_code)]
+mod parser;
 mod types;
 
 pub use types::{
