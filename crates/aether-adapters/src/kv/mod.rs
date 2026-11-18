@@ -1,4 +1,4 @@
-//! L2 working-memory / `RecordStore` connectors.
+//! Authoritative `RecordStore` connectors.
 
 #[cfg(feature = "redis")]
 pub mod redis;

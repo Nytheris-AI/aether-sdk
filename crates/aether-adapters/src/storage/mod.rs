@@ -1,4 +1,4 @@
-//! L3 durable vector and graph storage connectors.
+//! Derived vector and graph storage connectors.
 
 #[cfg(any(
     feature = "turbopuffer",

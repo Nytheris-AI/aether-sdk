@@ -1,4 +1,4 @@
-//! Core domain contracts, DTOs, errors, and inbound/outbound traits for Aether SDK.
+//! Core domain contracts, DTOs, errors, and storage traits for Aether SDK.
 
 use std::fmt;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use serde_json::Value;
 use thiserror::Error;
 use uuid::Uuid;
 
-/// Unified error type across the Aether gateway and outbound storage connectors.
+/// Unified error type across Aether SDK and outbound storage connectors.
 #[derive(Debug, Error)]
 pub enum AetherError {
     #[error("not implemented: {0}")]
@@ -441,7 +441,7 @@ pub struct Relation {
     pub invalid_at: Option<DateTime<Utc>>,
 }
 
-/// Caller-constructed inbound memory payload validated at the gateway boundary.
+/// Caller-constructed memory payload validated at the SDK boundary.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MemoryInput {
     pub project_id: ProjectId,

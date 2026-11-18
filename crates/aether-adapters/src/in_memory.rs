@@ -1,4 +1,4 @@
-//! In-memory `VectorStore` + `petgraph` `GraphStore` for `cargo test` and local dry-runs.
+//! In-memory `RecordStore`, `VectorStore`, and `petgraph` `GraphStore` for local execution and tests.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
