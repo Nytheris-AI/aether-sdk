@@ -3,13 +3,11 @@ use std::path::Path;
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use nytheris_aether_core::{AetherError, Result};
-use sha2::{Digest, Sha256};
 
+use crate::embedder::{embed_amu_text, Embedder};
 use crate::types::{
     Amu, AmuId, AmuKind, AmuStatus, ContentHash, ScopeTag, SourcePointer, VaultPath, VaultTier,
 };
-
-pub(crate) const DEFAULT_EMBED_DIM: usize = 256;
 
 const BUILTIN_IGNORED_DIRS: &[&str] = &[".obsidian", ".git", ".trash", ".aether"];
 const BUILTIN_IGNORED_PREFIXES: &[&str] = &["aether/inbox.md", "aether/compiled"];
@@ -32,66 +30,6 @@ pub(crate) struct ParsedSection {
     pub(crate) amu: Amu,
     pub(crate) verbatim_section: String,
     pub(crate) embedding: Vec<f32>,
-}
-
-/// Pluggable local embedding seam (Milestone 1 uses `HashedNgramEmbedder`).
-pub(crate) trait Embedder: Send + Sync {
-    fn dimensions(&self) -> usize;
-    fn embed(&self, text: &str) -> Vec<f32>;
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct HashedNgramEmbedder {
-    dims: usize,
-}
-
-impl Default for HashedNgramEmbedder {
-    fn default() -> Self {
-        Self {
-            dims: DEFAULT_EMBED_DIM,
-        }
-    }
-}
-
-impl Embedder for HashedNgramEmbedder {
-    fn dimensions(&self) -> usize {
-        self.dims
-    }
-
-    fn embed(&self, text: &str) -> Vec<f32> {
-        if self.dims == 0 {
-            return Vec::new();
-        }
-        let mut vec = vec![0.0f32; self.dims];
-        let lower = text.to_ascii_lowercase();
-        for token in lower.split(|c: char| !c.is_alphanumeric()) {
-            if token.is_empty() {
-                continue;
-            }
-            add_hashed_feature(&mut vec, token.as_bytes(), 2.0);
-            let bytes = token.as_bytes();
-            if bytes.len() >= 3 {
-                for gram in bytes.windows(3) {
-                    add_hashed_feature(&mut vec, gram, 1.0);
-                }
-            }
-        }
-        let norm = vec.iter().map(|v| v * v).sum::<f32>().sqrt();
-        if norm > 0.0 {
-            for val in &mut vec {
-                *val /= norm;
-            }
-        }
-        vec
-    }
-}
-
-fn add_hashed_feature(vec: &mut [f32], feature: &[u8], weight: f32) {
-    let digest: [u8; 32] = Sha256::digest(feature).into();
-    let idx =
-        u64::from_le_bytes(digest[..8].try_into().expect("8-byte slice")) as usize % vec.len();
-    let sign = if digest[8] & 1 == 0 { 1.0 } else { -1.0 };
-    vec[idx] += sign * weight;
 }
 
 /// Canonical `.aetherignore` plus built-in exclusion evaluator.
@@ -127,6 +65,29 @@ impl IgnoreRules {
         }
         let lower = rel.to_ascii_lowercase();
 
+        if BUILTIN_IGNORED_PREFIXES
+            .iter()
+            .any(|prefix| path_matches_prefix(&lower, prefix))
+        {
+            return true;
+        }
+
+        self.matches_user_patterns_or_dirs_or_exts(&rel, &lower)
+    }
+
+    pub(crate) fn is_ignored_for_inspect(&self, relative_path: &str) -> bool {
+        let rel = normalize_rel_path(relative_path);
+        if rel.is_empty() {
+            return true;
+        }
+        if rel.eq_ignore_ascii_case(crate::inbox::APPROVED_MIRROR_REL_PATH) {
+            let lower = rel.to_ascii_lowercase();
+            return self.matches_user_patterns_or_dirs_or_exts(&rel, &lower);
+        }
+        self.is_ignored(&rel)
+    }
+
+    fn matches_user_patterns_or_dirs_or_exts(&self, rel: &str, lower: &str) -> bool {
         if BUILTIN_IGNORED_EXTENSIONS
             .iter()
             .any(|ext| lower.ends_with(ext))
@@ -141,16 +102,9 @@ impl IgnoreRules {
             return true;
         }
 
-        if BUILTIN_IGNORED_PREFIXES
-            .iter()
-            .any(|prefix| path_matches_prefix(&lower, prefix))
-        {
-            return true;
-        }
-
         self.patterns
             .iter()
-            .any(|pat| matches_ignore_pattern(&rel, pat))
+            .any(|pat| matches_ignore_pattern(rel, pat))
     }
 }
 
@@ -239,6 +193,38 @@ pub(crate) fn slugify_heading(heading: &str) -> String {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct NoteFrontmatterHint {
+    pub(crate) is_private: bool,
+    pub(crate) is_fleeting: bool,
+    pub(crate) scope: ScopeTag,
+}
+
+/// Inspects frontmatter without indexing and returns visibility, fleeting flag, primary scope, and body.
+pub(crate) fn inspect_note_frontmatter<'a>(
+    rel_path: &str,
+    raw_markdown: &'a str,
+) -> (NoteFrontmatterHint, &'a str) {
+    let (fm_text, body) = split_frontmatter(raw_markdown);
+    let fm = match fm_text {
+        Some(raw) => parse_frontmatter(raw, rel_path, Utc::now()),
+        None => Frontmatter::default_for_path(rel_path, Utc::now()),
+    };
+    let scope = fm
+        .scopes
+        .into_iter()
+        .next()
+        .unwrap_or_else(ScopeTag::global);
+    (
+        NoteFrontmatterHint {
+            is_private: fm.tier == RawFrontmatterTier::Private,
+            is_fleeting: fm.kind == AmuKind::Fleeting,
+            scope,
+        },
+        body,
+    )
+}
+
 /// Inspects frontmatter alone and returns `true` when `aether_tier: private` is declared.
 pub(crate) fn is_private_note(raw_markdown: &str) -> bool {
     let (fm_text, _) = split_frontmatter(raw_markdown);
@@ -320,7 +306,7 @@ pub(crate) fn parse_note(
         let graph_edges = extract_graph_edges(&verbatim, &note_tags);
         let authority_weight = compute_authority_weight(fm.kind, &verbatim);
         let distilled_fact = distill_section(&heading_path, &verbatim);
-        let embed_input = format!("{heading_path}\n{distilled_fact}");
+        let embed_input = embed_amu_text(&heading_path, &distilled_fact);
         let embedding = embedder.embed(&embed_input);
         let content_hash = ContentHash::compute(verbatim.as_bytes());
 
@@ -674,7 +660,7 @@ fn split_body_sections(body: &str) -> Vec<RawSection> {
     sections
 }
 
-fn detect_opening_fence(trimmed: &str) -> Option<(u8, usize)> {
+pub(crate) fn detect_opening_fence(trimmed: &str) -> Option<(u8, usize)> {
     let first = *trimmed.as_bytes().first()?;
     if first != b'`' && first != b'~' {
         return None;
@@ -687,12 +673,12 @@ fn detect_opening_fence(trimmed: &str) -> Option<(u8, usize)> {
     }
 }
 
-fn is_closing_fence(trimmed: &str, fchar: u8, min_len: usize) -> bool {
+pub(crate) fn is_closing_fence(trimmed: &str, fchar: u8, min_len: usize) -> bool {
     let count = trimmed.bytes().take_while(|&b| b == fchar).count();
     count >= min_len && trimmed[count..].trim().is_empty()
 }
 
-fn parse_atx_heading(trimmed: &str) -> Option<(u8, &str)> {
+pub(crate) fn parse_atx_heading(trimmed: &str) -> Option<(u8, &str)> {
     let hashes = trimmed.bytes().take_while(|&b| b == b'#').count();
     if !(1..=6).contains(&hashes) {
         return None;
@@ -882,6 +868,7 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::embedder::{HashedNgramEmbedder, DEFAULT_EMBED_DIM};
 
     #[test]
     fn ignore_rules_filter_builtin_and_aetherignore_entries() {

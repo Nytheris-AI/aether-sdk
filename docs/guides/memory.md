@@ -44,9 +44,9 @@ Aether treats the **`RecordStore`** as the durable source of truth and keeps **`
 
 ### Vault Tiers (`VaultTier`) & Privacy Boundary
 
-- **`Hot`** (`aether_tier: hot`): Packed into the static `[AETHER_HOT_PROFILE]` prefix block sorted deterministically by `amu_id` ascending within `HOT_PROFILE_MAX_TOKENS` (`2000`), with no volatile timestamps so `prefix_hash` stays stable across turns.
-- **`Warm`** *(default)* (`aether_tier: warm`) and **`Cold`** (`aether_tier: cold`): Ranked dynamically per query by fusing SQLite FTS5 BM25, 256-dim signed trigram cosine similarity, and wikilink/tag `PersonalizedPageRank` (`graph_scores`) via `recall::rrf`, scaled by `authority_weight` and packed into `[AETHER_RECALL_CONTEXT]` within `max_tokens` (default `1500`).
-- **`private`** (`aether_tier: private`): Exists only during parsing (`RawFrontmatterTier`) and cannot be constructed in `VaultTier`. Private notes are removed from SQLite if previously indexed, omitted from `recall`, and rejected by `inspect_source`.
+- **`Hot`** (`aether_tier: hot`): Packed into the static `[AETHER_HOT_PROFILE]` prefix block (`static_prefix` / `hot_prefix`) sorted deterministically by `amu_id` ascending within `HOT_PROFILE_MAX_TOKENS` (`2000`), with no volatile timestamps so `prefix_hash` stays stable across turns.
+- **`Warm`** *(default)* (`aether_tier: warm`) and **`Cold`** (`aether_tier: cold`): Ranked dynamically per query by fusing SQLite FTS5 BM25, cosine vector similarity (`HashedNgramEmbedder`, `DenseSubwordEmbedder`, or `LocalGpuEmbedder`), and wikilink/tag `PersonalizedPageRank` (`graph_scores`) via `recall::rrf`, scaled by `authority_weight`, reranked over the top `30` RRF entries by `CrossEncoderReranker`, and packed into `[AETHER_RECALL_CONTEXT]` (`dynamic_context`) within `max_tokens` (default `1500`).
+- **`private`** (`aether_tier: private`): Exists only during parsing (`RawFrontmatterTier`) and cannot be constructed in `VaultTier`. Private notes are removed from SQLite if previously indexed, omitted from `recall` and Dream consolidation, and rejected by `inspect_source`.
 
 ### Scopes, Kinds, Statuses, and Provenance
 
@@ -54,7 +54,11 @@ Aether treats the **`RecordStore`** as the durable source of truth and keeps **`
 - **`AmuKind` & `AmuStatus`**: Notes carry `AmuKind` (`Profile`, `Rule`, `Decision`, `Spec` *(default)*, or `Fleeting` *(default under `Daily/` or `Journal/`)*) and `AmuStatus` (`Active` *(default)*, `Superseded`, `Archived`).
 - **`SourcePointer` & `AmuId`**: Normalized vault-relative POSIX paths (`Arch/DB.md#Schema`, or `#_preamble` for text before the first ATX heading) map deterministically via SHA-256 to `AmuId` (`amu_<32-hex>`), which converts bijectively to `nytheris_aether_core::MemoryId`.
 
-### Human-in-the-Loop Inbox (`Aether/Inbox.md`)
+### Human-in-the-Loop Inbox (`Aether/Inbox.md`) & Compiled Mirror (`Aether/Compiled/Approved.md`)
 
-- `VaultEngine::stage_memory` writes pending `- [ ] **[TIER | scope]** ...` entries atomically (`temp` file, `sync_all`, `rename`) to `Aether/Inbox.md` and records the file hash in `self_write_ledger` so polling skips daemon-originated writes.
-- Marking an entry `[x]` in Obsidian compiles it into an active AMU on the next `reconcile_inbox` or `sync_vault` pass and marks any `supersedes_amu_id` target as `Superseded`. Marking `[-]` or deleting the entry rejects it.
+- `VaultEngine::stage_memory` and `VaultEngine::run_dream_pass` write pending `- [ ] **[TIER | scope]** ...` entries atomically (`temp` file, `sync_all`, `rename`) to `Aether/Inbox.md` and record the file hash in `self_write_ledger` so polling skips daemon-originated writes.
+- Marking an entry `[x]` in Obsidian (or calling `VaultEngine::decide_inbox_candidate` / `POST /v1/inbox/decide`) compiles it into an active AMU, materializes its `## cand_<id>` section in `Aether/Compiled/Approved.md` so `aether_inspect_source` resolves its `SourcePointer`, and marks any `supersedes_amu_id` target as `Superseded`. Marking `[-]` rejects it.
+
+### Embedder Schema Tracking (`vault_meta`)
+
+- `vault_meta` tracks `(schema_version, embedder_id, embedding_dim, updated_at)`. Switching embedders or dimensions on `VaultEngine::open` re-embeds active AMUs synchronously in one `IMMEDIATE` transaction when active count `<= sync_reindex_threshold` (`5000`), or populates `amus_shadow_embeddings` asynchronously and swaps atomically above threshold while keeping FTS5 + graph recall online.

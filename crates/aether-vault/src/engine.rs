@@ -13,14 +13,18 @@ use tokio::sync::{watch, Mutex as AsyncMutex};
 use tokio::task::JoinHandle;
 use walkdir::WalkDir;
 
-use crate::inbox::{self, INBOX_REL_PATH};
-use crate::parser::{self, Embedder, HashedNgramEmbedder, IgnoreRules, ParsedNote, ParsedSection};
+use crate::dream;
+use crate::embedder::{embed_amu_text, Embedder, HashedNgramEmbedder};
+use crate::inbox::{self, APPROVED_MIRROR_REL_PATH, INBOX_REL_PATH};
+use crate::parser::{self, IgnoreRules, ParsedNote, ParsedSection};
 use crate::prefix;
+use crate::reranker::{CrossEncoderReranker, Reranker};
 use crate::store::{to_memory_item, VaultStore};
 use crate::types::{
-    Amu, AmuId, AmuKind, AmuStatus, CandidateId, ContentHash, InboxCheckbox, InboxEntry,
-    InboxReconcileReport, RecallEntry, RecallRequest, RecallResponse, SourcePointer,
-    StageMemoryRequest, SyncReport, VaultConfig, VaultPath,
+    Amu, AmuId, AmuKind, AmuStatus, CandidateId, ContentHash, DreamReport, InboxCheckbox,
+    InboxEntry, InboxReconcileReport, RecallEntry, RecallRequest, RecallResponse, SourcePointer,
+    StageMemoryRequest, SyncReport, VaultConfig, VaultMeta, VaultPath, VaultStatusReport,
+    VAULT_SCHEMA_VERSION,
 };
 
 /// Single-owner orchestrator for Obsidian vault compilation, hybrid recall,
@@ -30,9 +34,11 @@ pub struct VaultEngine {
     config: VaultConfig,
     store: VaultStore,
     embedder: Arc<dyn Embedder>,
+    reranker: Arc<dyn Reranker>,
     write_gate: Arc<AsyncMutex<()>>,
     shutdown_tx: watch::Sender<bool>,
     watcher_handle: Mutex<Option<JoinHandle<()>>>,
+    reindex_handle: Mutex<Option<JoinHandle<Result<usize>>>>,
 }
 
 impl VaultEngine {
@@ -47,9 +53,18 @@ impl VaultEngine {
         let store = VaultStore::open(config.db_target.clone(), config.project_id.clone()).await?;
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-        let embedder: Arc<dyn Embedder> = Arc::new(HashedNgramEmbedder::default());
+        let embedder: Arc<dyn Embedder> = config
+            .embedder_override
+            .clone()
+            .unwrap_or_else(|| Arc::new(HashedNgramEmbedder::default()));
+        let reranker: Arc<dyn Reranker> = config
+            .reranker_override
+            .clone()
+            .unwrap_or_else(|| Arc::new(CrossEncoderReranker::default()));
         tracing::debug!(
+            embedder_id = embedder.id(),
             embed_dims = embedder.dimensions(),
+            reranker_id = reranker.id(),
             "initialized vault engine"
         );
         let engine = Self {
@@ -57,14 +72,103 @@ impl VaultEngine {
             config,
             store,
             embedder,
+            reranker,
             write_gate: Arc::new(AsyncMutex::new(())),
             shutdown_tx,
             watcher_handle: Mutex::new(None),
+            reindex_handle: Mutex::new(None),
         };
 
+        let _ = engine.reconcile_embedder_meta().await?;
         engine.sync_vault().await?;
         engine.maybe_spawn_watcher(shutdown_rx)?;
         Ok(engine)
+    }
+
+    pub async fn vault_meta(&self) -> Result<Option<VaultMeta>> {
+        self.store.get_vault_meta().await
+    }
+
+    pub async fn wait_for_reindex(&self) -> Result<usize> {
+        let handle = self
+            .reindex_handle
+            .lock()
+            .map_err(|_| AetherError::Permanent {
+                connector: "vault-engine",
+                message: "reindex mutex poisoned".into(),
+            })?
+            .take();
+        match handle {
+            Some(h) => h.await.map_err(|err| AetherError::Permanent {
+                connector: "vault-engine",
+                message: format!("reindex task join error: {err}"),
+            })?,
+            None => Ok(0),
+        }
+    }
+
+    async fn reconcile_embedder_meta(&self) -> Result<usize> {
+        let existing = self.store.get_vault_meta().await?;
+        let active_count = self.store.count_active_amus().await?;
+        let target_id = self.embedder.id();
+        let target_dim = self.embedder.dimensions();
+
+        let needs_reembed = match existing {
+            None => {
+                if active_count == 0 {
+                    false
+                } else {
+                    self.store.active_embedding_dim().await? != Some(target_dim)
+                }
+            }
+            Some(ref meta) => meta.embedder_id != target_id || meta.embedding_dim != target_dim,
+        };
+
+        if !needs_reembed {
+            let needs_meta_write = existing.as_ref().is_none_or(|meta| {
+                meta.schema_version != VAULT_SCHEMA_VERSION
+                    || meta.embedder_id != target_id
+                    || meta.embedding_dim != target_dim
+            });
+            if needs_meta_write {
+                self.store
+                    .set_vault_meta(&VaultMeta {
+                        schema_version: VAULT_SCHEMA_VERSION,
+                        embedder_id: target_id.to_string(),
+                        embedding_dim: target_dim,
+                        updated_at: Utc::now(),
+                    })
+                    .await?;
+            }
+            return Ok(0);
+        }
+
+        if active_count <= self.config.sync_reindex_threshold {
+            return self
+                .store
+                .reembed_active_sync(Arc::clone(&self.embedder), VAULT_SCHEMA_VERSION)
+                .await;
+        }
+
+        let store = self.store.clone();
+        let embedder = Arc::clone(&self.embedder);
+        let handle = tokio::spawn(async move {
+            store
+                .reembed_active_shadow_swap(embedder, VAULT_SCHEMA_VERSION)
+                .await
+        });
+        let mut guard = self
+            .reindex_handle
+            .lock()
+            .map_err(|_| AetherError::Permanent {
+                connector: "vault-engine",
+                message: "reindex mutex poisoned".into(),
+            })?;
+        if let Some(prev) = guard.take() {
+            prev.abort();
+        }
+        *guard = Some(handle);
+        Ok(0)
     }
 
     fn maybe_spawn_watcher(&self, mut shutdown_rx: watch::Receiver<bool>) -> Result<()> {
@@ -104,14 +208,17 @@ impl VaultEngine {
 
     /// Scans the vault, reconciles `Aether/Inbox.md`, and updates changed Markdown files.
     pub async fn sync_vault(&self) -> Result<SyncReport> {
+        let reindexed = self.reconcile_embedder_meta().await?;
         let _guard = self.write_gate.lock().await;
-        sync_vault_inner(
+        let mut report = sync_vault_inner(
             &self.vault_root,
             &self.store,
             self.embedder.as_ref(),
             &self.config.project_id,
         )
-        .await
+        .await?;
+        report.reindexed_amus = reindexed;
+        Ok(report)
     }
 
     /// Processes a single filesystem path event, skipping self-originated writes via SHA-256 ledger.
@@ -121,6 +228,17 @@ impl VaultEngine {
             Ok(rel) => rel,
             Err(_) => return Ok(false),
         };
+
+        if rel_path.eq_ignore_ascii_case(APPROVED_MIRROR_REL_PATH) {
+            if let Ok(bytes) = tokio::fs::read(path).await {
+                let hash = ContentHash::compute(&bytes);
+                let _ = self
+                    .store
+                    .consume_self_write(APPROVED_MIRROR_REL_PATH, &hash)
+                    .await?;
+            }
+            return Ok(false);
+        }
 
         if rel_path.eq_ignore_ascii_case(INBOX_REL_PATH) {
             let Ok(bytes) = tokio::fs::read(path).await else {
@@ -346,6 +464,7 @@ impl VaultEngine {
                 .total_cmp(&a.score)
                 .then_with(|| a.amu.amu_id.cmp(&b.amu.amu_id))
         });
+        self.reranker.rerank(query_trimmed, &mut ranked_entries);
 
         Ok(prefix::format_recall_response(
             bundle.hot_amus,
@@ -356,11 +475,174 @@ impl VaultEngine {
         ))
     }
 
+    /// Scans Daily/Journal/fleeting notes not yet recorded in `dream_watermarks`,
+    /// extracts durable facts and temporal contradictions, and stages them in `Aether/Inbox.md`.
+    pub async fn run_dream_pass(&self) -> Result<DreamReport> {
+        let _guard = self.write_gate.lock().await;
+        let _ =
+            reconcile_inbox_inner(&self.vault_root, &self.store, self.embedder.as_ref()).await?;
+
+        let rules = IgnoreRules::load(&self.vault_root);
+        let scanned_files = scan_vault_markdown_files(&self.vault_root, rules).await?;
+        let watermarks = self.store.dream_watermarks().await?;
+        let active_amus = self.store.list_active_amus().await?;
+
+        let mut report = DreamReport::default();
+        let today = Utc::now().format("%Y-%m-%d").to_string();
+
+        for (rel_posix, bytes) in scanned_files {
+            let Ok(raw_md) = String::from_utf8(bytes.clone()) else {
+                continue;
+            };
+            if !dream::is_daily_or_fleeting_note(&rel_posix, &raw_md) {
+                continue;
+            }
+            let hash = ContentHash::compute(&bytes);
+            if watermarks.get(&rel_posix) == Some(&hash) {
+                report.daily_notes_skipped_unchanged += 1;
+                continue;
+            }
+
+            report.daily_notes_scanned += 1;
+            let candidates = dream::extract_dream_candidates(&rel_posix, &raw_md, &active_amus);
+            let mut staged_for_note = 0usize;
+            for cand in candidates {
+                let candidate_id = CandidateId::from_proposal(
+                    &cand.proposed_fact,
+                    cand.target_note.as_deref(),
+                    cand.suggested_tier,
+                );
+                if cand.supersedes_amu_id.is_some() {
+                    report.contradictions_flagged += 1;
+                }
+                let entry = InboxEntry {
+                    checkbox: InboxCheckbox::Pending,
+                    tier: cand.suggested_tier,
+                    scope: cand.scope,
+                    proposed_fact: cand.proposed_fact,
+                    candidate_id: candidate_id.clone(),
+                    target_link: cand.target_note,
+                    proposed_by: "dream-worker".into(),
+                    proposed_date: today.clone(),
+                    supersedes_amu_id: cand.supersedes_amu_id,
+                };
+                self.store.stage_candidate(&entry).await?;
+                report.candidates_staged += 1;
+                staged_for_note += 1;
+                report.staged_candidate_ids.push(candidate_id);
+            }
+            self.store
+                .record_dream_watermark(&rel_posix, &hash, staged_for_note)
+                .await?;
+        }
+
+        if report.candidates_staged > 0 {
+            let pending = self.store.list_pending_candidates().await?;
+            write_inbox_atomically(&self.vault_root, &self.store, &pending).await?;
+        }
+
+        Ok(report)
+    }
+
+    /// Returns a live status snapshot for the vault engine, active embedder, HOT budget, and Inbox.
+    pub async fn status(&self) -> Result<VaultStatusReport> {
+        let active_amus = self.store.count_active_amus().await?;
+        let pending = self.store.list_pending_candidates().await?;
+        let approved = self.store.list_approved_candidates().await?;
+        let meta = self.store.get_vault_meta().await?;
+        let mut hot_req = RecallRequest::new("");
+        hot_req.include_hot_profile = true;
+        let hot_resp = self.recall(hot_req).await?;
+
+        Ok(VaultStatusReport {
+            status: "ok".to_string(),
+            schema_version: meta
+                .as_ref()
+                .map_or(VAULT_SCHEMA_VERSION, |m| m.schema_version),
+            embedder_id: self.embedder.id().to_string(),
+            embedding_dim: self.embedder.dimensions(),
+            active_amus,
+            pending_inbox_count: pending.len(),
+            approved_inbox_count: approved.len(),
+            hot_tokens_used: hot_resp.static_prefix_tokens,
+            hot_token_budget: self.config.hot_budget.get(),
+            prefix_hash: hot_resp.prefix_hash,
+        })
+    }
+
+    /// Lists currently pending candidates staged in `Aether/Inbox.md`.
+    pub async fn pending_inbox(&self) -> Result<Vec<InboxEntry>> {
+        self.store.list_pending_candidates().await
+    }
+
+    /// Approves (`[x]`) or rejects (`[-]`) a pending Inbox candidate by ID and immediately
+    /// updates SQLite, `Aether/Compiled/Approved.md`, and `Aether/Inbox.md`.
+    pub async fn decide_inbox_candidate(
+        &self,
+        candidate_id: &CandidateId,
+        approve: bool,
+    ) -> Result<InboxReconcileReport> {
+        let _guard = self.write_gate.lock().await;
+        let _ =
+            reconcile_inbox_inner(&self.vault_root, &self.store, self.embedder.as_ref()).await?;
+
+        let pending = self.store.list_pending_candidates().await?;
+        let mut found = false;
+        let mut updated_entries = Vec::with_capacity(pending.len());
+        let mut compiled_amus = Vec::new();
+        let mut remaining_pending = Vec::new();
+
+        for mut entry in pending {
+            if &entry.candidate_id == candidate_id {
+                found = true;
+                entry.checkbox = if approve {
+                    InboxCheckbox::Approved
+                } else {
+                    InboxCheckbox::Rejected
+                };
+                if approve {
+                    let (amu, emb) = build_compiled_amu(&entry, self.embedder.as_ref())?;
+                    compiled_amus.push((entry.clone(), amu, emb));
+                }
+                updated_entries.push(entry);
+            } else {
+                remaining_pending.push(entry.clone());
+                updated_entries.push(entry);
+            }
+        }
+
+        if !found {
+            return Err(AetherError::NotFound(format!(
+                "pending candidate `{candidate_id}` not found"
+            )));
+        }
+
+        let (compiled, rejected) = self
+            .store
+            .apply_inbox_decisions(&updated_entries, &compiled_amus)
+            .await?;
+
+        if compiled > 0 {
+            let approved = self.store.list_approved_candidates().await?;
+            if !approved.is_empty() {
+                write_approved_mirror_atomically(&self.vault_root, &self.store, &approved).await?;
+            }
+        }
+
+        write_inbox_atomically(&self.vault_root, &self.store, &remaining_pending).await?;
+
+        Ok(InboxReconcileReport {
+            compiled,
+            rejected,
+            remaining_pending: remaining_pending.len(),
+        })
+    }
+
     /// Returns the exact verbatim Markdown section for `raw_pointer`, enforcing traversal and privacy guards.
     pub async fn inspect_source(&self, raw_pointer: &str) -> Result<String> {
         let pointer = SourcePointer::parse(raw_pointer)?;
         let rules = IgnoreRules::load(&self.vault_root);
-        if rules.is_ignored(pointer.relative_path()) {
+        if rules.is_ignored_for_inspect(pointer.relative_path()) {
             return Err(AetherError::InvalidInput(format!(
                 "path `{}` is excluded by vault ignore rules",
                 pointer.relative_path()
@@ -405,6 +687,7 @@ impl VaultEngine {
         if let Some(h) = handle {
             let _ = h.await;
         }
+        let _ = self.wait_for_reindex().await?;
         self.store.close().await
     }
 }
@@ -422,42 +705,7 @@ async fn sync_vault_inner(
 
     let rules = IgnoreRules::load(vault_root);
     let manifest = store.file_manifest().await?;
-    let vault_root_owned = vault_root.to_path_buf();
-
-    let scanned_files = tokio::task::spawn_blocking(move || -> Vec<(String, Vec<u8>)> {
-        let mut files = Vec::new();
-        for entry in WalkDir::new(&vault_root_owned)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let Ok(canon) = std::fs::canonicalize(entry.path()) else {
-                continue;
-            };
-            if !canon.starts_with(&vault_root_owned) {
-                continue;
-            }
-            let Ok(rel) = entry.path().strip_prefix(&vault_root_owned) else {
-                continue;
-            };
-            let rel_posix = rel.to_string_lossy().replace('\\', "/");
-            if rules.is_ignored(&rel_posix) || !rel_posix.to_ascii_lowercase().ends_with(".md") {
-                continue;
-            }
-            if let Ok(bytes) = std::fs::read(&canon) {
-                files.push((rel_posix, bytes));
-            }
-        }
-        files
-    })
-    .await
-    .map_err(|err| AetherError::Permanent {
-        connector: "vault-fs",
-        message: format!("vault scan task error: {err}"),
-    })?;
+    let scanned_files = scan_vault_markdown_files(vault_root, rules).await?;
 
     let mut seen_paths = HashSet::new();
     let mut pending_updates: Vec<(VaultPath, ContentHash, String)> = Vec::new();
@@ -530,7 +778,9 @@ async fn sync_vault_inner(
     }
 
     for old_path in manifest.keys() {
-        if old_path.eq_ignore_ascii_case(INBOX_REL_PATH) {
+        if old_path.eq_ignore_ascii_case(INBOX_REL_PATH)
+            || old_path.eq_ignore_ascii_case(APPROVED_MIRROR_REL_PATH)
+        {
             continue;
         }
         if !seen_paths.contains(old_path) && store.remove_file(old_path, None).await? {
@@ -539,6 +789,47 @@ async fn sync_vault_inner(
     }
 
     Ok(report)
+}
+
+async fn scan_vault_markdown_files(
+    vault_root: &Path,
+    rules: IgnoreRules,
+) -> Result<Vec<(String, Vec<u8>)>> {
+    let vault_root_owned = vault_root.to_path_buf();
+    tokio::task::spawn_blocking(move || -> Vec<(String, Vec<u8>)> {
+        let mut files = Vec::new();
+        for entry in WalkDir::new(&vault_root_owned)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let Ok(canon) = std::fs::canonicalize(entry.path()) else {
+                continue;
+            };
+            if !canon.starts_with(&vault_root_owned) {
+                continue;
+            }
+            let Ok(rel) = entry.path().strip_prefix(&vault_root_owned) else {
+                continue;
+            };
+            let rel_posix = rel.to_string_lossy().replace('\\', "/");
+            if rules.is_ignored(&rel_posix) || !rel_posix.to_ascii_lowercase().ends_with(".md") {
+                continue;
+            }
+            if let Ok(bytes) = std::fs::read(&canon) {
+                files.push((rel_posix, bytes));
+            }
+        }
+        files
+    })
+    .await
+    .map_err(|err| AetherError::Permanent {
+        connector: "vault-fs",
+        message: format!("vault scan task error: {err}"),
+    })
 }
 
 fn resolve_wikilink_targets(sections: &mut [ParsedSection], stem_map: &HashMap<String, String>) {
@@ -617,6 +908,14 @@ async fn reconcile_inbox_inner(
         .apply_inbox_decisions(&parsed_entries, &compiled_amus)
         .await?;
 
+    let mirror_path = vault_root.join(APPROVED_MIRROR_REL_PATH);
+    if compiled > 0 || !mirror_path.exists() {
+        let approved = store.list_approved_candidates().await?;
+        if !approved.is_empty() {
+            write_approved_mirror_atomically(vault_root, store, &approved).await?;
+        }
+    }
+
     if compiled > 0 || rejected > 0 || remaining_pending.len() != parsed_entries.len() {
         write_inbox_atomically(vault_root, store, &remaining_pending).await?;
     } else {
@@ -631,33 +930,12 @@ async fn reconcile_inbox_inner(
 }
 
 fn build_compiled_amu(entry: &InboxEntry, embedder: &dyn Embedder) -> Result<(Amu, Vec<f32>)> {
-    let target_rel = match &entry.target_link {
-        Some(raw) => {
-            let cleaned = raw
-                .trim()
-                .trim_start_matches("[[")
-                .trim_end_matches("]]")
-                .trim()
-                .replace('\\', "/");
-            let with_ext = if cleaned.to_ascii_lowercase().ends_with(".md") {
-                cleaned
-            } else {
-                format!("{cleaned}.md")
-            };
-            if VaultPath::parse(&with_ext).is_ok() {
-                with_ext
-            } else {
-                "Aether/Compiled/Approved.md".to_string()
-            }
-        }
-        None => "Aether/Compiled/Approved.md".to_string(),
-    };
-
-    let pointer_raw = format!("{target_rel}#{}", entry.candidate_id);
+    let pointer_raw = format!("{APPROVED_MIRROR_REL_PATH}#{}", entry.candidate_id);
     let source_pointer = SourcePointer::parse(&pointer_raw)?;
     let amu_id = AmuId::from_pointer(&source_pointer);
+    let heading_path = source_pointer.as_str().to_string();
     let distilled_fact = entry.proposed_fact.trim().to_string();
-    let embedding = embedder.embed(&distilled_fact);
+    let embedding = embedder.embed(&embed_amu_text(&heading_path, &distilled_fact));
 
     let mut graph_edges = Vec::new();
     if let Some(link) = &entry.target_link {
@@ -678,7 +956,7 @@ fn build_compiled_amu(entry: &InboxEntry, embedder: &dyn Embedder) -> Result<(Am
         tier: entry.tier,
         kind: AmuKind::Decision,
         status: AmuStatus::Active,
-        heading_path: source_pointer.as_str().to_string(),
+        heading_path,
         distilled_fact: distilled_fact.clone(),
         source_pointer,
         graph_edges,
@@ -689,6 +967,21 @@ fn build_compiled_amu(entry: &InboxEntry, embedder: &dyn Embedder) -> Result<(Am
         content_hash: ContentHash::compute(distilled_fact.as_bytes()),
     };
     Ok((amu, embedding))
+}
+
+async fn write_approved_mirror_atomically(
+    vault_root: &Path,
+    store: &VaultStore,
+    entries: &[crate::types::ApprovedMirrorEntry],
+) -> Result<()> {
+    let mirror_path = vault_root.join(APPROVED_MIRROR_REL_PATH);
+    let rendered = inbox::render_approved_mirror(entries);
+    let hash = ContentHash::compute(rendered.as_bytes());
+    store
+        .record_self_write(APPROVED_MIRROR_REL_PATH, &hash)
+        .await?;
+    inbox::atomic_write_file(&mirror_path, rendered.as_bytes())?;
+    Ok(())
 }
 
 async fn write_inbox_atomically(
@@ -923,6 +1216,185 @@ mod tests {
         let res = engine.recall(req).await.unwrap();
         assert!(!res.formatted_context.contains("Ephemeral operational"));
         assert!(!res.formatted_context.contains("Rejected memory proposal"));
+
+        engine.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn vault_meta_sync_reindexes_when_embedder_dimension_changes() {
+        let vault = TempVault::new();
+        vault.write(
+            "Specs/Vector.md",
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Indexing\nStore embeddings in SQLite WAL.\n",
+        );
+
+        let engine256 = VaultEngine::open(VaultConfig::new(&vault.root))
+            .await
+            .unwrap();
+        let meta256 = engine256.vault_meta().await.unwrap().unwrap();
+        assert_eq!(meta256.schema_version, VAULT_SCHEMA_VERSION);
+        assert_eq!(meta256.embedder_id, "hashed-ngram-256-v1");
+        assert_eq!(meta256.embedding_dim, 256);
+        engine256.shutdown().await.unwrap();
+
+        let embedder384: Arc<dyn Embedder> = Arc::new(HashedNgramEmbedder::with_dimensions(384));
+        let engine384 = VaultEngine::open(VaultConfig::new(&vault.root).with_embedder(embedder384))
+            .await
+            .unwrap();
+        let meta384 = engine384.vault_meta().await.unwrap().unwrap();
+        assert_eq!(meta384.embedder_id, "hashed-ngram-384-v1");
+        assert_eq!(meta384.embedding_dim, 384);
+        assert_eq!(
+            engine384.store.active_embedding_dim().await.unwrap(),
+            Some(384)
+        );
+
+        let mut req = RecallRequest::new("embeddings SQLite WAL");
+        req.scope = Some(ScopeTag::new("engineering").unwrap());
+        let recalled = engine384.recall(req).await.unwrap();
+        assert!(recalled
+            .formatted_context
+            .contains("Store embeddings in SQLite WAL."));
+
+        engine384.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn vault_meta_shadow_swap_reindexes_above_threshold_while_keeping_recall_online() {
+        let vault = TempVault::new();
+        vault.write(
+            "Specs/One.md",
+            "---\naether_tier: warm\n---\n# Alpha\nKafka streaming pipeline specification.\n",
+        );
+        vault.write(
+            "Specs/Two.md",
+            "---\naether_tier: warm\n---\n# Beta\nPostgres WAL checkpoint tuning.\n",
+        );
+        vault.write(
+            "Specs/Three.md",
+            "---\naether_tier: warm\n---\n# Gamma\nRedis sentinel failover timing.\n",
+        );
+
+        let engine256 = VaultEngine::open(VaultConfig::new(&vault.root))
+            .await
+            .unwrap();
+        engine256.shutdown().await.unwrap();
+
+        let embedder384: Arc<dyn Embedder> = Arc::new(HashedNgramEmbedder::with_dimensions(384));
+        let engine384 = VaultEngine::open(
+            VaultConfig::new(&vault.root)
+                .with_sync_reindex_threshold(1)
+                .with_embedder(embedder384),
+        )
+        .await
+        .unwrap();
+
+        // Recall must stay online via FTS5 + graph RRF even before waiting for background swap.
+        let online_recall = engine384
+            .recall(RecallRequest::new("Kafka streaming pipeline"))
+            .await
+            .unwrap();
+        assert!(online_recall
+            .formatted_context
+            .contains("Kafka streaming pipeline"));
+
+        let swapped = engine384.wait_for_reindex().await.unwrap();
+        assert_eq!(swapped, 3);
+        let meta384 = engine384.vault_meta().await.unwrap().unwrap();
+        assert_eq!(meta384.embedding_dim, 384);
+        assert_eq!(engine384.store.shadow_table_row_count().await.unwrap(), 0);
+        assert_eq!(
+            engine384.store.active_embedding_dim().await.unwrap(),
+            Some(384)
+        );
+
+        engine384.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dense_subword_embedder_auto_reindexes_and_reranker_scores_accurately() {
+        use crate::embedder::DenseSubwordEmbedder;
+
+        let vault = TempVault::new();
+        vault.write(
+            "Specs/General.md",
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# General\nPrefix notes and cache comments.\n",
+        );
+        vault.write(
+            "Specs/Cache.md",
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Prefix Cache\nPrefix cache canonicalization removes volatile timestamps.\n",
+        );
+
+        let engine256 = VaultEngine::open(VaultConfig::new(&vault.root))
+            .await
+            .unwrap();
+        engine256.shutdown().await.unwrap();
+
+        let dense: Arc<dyn Embedder> = Arc::new(DenseSubwordEmbedder::default());
+        let engine384 = VaultEngine::open(VaultConfig::new(&vault.root).with_embedder(dense))
+            .await
+            .unwrap();
+        let meta = engine384.vault_meta().await.unwrap().unwrap();
+        assert_eq!(meta.embedder_id, "dense-subword-384-v1");
+        assert_eq!(meta.embedding_dim, 384);
+
+        let mut req = RecallRequest::new("prefix cache");
+        req.scope = Some(ScopeTag::new("engineering").unwrap());
+        let resp = engine384.recall(req).await.unwrap();
+        assert_eq!(
+            resp.warm_cold_amus[0].source_pointer.as_str(),
+            "Specs/Cache.md#Prefix-Cache"
+        );
+
+        engine384.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dream_pass_extracts_contradictions_tracks_watermarks_and_supersedes_on_approval() {
+        let vault = TempVault::new();
+        vault.write(
+            "Arch/Vector.md",
+            "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Engine\nUse Qdrant for local vector search.\n",
+        );
+        vault.write(
+            "Daily/2026-05-10.md",
+            "---\naether_scope: engineering\n---\n# Log\n## Decisions\n- Decision: Switched local vector search from Qdrant to LanceDB in [[Arch/Vector]].\n",
+        );
+
+        let engine = VaultEngine::open(VaultConfig::in_memory(&vault.root))
+            .await
+            .unwrap();
+
+        let pass1 = engine.run_dream_pass().await.unwrap();
+        assert_eq!(pass1.daily_notes_scanned, 1);
+        assert_eq!(pass1.daily_notes_skipped_unchanged, 0);
+        assert_eq!(pass1.candidates_staged, 1);
+        assert_eq!(pass1.contradictions_flagged, 1);
+
+        let inbox_path = vault.root.join("Aether/Inbox.md");
+        let inbox_text = fs::read_to_string(&inbox_path).unwrap();
+        assert!(inbox_text.contains("LanceDB"));
+        assert!(inbox_text.contains("supersedes"));
+
+        // Second pass skips unchanged daily note via dream_watermarks.
+        let pass2 = engine.run_dream_pass().await.unwrap();
+        assert_eq!(pass2.daily_notes_scanned, 0);
+        assert_eq!(pass2.daily_notes_skipped_unchanged, 1);
+        assert_eq!(pass2.candidates_staged, 0);
+
+        // Approve the Dream-staged candidate -> supersedes old Qdrant AMU and writes Approved.md.
+        fs::write(&inbox_path, inbox_text.replace("- [ ] ", "- [x] ")).unwrap();
+        let rep = engine.reconcile_inbox().await.unwrap();
+        assert_eq!(rep.compiled, 1);
+        assert!(vault.root.join("Aether/Compiled/Approved.md").exists());
+
+        let mut req = RecallRequest::new("local vector search Qdrant LanceDB");
+        req.scope = Some(ScopeTag::new("engineering").unwrap());
+        let res = engine.recall(req).await.unwrap();
+        assert!(res.formatted_context.contains("LanceDB"));
+        assert!(!res
+            .formatted_context
+            .contains("Use Qdrant for local vector search."));
 
         engine.shutdown().await.unwrap();
     }

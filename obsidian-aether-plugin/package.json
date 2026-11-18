@@ -1,0 +1,10 @@
+{
+  "name": "nytheris-aether-obsidian-plugin",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/plugin.test.ts",
+    "typecheck": "../website/node_modules/.bin/tsc -p tsconfig.json --noEmit"
+  }
+}

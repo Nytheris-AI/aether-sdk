@@ -13,7 +13,7 @@ Architecture decisions live in the [pieces-first SDK design](../architecture/sdk
 | `nytheris-aether-cortex` (`Indexer`, `recall`, `ppr`) | Done | Durable `RecordStore`-driven sync engine (`run_pass`, `apply`, opt-in `spawn`), composable recall steps, `PersonalizedPageRank` + `graph_scores`, `RRF` fusion. |
 | `MemoryManager` facade (`nytheris-aether-sdk`) | Done | Optional builder accepting `RecordStore` + optional `.vector(...)`, `.graph(...)`, `.background_indexing(...)`, middleware toggles. |
 | Production drivers (`sqlite`, `redis`, `turbopuffer`, `qdrant`, `chroma`, `pgvector`, `neo4j`) | Done | Implemented behind feature flags and verified via contract unit tests + live local Docker verification (`Valkey`, `Qdrant`, `Chroma`, `pgvector`, `Neo4j`) + `SQLite`. |
-| Obsidian vault & MCP server (`nytheris-aether-vault`, `aether-mcp`) | Done | `VaultEngine` over SQLite WAL + FTS5 + 256-dim hashed n-gram vectors + `PersonalizedPageRank`, `HOT` prefix packing, `Aether/Inbox.md` staging and reconciliation, and 3-tool stdio `McpServer`. |
+| Obsidian vault & MCP server (`nytheris-aether-vault`, `aether-mcp`, `obsidian-aether-plugin`) | Done | `VaultEngine` over SQLite WAL + FTS5 + `PersonalizedPageRank` + `CrossEncoderReranker`, `vault_meta` auto-reindexing, `Aether/Compiled/Approved.md` mirror, Daily Note Dream consolidation, loopback `ControlPlaneServer`, 3-tool stdio `McpServer`, and Obsidian companion plugin. |
 | Observability & Rust CI | Done | End-to-end `tracing` spans + `otel` OTLP preset; GitHub Actions checks `cargo fmt`, `clippy -D warnings`, `cargo test --workspace --all-features`, and docs build. |
 
 ## Completed Milestones
@@ -38,7 +38,15 @@ Architecture decisions live in the [pieces-first SDK design](../architecture/sdk
 - Implemented single-file SQLite WAL storage (`vault_files`, `amus`, `amus_fts`, `amu_edges`, `self_write_ledger`, `staged_candidates`), hybrid FTS5 + 256-dim `HashedNgramEmbedder` + `PersonalizedPageRank` RRF recall, deterministic `[AETHER_HOT_PROFILE]` prefix packing (`HOT_PROFILE_MAX_TOKENS = 2000`), and atomic `Aether/Inbox.md` staging and reconciliation.
 - Exposed `McpServer` over newline-delimited JSON-RPC 2.0 (`initialize`, `ping`, `tools/list`, `tools/call`) with `aether_recall`, `aether_stage_memory`, and `aether_inspect_source`.
 
+### Milestone 2 - Compiled Mirror, GPU/Dense Reranking, Dream Worker & Obsidian Companion (Completed 2026-11-18)
+
+- Added `Aether/Compiled/Approved.md` read-only compiled mirror for `[x]` approved Inbox candidates with `aether_inspect_source` provenance support and `vault_meta` dimension-aware auto-reindexing (synchronous up to `DEFAULT_SYNC_REINDEX_THRESHOLD = 5000` AMUs, asynchronous `amus_shadow_embeddings` swap above threshold).
+- Exposed public `Embedder` (`HashedNgramEmbedder`, `DenseSubwordEmbedder`, `LocalGpuEmbedder` with automatic fallback) and `Reranker` (`CrossEncoderReranker` top-`30` RRF reranking, `NoopReranker`) traits configurable on `VaultConfig`.
+- Extended `RecallResponse` and `aether_recall` with `static_prefix` / `dynamic_context` separation (`structured: true` and `structuredContent`).
+- Added incremental Daily Note Dream consolidation (`VaultEngine::run_dream_pass`, `dream_watermarks`, and temporal contradiction detection into `supersedes_amu_id`).
+- Added loopback-only `ControlPlaneServer` (`GET /v1/status`, `GET /v1/inbox`, `POST /v1/inbox/decide`, `POST /v1/inbox/reconcile`, `POST /v1/dream`, `POST /v1/sync`, `--http-addr` / `AETHER_HTTP_ADDR`) and the TypeScript `obsidian-aether-plugin` companion plugin.
+
 ## Scope & Next Directions
 
 - **Language Bindings (deferred)**: Foreign-language bindings (for example Python via `PyO3`) remain deferred until demanded by concrete downstream users.
-- **Model-free core SDK & Milestone 2 vault embeddings**: The four core SDK crates (`nytheris-aether-core`, `nytheris-aether-cortex`, `nytheris-aether-adapters`, `nytheris-aether-sdk`) do not call embedders, chunkers, or LLMs. `nytheris-aether-vault` Milestone 1 uses deterministic 256-dim signed trigram feature hashing behind an internal `Embedder` trait so Milestone 2 can add dense neural embeddings without changing `VaultEngine` callers.
+- **Milestone 3 - Team Git Vaults & Tier 2 KV Serving (Planned)**: Shared Git-backed team vaults, per-agent scoped keys, and vLLM/LMCache KV-tensor pre-warming for self-hosted open-weight models.

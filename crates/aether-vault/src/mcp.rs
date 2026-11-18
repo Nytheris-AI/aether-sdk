@@ -95,23 +95,26 @@ impl McpServer {
             .cloned()
             .unwrap_or_else(|| json!({}));
 
-        let outcome = match name {
+        let outcome: Result<(String, Option<Value>)> = match name {
             "aether_recall" => self.call_recall(&args).await,
-            "aether_stage_memory" => self.call_stage_memory(&args).await,
-            "aether_inspect_source" => self.call_inspect_source(&args).await,
+            "aether_stage_memory" => self.call_stage_memory(&args).await.map(|s| (s, None)),
+            "aether_inspect_source" => self.call_inspect_source(&args).await.map(|s| (s, None)),
             unknown => {
                 return error_json(id, -32602, format!("unknown tool `{unknown}`"));
             }
         };
 
         match outcome {
-            Ok(text) => ok_json(
-                id,
-                json!({
+            Ok((text, structured)) => {
+                let mut payload = json!({
                     "content": [{ "type": "text", "text": text }],
                     "isError": false
-                }),
-            ),
+                });
+                if let Some(sc) = structured {
+                    payload["structuredContent"] = sc;
+                }
+                ok_json(id, payload)
+            }
             Err(err) => ok_json(
                 id,
                 json!({
@@ -122,7 +125,7 @@ impl McpServer {
         }
     }
 
-    async fn call_recall(&self, args: &Value) -> Result<String> {
+    async fn call_recall(&self, args: &Value) -> Result<(String, Option<Value>)> {
         let query = args
             .get("query")
             .and_then(Value::as_str)
@@ -142,13 +145,28 @@ impl McpServer {
         if let Some(include_hot) = args.get("include_hot_profile").and_then(Value::as_bool) {
             req.include_hot_profile = include_hot;
         }
+        let structured_flag = args
+            .get("structured")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         let res = self.engine.recall(req).await?;
-        if res.formatted_context.is_empty() {
-            Ok("(no matching vault memory)".to_string())
+        let structured_val = json!({
+            "static_prefix": res.static_prefix,
+            "dynamic_context": res.dynamic_context,
+            "prefix_hash": res.prefix_hash.as_str(),
+            "static_prefix_tokens": res.static_prefix_tokens,
+            "dynamic_tokens": res.dynamic_tokens,
+            "tokens_used": res.tokens_used,
+        });
+        let text = if structured_flag {
+            serde_json::to_string(&structured_val)?
+        } else if res.formatted_context.is_empty() {
+            "(no matching vault memory)".to_string()
         } else {
-            Ok(res.formatted_context)
-        }
+            res.formatted_context
+        };
+        Ok((text, Some(structured_val)))
     }
 
     async fn call_stage_memory(&self, args: &Value) -> Result<String> {
@@ -263,7 +281,8 @@ fn tool_descriptors() -> Value {
                     "query": { "type": "string", "description": "Natural language or keyword query for Warm/Cold recall." },
                     "scope": { "type": "string", "description": "Active agent scope (e.g., 'engineering', 'global')." },
                     "max_tokens": { "type": "integer", "default": 1500, "description": "Strict token ceiling for returned context." },
-                    "include_hot_profile": { "type": "boolean", "default": true }
+                    "include_hot_profile": { "type": "boolean", "default": true },
+                    "structured": { "type": "boolean", "default": false, "description": "When true, returns JSON separating static_prefix (with prefix_hash) and dynamic_context for provider prompt caching." }
                 },
                 "required": ["query"]
             }
