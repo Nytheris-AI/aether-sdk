@@ -38,6 +38,8 @@ use crate::types::{
     VAULT_SCHEMA_VERSION,
 };
 
+const MAX_RECALL_HITS_PER_HEADING: usize = 2;
+
 /// Orchestrator for Obsidian vault compilation, hybrid recall, Inbox reconciliation,
 /// Git team sync, scoped agent access control, and KV-cache warming.
 pub struct VaultEngine {
@@ -463,7 +465,7 @@ impl VaultEngine {
 
         let bundle = self
             .store
-            .recall_bundle(query_trimmed, &query_vec, scope_policy, 32)
+            .recall_bundle(query_trimmed, &query_vec, scope_policy, 64)
             .await?;
 
         if query_trimmed.is_empty() {
@@ -527,6 +529,7 @@ impl VaultEngine {
                 .then_with(|| a.amu.amu_id.cmp(&b.amu.amu_id))
         });
         self.reranker.rerank(query_trimmed, &mut ranked_entries);
+        let ranked_entries = cap_heading_diversity(ranked_entries, MAX_RECALL_HITS_PER_HEADING);
 
         let mut resp = prefix::format_recall_response(
             bundle.hot_amus,
@@ -1617,6 +1620,31 @@ async fn scan_vault_markdown_files(
         connector: "vault-fs",
         message: format!("vault scan task error: {err}"),
     })
+}
+
+fn normalize_heading_title(heading_path: &str) -> String {
+    let leaf = heading_path.rsplit(" > ").next().unwrap_or(heading_path);
+    leaf.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn cap_heading_diversity(entries: Vec<RecallEntry>, max_per_heading: usize) -> Vec<RecallEntry> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut out = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let key = normalize_heading_title(&entry.amu.heading_path);
+        if !key.is_empty() {
+            let count = counts.entry(key).or_insert(0);
+            if *count >= max_per_heading {
+                continue;
+            }
+            *count += 1;
+        }
+        out.push(entry);
+    }
+    out
 }
 
 fn resolve_wikilink_targets(sections: &mut [ParsedSection], stem_map: &HashMap<String, String>) {
@@ -2898,6 +2926,87 @@ mod tests {
             .unwrap();
         assert!(server_vault.root.join("Shared/LocalPrivate.md").exists());
         assert_eq!(shared_push.sync_report.private_skipped, 1);
+
+        engine.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recall_caps_identical_normalized_heading_titles_to_preserve_diversity() {
+        let vault = TempVault::new();
+        let boilerplate_notes = [
+            (
+                "Episodes/Ep01.md",
+                "# Chogerlatte (on-screen only, not spoken)\nChogerlatte lower-third badge displayed on screen during intro sequence with standard duration and placement rules.\n",
+            ),
+            (
+                "Episodes/Ep02.md",
+                "# Episode 02\n##  chogerlatte   (ON-SCREEN ONLY, not spoken) \nChogerlatte lower-third badge displayed on screen during outro segment with standard placement rules.\n",
+            ),
+            (
+                "Episodes/Ep03.md",
+                "# Chogerlatte (on-screen only, not spoken)\nChogerlatte lower-third badge displayed on screen during sponsor break with standard placement rules.\n",
+            ),
+            (
+                "Episodes/Ep04.md",
+                "# Episode 04\n## Chogerlatte (on-screen only, not spoken)\nChogerlatte lower-third badge displayed on screen during recap section with standard placement rules.\n",
+            ),
+            (
+                "Episodes/Ep05.md",
+                "# Chogerlatte (on-screen only, not spoken)\nChogerlatte lower-third badge displayed on screen during credits roll with standard placement rules.\n",
+            ),
+        ];
+        for (path, content) in boilerplate_notes {
+            vault.write(path, content);
+        }
+        vault.write(
+            "Brand/Pronunciation.md",
+            "# Brand Pronunciation\nChogerlatte is pronounced cho-ger-lat-te.\n",
+        );
+        vault.write(
+            "Brand/Merch.md",
+            "# Merch Guidelines\nChogerlatte apparel uses cream and espresso tones.\n",
+        );
+
+        let engine = VaultEngine::open(VaultConfig::in_memory(&vault.root))
+            .await
+            .unwrap();
+
+        let resp_full = engine
+            .recall(RecallRequest::new("Chogerlatte on-screen rules"))
+            .await
+            .unwrap();
+        let boilerplate_hits = resp_full
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry
+                    .amu
+                    .heading_path
+                    .to_ascii_lowercase()
+                    .contains("on-screen only, not spoken")
+            })
+            .count();
+        assert!(
+            boilerplate_hits <= 2,
+            "expected at most 2 boilerplate hits, got {boilerplate_hits}: {:?}",
+            resp_full
+                .entries
+                .iter()
+                .map(|e| &e.amu.source_pointer)
+                .collect::<Vec<_>>()
+        );
+        assert!(resp_full.formatted_context.contains("cho-ger-lat-te"));
+        assert!(resp_full.formatted_context.contains("cream and espresso"));
+
+        let mut tight_req = RecallRequest::new("Chogerlatte on-screen rules");
+        tight_req.max_tokens = TokenBudget::new(220).unwrap();
+        let resp_tight = engine.recall(tight_req).await.unwrap();
+        assert!(
+            resp_tight.formatted_context.contains("cho-ger-lat-te")
+                || resp_tight.formatted_context.contains("cream and espresso"),
+            "expected diverse hits within tight budget, got: {}",
+            resp_tight.formatted_context
+        );
 
         engine.shutdown().await.unwrap();
     }
