@@ -312,7 +312,9 @@ pub(crate) fn parse_note(
         };
 
         let verbatim = raw_sec.verbatim.trim().to_string();
-        if verbatim.is_empty() {
+        if verbatim.is_empty()
+            || (raw_sec.heading_title.is_some() && section_body_lines(&verbatim).is_empty())
+        {
             continue;
         }
 
@@ -850,18 +852,22 @@ fn compute_authority_weight(kind: AmuKind, verbatim: &str) -> f32 {
     }
 }
 
+fn section_body_lines(verbatim: &str) -> Vec<&str> {
+    verbatim
+        .lines()
+        .enumerate()
+        .filter_map(|(idx, line)| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || (idx == 0 && parse_atx_heading(trimmed).is_some()) {
+                return None;
+            }
+            Some(trimmed)
+        })
+        .collect()
+}
+
 fn distill_section(heading_path: &str, verbatim: &str) -> String {
-    let mut body_parts: Vec<&str> = Vec::new();
-    for (idx, line) in verbatim.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if idx == 0 && parse_atx_heading(trimmed).is_some() {
-            continue;
-        }
-        body_parts.push(trimmed);
-    }
+    let body_parts = section_body_lines(verbatim);
     let joined = if body_parts.is_empty() {
         heading_path.to_string()
     } else {
@@ -1034,5 +1040,57 @@ Other text.
         let sim_ab: f32 = a.iter().zip(&b).map(|(x, y)| x * y).sum();
         let sim_ac: f32 = a.iter().zip(&c).map(|(x, y)| x * y).sum();
         assert!(sim_ab > sim_ac, "expected {sim_ab} > {sim_ac}");
+    }
+
+    #[test]
+    fn skips_empty_heading_only_sections_while_preserving_hierarchy_and_slugs() {
+        let md = "\
+# Brand: Chogerlatte
+
+## Usage
+Chogerlatte appears on-screen only, not spoken.
+
+# Brand: Chogerlatte
+Show logo in upper-right corner.
+
+# Trailing Empty Heading
+";
+        let embedder = HashedNgramEmbedder::default();
+        let ParsedNote::Public(sections) =
+            parse_note("Brand/Guide.md", md, Utc::now(), &embedder).unwrap()
+        else {
+            panic!("expected public parsed note");
+        };
+
+        assert_eq!(
+            sections.len(),
+            2,
+            "expected only sections with body text, got: {:?}",
+            sections
+                .iter()
+                .map(|s| (&s.amu.source_pointer, &s.amu.distilled_fact))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            sections[0].amu.source_pointer.as_str(),
+            "Brand/Guide.md#Usage"
+        );
+        assert_eq!(sections[0].amu.heading_path, "Brand: Chogerlatte > Usage");
+        assert_eq!(
+            sections[1].amu.source_pointer.as_str(),
+            "Brand/Guide.md#Brand-Chogerlatte-1"
+        );
+        assert_eq!(
+            extract_verbatim_section(md, &sections[1].amu.source_pointer).unwrap(),
+            "# Brand: Chogerlatte\nShow logo in upper-right corner."
+        );
+
+        let only_headings = "# Empty One\n## Empty Two\n";
+        let ParsedNote::Public(empty_sections) =
+            parse_note("Brand/Empty.md", only_headings, Utc::now(), &embedder).unwrap()
+        else {
+            panic!("expected public parsed note");
+        };
+        assert!(empty_sections.is_empty());
     }
 }
