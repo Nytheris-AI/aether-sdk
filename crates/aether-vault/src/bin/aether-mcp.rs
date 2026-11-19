@@ -47,6 +47,7 @@ struct InitReport {
     endpoint_url: String,
     copied_main_js: bool,
     copied_manifest_json: bool,
+    copied_styles_css: bool,
     mcp_config: Value,
 }
 
@@ -148,6 +149,7 @@ fn init_vault_plugin(parsed: &CliArgs, cwd: &Path, executable: &Path) -> Result<
     let copied_main_js = copy_plugin_file(source_dir.as_deref(), &plugin_dest, "main.js")?;
     let copied_manifest_json =
         copy_plugin_file(source_dir.as_deref(), &plugin_dest, "manifest.json")?;
+    let copied_styles_css = copy_plugin_file(source_dir.as_deref(), &plugin_dest, "styles.css")?;
 
     let endpoint_url = endpoint_url_from_http_addr(parsed.http_addr);
     let data_json_path = write_plugin_data_json(
@@ -167,6 +169,7 @@ fn init_vault_plugin(parsed: &CliArgs, cwd: &Path, executable: &Path) -> Result<
         endpoint_url,
         copied_main_js,
         copied_manifest_json,
+        copied_styles_css,
         mcp_config,
     })
 }
@@ -378,6 +381,14 @@ fn print_init_report(report: &InitReport, parsed: &CliArgs, executable: &Path) -
             "copied"
         } else {
             "not found (copy obsidian-aether-plugin/manifest.json or set AETHER_PLUGIN_DIR)"
+        }
+    );
+    eprintln!(
+        "  styles.css: {}",
+        if report.copied_styles_css {
+            "copied"
+        } else {
+            "not found (optional)"
         }
     );
     eprintln!(
@@ -761,6 +772,11 @@ mod tests {
             r#"{"id":"aether-memory","version":"0.4.0"}"#,
         )
         .expect("write manifest.json");
+        fs::write(
+            plugin_src.path().join("styles.css"),
+            ".aether-inbox-card { padding: 8px; }\n",
+        )
+        .expect("write styles.css");
 
         let generated_key = ApiKeySecret::generate();
         let key = generated_key.expose_secret();
@@ -788,6 +804,7 @@ mod tests {
 
         assert!(report.copied_main_js);
         assert!(report.copied_manifest_json);
+        assert!(report.copied_styles_css);
         let dest = vault.path().join(".obsidian/plugins/aether-memory");
         assert_eq!(report.plugin_dir, dest);
         assert_eq!(
@@ -797,6 +814,10 @@ mod tests {
         assert_eq!(
             fs::read_to_string(dest.join("manifest.json")).expect("read manifest.json"),
             r#"{"id":"aether-memory","version":"0.4.0"}"#
+        );
+        assert_eq!(
+            fs::read_to_string(dest.join("styles.css")).expect("read styles.css"),
+            ".aether-inbox-card { padding: 8px; }\n"
         );
 
         let data: Value =
@@ -842,6 +863,7 @@ mod tests {
 
         assert!(!report.copied_main_js);
         assert!(report.copied_manifest_json);
+        assert!(!report.copied_styles_css);
         assert_eq!(
             report.plugin_dir,
             vault.path().join(".obsidian/plugins/aether-memory")
