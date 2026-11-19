@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import {createRequire} from 'node:module';
-import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -12,22 +11,23 @@ async function loadEsbuild() {
   try {
     return await import('esbuild');
   } catch {
-    const npxCacheDir = path.join(os.homedir(), '.npm', '_npx');
-    if (fs.existsSync(npxCacheDir)) {
-      for (const entry of fs.readdirSync(npxCacheDir)) {
-        const candidate = path.join(npxCacheDir, entry, 'node_modules', 'esbuild', 'lib', 'main.js');
-        if (fs.existsSync(candidate)) {
-          return require(candidate);
-        }
-      }
-    }
     return null;
   }
 }
 
+function loadLocalTypescript() {
+  try {
+    return require('typescript');
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Neither local 'esbuild' nor local 'typescript' is installed. Run 'npm install' in obsidian-aether-plugin (${detail}).`,
+    );
+  }
+}
+
 function bundleWithTypescriptFallback() {
-  const tsPath = path.resolve(__dirname, '..', 'website', 'node_modules', 'typescript', 'lib', 'typescript.js');
-  const ts = require(tsPath);
+  const ts = loadLocalTypescript();
   const entryAbs = path.resolve(__dirname, 'src', 'obsidian-entry.ts');
   const modules = new Map();
   const order = [];
@@ -98,12 +98,12 @@ module.exports = __load(${ids.get(entryAbs)});
 const esbuild = await loadEsbuild();
 if (esbuild) {
   const ctx = await esbuild.context({
-    entryPoints: ['src/obsidian-entry.ts'],
+    entryPoints: [path.resolve(__dirname, 'src', 'obsidian-entry.ts')],
     bundle: true,
     external: ['obsidian', 'electron', 'crypto', 'node:crypto'],
     format: 'cjs',
     target: 'es2022',
-    outfile: 'main.js',
+    outfile: path.resolve(__dirname, 'main.js'),
     sourcemap: prod ? false : 'inline',
     treeShaking: true,
     minify: prod,

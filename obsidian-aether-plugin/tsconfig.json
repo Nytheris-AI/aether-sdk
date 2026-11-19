@@ -4,8 +4,10 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2023", "DOM"],
-    "typeRoots": ["../website/node_modules/@types"],
+    "typeRoots": ["./node_modules/@types"],
     "types": ["node"],
+    "allowJs": true,
+    "checkJs": true,
     "strict": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
@@ -13,5 +15,5 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs"]
 }
