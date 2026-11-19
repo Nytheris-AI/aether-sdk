@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -34,7 +34,8 @@ use crate::types::{
     Amu, AmuId, AmuKind, AmuStatus, CandidateId, ContentHash, DreamReport, InboxCheckbox,
     InboxEntry, InboxReconcileReport, RecallEntry, RecallRequest, RecallResponse, ScopeTag,
     SourcePointer, StageMemoryRequest, SyncReport, VaultConfig, VaultMeta, VaultPath,
-    VaultStatusReport, VaultTier, VAULT_SCHEMA_VERSION,
+    VaultPullResponse, VaultPushRequest, VaultPushResponse, VaultStatusReport, VaultTier,
+    VAULT_SCHEMA_VERSION,
 };
 
 /// Orchestrator for Obsidian vault compilation, hybrid recall, Inbox reconciliation,
@@ -608,74 +609,245 @@ impl VaultEngine {
     /// extracts durable facts and temporal contradictions, and stages them in `Aether/Inbox.md`.
     pub async fn run_dream_pass(&self) -> Result<DreamReport> {
         let _guard = self.write_gate.lock().await;
-        let _ = reconcile_inbox_inner(
+        run_dream_pass_inner(
             &self.vault_root,
             &self.store,
             self.embedder.as_ref(),
             self.kv_adapter.as_ref(),
         )
-        .await?;
+        .await
+    }
 
-        let rules = IgnoreRules::load(&self.vault_root);
-        let scanned_files = scan_vault_markdown_files(&self.vault_root, rules).await?;
-        let watermarks = self.store.dream_watermarks().await?;
-        let active_amus = self.store.list_active_amus().await?;
+    /// Returns the indexed vault manifest plus current `Aether/Inbox.md` and `Aether/Compiled/Approved.md`
+    /// markdown snapshots for client plugins.
+    pub async fn pull_vault_state(&self) -> Result<VaultPullResponse> {
+        self.pull_vault_state_inner(None).await
+    }
 
-        let mut report = DreamReport::default();
-        let today = Utc::now().format("%Y-%m-%d").to_string();
+    /// Scoped variant of [`VaultEngine::pull_vault_state`] requiring `Reader+` role.
+    pub async fn pull_vault_state_as(&self, agent: &ScopedApiKey) -> Result<VaultPullResponse> {
+        self.pull_vault_state_inner(Some(agent)).await
+    }
 
-        for (rel_posix, bytes) in scanned_files {
-            let Ok(raw_md) = String::from_utf8(bytes.clone()) else {
-                continue;
-            };
-            if !dream::is_daily_or_fleeting_note(&rel_posix, &raw_md) {
-                continue;
+    async fn pull_vault_state_inner(
+        &self,
+        agent: Option<&ScopedApiKey>,
+    ) -> Result<VaultPullResponse> {
+        if let Some(a) = agent {
+            a.require_role(AgentRole::Reader)?;
+        }
+        let mut manifest_map = self.store.file_manifest().await?;
+        manifest_map.remove(INBOX_REL_PATH);
+        manifest_map.remove(APPROVED_MIRROR_REL_PATH);
+        let manifest: BTreeMap<String, ContentHash> = manifest_map.into_iter().collect();
+
+        let (inbox_markdown, approved_mirror_markdown) = self.render_mirrors(agent).await?;
+        Ok(VaultPullResponse {
+            manifest,
+            inbox_path: INBOX_REL_PATH.to_string(),
+            inbox_markdown,
+            approved_mirror_path: APPROVED_MIRROR_REL_PATH.to_string(),
+            approved_mirror_markdown,
+        })
+    }
+
+    /// Applies delta note pushes, private/deleted path removals, `.aetherignore`, and Inbox
+    /// updates from a client plugin, then compiles and returns refreshed Inbox/Approved mirrors.
+    pub async fn push_vault_changes(&self, req: VaultPushRequest) -> Result<VaultPushResponse> {
+        self.push_vault_changes_inner(None, req).await
+    }
+
+    /// Scoped variant of [`VaultEngine::push_vault_changes`] enforcing `Contributor+` role,
+    /// note write scopes, and `Admin` role for Inbox decisions or Dream consolidation.
+    pub async fn push_vault_changes_as(
+        &self,
+        agent: &ScopedApiKey,
+        req: VaultPushRequest,
+    ) -> Result<VaultPushResponse> {
+        self.push_vault_changes_inner(Some(agent), req).await
+    }
+
+    async fn push_vault_changes_inner(
+        &self,
+        agent: Option<&ScopedApiKey>,
+        req: VaultPushRequest,
+    ) -> Result<VaultPushResponse> {
+        if let Some(a) = agent {
+            a.require_role(AgentRole::Contributor)?;
+            if req.run_dream {
+                a.require_role(AgentRole::Admin)?;
             }
-            let hash = ContentHash::compute(&bytes);
-            if watermarks.get(&rel_posix) == Some(&hash) {
-                report.daily_notes_skipped_unchanged += 1;
-                continue;
-            }
+        }
 
-            report.daily_notes_scanned += 1;
-            let candidates = dream::extract_dream_candidates(&rel_posix, &raw_md, &active_amus);
-            let mut staged_for_note = 0usize;
-            for cand in candidates {
-                let candidate_id = CandidateId::from_proposal(
-                    &cand.proposed_fact,
-                    cand.target_note.as_deref(),
-                    cand.suggested_tier,
-                );
-                if cand.supersedes_amu_id.is_some() {
-                    report.contradictions_flagged += 1;
+        let deleted_paths: Vec<VaultPath> = req
+            .deleted_paths
+            .iter()
+            .map(VaultPath::parse)
+            .collect::<Result<Vec<_>>>()?;
+        let private_paths: Vec<VaultPath> = req
+            .private_paths
+            .iter()
+            .map(VaultPath::parse)
+            .collect::<Result<Vec<_>>>()?;
+
+        let mut inbox_from_notes: Option<String> = None;
+        let mut note_entries: Vec<(VaultPath, String)> = Vec::with_capacity(req.notes.len());
+        for note in req.notes {
+            let vp = VaultPath::parse(&note.path)?;
+            if vp.as_str().eq_ignore_ascii_case(INBOX_REL_PATH) {
+                if inbox_from_notes.is_none() {
+                    inbox_from_notes = Some(note.content);
                 }
-                let entry = InboxEntry {
-                    checkbox: InboxCheckbox::Pending,
-                    tier: cand.suggested_tier,
-                    scope: cand.scope,
-                    proposed_fact: cand.proposed_fact,
-                    candidate_id: candidate_id.clone(),
-                    target_link: cand.target_note,
-                    proposed_by: "dream-worker".into(),
-                    proposed_date: today.clone(),
-                    supersedes_amu_id: cand.supersedes_amu_id,
-                };
-                self.store.stage_candidate(&entry).await?;
-                report.candidates_staged += 1;
-                staged_for_note += 1;
-                report.staged_candidate_ids.push(candidate_id);
+                continue;
             }
-            self.store
-                .record_dream_watermark(&rel_posix, &hash, staged_for_note)
+            if vp.as_str().eq_ignore_ascii_case(APPROVED_MIRROR_REL_PATH) {
+                continue;
+            }
+            if let Some(a) = agent {
+                if !parser::is_private_note(&note.content) {
+                    for scope in parser::inspect_note_scopes(vp.as_str(), &note.content) {
+                        a.authorize_write_scope(&scope)?;
+                    }
+                }
+            }
+            note_entries.push((vp, note.content));
+        }
+
+        let effective_inbox = req.inbox_markdown.or(inbox_from_notes);
+        if let (Some(a), Some(raw_inbox)) = (agent, effective_inbox.as_deref()) {
+            let parsed_inbox = inbox::parse_inbox(raw_inbox);
+            if parsed_inbox
+                .iter()
+                .any(|entry| entry.checkbox != InboxCheckbox::Pending)
+            {
+                a.require_role(AgentRole::Admin)?;
+                for entry in parsed_inbox
+                    .iter()
+                    .filter(|entry| entry.checkbox != InboxCheckbox::Pending)
+                {
+                    a.authorize_write_scope(&entry.scope)?;
+                }
+            }
+        }
+
+        let reindexed = self.reconcile_embedder_meta().await?;
+        let _guard = self.write_gate.lock().await;
+
+        if let Some(ref raw_ignore) = req.aetherignore {
+            let ignore_path = self.vault_root.join(".aetherignore");
+            let _ = write_file_if_changed(&ignore_path, raw_ignore.as_bytes()).await?;
+        }
+        let rules = IgnoreRules::load(&self.vault_root);
+
+        let mut extra_private_skipped = 0usize;
+        let mut extra_files_removed = 0usize;
+
+        for vp in &private_paths {
+            if is_managed_aether_doc(vp.as_str()) {
+                continue;
+            }
+            extra_private_skipped +=
+                purge_private_note(&self.vault_root, &self.store, self.kv_adapter.as_ref(), vp)
+                    .await?;
+        }
+
+        for vp in &deleted_paths {
+            if is_managed_aether_doc(vp.as_str()) {
+                continue;
+            }
+            let full = vp.join_on(&self.vault_root);
+            if full.exists() && !rules.is_ignored(vp.as_str()) {
+                let _ = tokio::fs::remove_file(&full).await;
+            }
+            let (removed, evicted_kv) = self.store.remove_file(vp.as_str(), None).await?;
+            evict_kv_hashes(self.kv_adapter.as_ref(), &evicted_kv).await;
+            if removed {
+                extra_files_removed += 1;
+            }
+        }
+
+        for (vp, content) in note_entries {
+            if rules.is_ignored(vp.as_str()) {
+                let (removed, evicted_kv) = self.store.remove_file(vp.as_str(), None).await?;
+                evict_kv_hashes(self.kv_adapter.as_ref(), &evicted_kv).await;
+                if removed {
+                    extra_files_removed += 1;
+                }
+                continue;
+            }
+            if parser::is_private_note(&content) {
+                extra_private_skipped += purge_private_note(
+                    &self.vault_root,
+                    &self.store,
+                    self.kv_adapter.as_ref(),
+                    &vp,
+                )
                 .await?;
+                continue;
+            }
+            let full = vp.join_on(&self.vault_root);
+            let _ = write_file_if_changed(&full, content.as_bytes()).await?;
         }
 
-        if report.candidates_staged > 0 {
-            let pending = self.store.list_pending_candidates().await?;
-            write_inbox_atomically(&self.vault_root, &self.store, &pending).await?;
+        if let Some(ref raw_inbox) = effective_inbox {
+            let inbox_full = self.vault_root.join(INBOX_REL_PATH);
+            let _ = write_file_if_changed(&inbox_full, raw_inbox.as_bytes()).await?;
         }
 
-        Ok(report)
+        let mut sync_report = sync_vault_inner(
+            &self.vault_root,
+            &self.store,
+            self.embedder.as_ref(),
+            self.kv_adapter.as_ref(),
+            &self.config.project_id,
+        )
+        .await?;
+        sync_report.reindexed_amus = reindexed;
+        sync_report.private_skipped += extra_private_skipped;
+        sync_report.files_removed += extra_files_removed;
+
+        let dream_report = if req.run_dream {
+            Some(
+                run_dream_pass_inner(
+                    &self.vault_root,
+                    &self.store,
+                    self.embedder.as_ref(),
+                    self.kv_adapter.as_ref(),
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
+        let (inbox_markdown, approved_mirror_markdown) = self.render_mirrors(agent).await?;
+        Ok(VaultPushResponse {
+            sync_report,
+            dream_report,
+            inbox_path: INBOX_REL_PATH.to_string(),
+            inbox_markdown,
+            approved_mirror_path: APPROVED_MIRROR_REL_PATH.to_string(),
+            approved_mirror_markdown,
+        })
+    }
+
+    async fn render_mirrors(&self, agent: Option<&ScopedApiKey>) -> Result<(String, String)> {
+        let pending = match agent {
+            Some(a) => self.pending_inbox_as(a).await?,
+            None => self.pending_inbox().await?,
+        };
+        let inbox_markdown = inbox::render_inbox(&pending);
+
+        let mut approved = self.store.list_approved_candidates().await?;
+        if let Some(a) = agent {
+            approved.retain(|entry| a.can_read_resource_scopes(std::slice::from_ref(&entry.scope)));
+        }
+        let approved_mirror_markdown = if approved.is_empty() {
+            String::new()
+        } else {
+            inbox::render_approved_mirror(&approved)
+        };
+        Ok((inbox_markdown, approved_mirror_markdown))
     }
 
     /// Returns a live status snapshot for the vault engine, active embedder, HOT budget, and Inbox.
@@ -1645,6 +1817,115 @@ async fn reconcile_inbox_inner(
     })
 }
 
+async fn run_dream_pass_inner(
+    vault_root: &Path,
+    store: &VaultStore,
+    embedder: &dyn Embedder,
+    kv_adapter: &dyn KvCacheAdapter,
+) -> Result<DreamReport> {
+    let _ = reconcile_inbox_inner(vault_root, store, embedder, kv_adapter).await?;
+
+    let rules = IgnoreRules::load(vault_root);
+    let scanned_files = scan_vault_markdown_files(vault_root, rules).await?;
+    let watermarks = store.dream_watermarks().await?;
+    let active_amus = store.list_active_amus().await?;
+
+    let mut report = DreamReport::default();
+    let today = Utc::now().format("%Y-%m-%d").to_string();
+
+    for (rel_posix, bytes) in scanned_files {
+        let Ok(raw_md) = String::from_utf8(bytes.clone()) else {
+            continue;
+        };
+        if !dream::is_daily_or_fleeting_note(&rel_posix, &raw_md) {
+            continue;
+        }
+        let hash = ContentHash::compute(&bytes);
+        if watermarks.get(&rel_posix) == Some(&hash) {
+            report.daily_notes_skipped_unchanged += 1;
+            continue;
+        }
+
+        report.daily_notes_scanned += 1;
+        let candidates = dream::extract_dream_candidates(&rel_posix, &raw_md, &active_amus);
+        let mut staged_for_note = 0usize;
+        for cand in candidates {
+            let candidate_id = CandidateId::from_proposal(
+                &cand.proposed_fact,
+                cand.target_note.as_deref(),
+                cand.suggested_tier,
+            );
+            if cand.supersedes_amu_id.is_some() {
+                report.contradictions_flagged += 1;
+            }
+            let entry = InboxEntry {
+                checkbox: InboxCheckbox::Pending,
+                tier: cand.suggested_tier,
+                scope: cand.scope,
+                proposed_fact: cand.proposed_fact,
+                candidate_id: candidate_id.clone(),
+                target_link: cand.target_note,
+                proposed_by: "dream-worker".into(),
+                proposed_date: today.clone(),
+                supersedes_amu_id: cand.supersedes_amu_id,
+            };
+            store.stage_candidate(&entry).await?;
+            report.candidates_staged += 1;
+            staged_for_note += 1;
+            report.staged_candidate_ids.push(candidate_id);
+        }
+        store
+            .record_dream_watermark(&rel_posix, &hash, staged_for_note)
+            .await?;
+    }
+
+    if report.candidates_staged > 0 {
+        let pending = store.list_pending_candidates().await?;
+        write_inbox_atomically(vault_root, store, &pending).await?;
+    }
+
+    Ok(report)
+}
+
+fn is_managed_aether_doc(rel_path: &str) -> bool {
+    rel_path.eq_ignore_ascii_case(INBOX_REL_PATH)
+        || rel_path.eq_ignore_ascii_case(APPROVED_MIRROR_REL_PATH)
+}
+
+async fn write_file_if_changed(path: &Path, bytes: &[u8]) -> Result<bool> {
+    let new_hash = ContentHash::compute(bytes);
+    let unchanged = tokio::fs::read(path)
+        .await
+        .ok()
+        .is_some_and(|existing| ContentHash::compute(&existing) == new_hash);
+    if unchanged {
+        return Ok(false);
+    }
+    inbox::atomic_write_file(path, bytes)?;
+    Ok(true)
+}
+
+async fn purge_private_note(
+    vault_root: &Path,
+    store: &VaultStore,
+    kv_adapter: &dyn KvCacheAdapter,
+    vp: &VaultPath,
+) -> Result<usize> {
+    let full = vp.join_on(vault_root);
+    if full.exists() {
+        let is_private_on_disk = tokio::fs::read_to_string(&full)
+            .await
+            .ok()
+            .is_some_and(|disk_text| parser::is_private_note(&disk_text));
+        if !is_private_on_disk {
+            let _ = tokio::fs::remove_file(&full).await;
+        }
+    }
+    let (_, evicted_kv) = store.remove_file(vp.as_str(), None).await?;
+    evict_kv_hashes(kv_adapter, &evicted_kv).await;
+    Ok(usize::from(!full.exists()))
+}
+
 async fn evict_kv_hashes(kv_adapter: &dyn KvCacheAdapter, hashes: &[KvBlockHash]) {
     if hashes.is_empty() {
         return;
@@ -1729,7 +2010,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::types::{ScopeTag, TokenBudget, VaultTier};
+    use crate::types::{ScopeTag, TokenBudget, VaultNotePush, VaultTier};
 
     struct TempVault {
         root: PathBuf,
@@ -2507,5 +2788,106 @@ mod tests {
             stats_before_restart.persisted_blocks
         );
         reopened.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn push_vault_changes_and_pull_vault_state_sync_remote_notes_filter_private_and_reconcile_inbox(
+    ) {
+        let server_vault = TempVault::new();
+        let engine = VaultEngine::open(VaultConfig::in_memory(&server_vault.root))
+            .await
+            .unwrap();
+
+        let staged_cid = engine
+            .stage_memory(
+                StageMemoryRequest::new("Always enable SQLite WAL.", VaultTier::Warm)
+                    .with_scope("engineering")
+                    .unwrap()
+                    .with_target_note("Arch/DB.md"),
+            )
+            .await
+            .unwrap();
+
+        let push_resp = engine
+            .push_vault_changes(VaultPushRequest {
+                notes: vec![
+                    VaultNotePush {
+                        path: "Arch/DB.md".into(),
+                        content: "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Storage\nUse SQLite WAL mode.\n".into(),
+                    },
+                    VaultNotePush {
+                        path: "Personal/Diary.md".into(),
+                        content: "---\naether_tier: private\n---\n# Secret\nDo not index secret_token_999.\n".into(),
+                    },
+                    VaultNotePush {
+                        path: "Finance/Ledger.md".into(),
+                        content: "# Ledger\nPayroll account 1111.\n".into(),
+                    },
+                ],
+                deleted_paths: Vec::new(),
+                private_paths: Vec::new(),
+                inbox_markdown: None,
+                aetherignore: Some("Finance/\n".into()),
+                run_dream: false,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(push_resp.sync_report.files_updated, 1);
+        assert_eq!(push_resp.sync_report.private_skipped, 1);
+        assert!(!server_vault.root.join("Personal/Diary.md").exists());
+        assert!(push_resp.inbox_markdown.contains(staged_cid.as_str()));
+
+        let pulled = engine.pull_vault_state().await.unwrap();
+        assert!(pulled.manifest.contains_key("Arch/DB.md"));
+        assert!(!pulled.manifest.contains_key("Personal/Diary.md"));
+        assert!(!pulled.manifest.contains_key("Finance/Ledger.md"));
+
+        let approved_inbox = pulled.inbox_markdown.replace("- [ ] ", "- [x] ");
+        let push_2 = engine
+            .push_vault_changes(VaultPushRequest {
+                notes: Vec::new(),
+                deleted_paths: Vec::new(),
+                private_paths: vec!["Arch/DB.md".into()],
+                inbox_markdown: Some(approved_inbox),
+                aetherignore: None,
+                run_dream: false,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(push_2.sync_report.inbox_approved, 1);
+        assert_eq!(push_2.sync_report.private_skipped, 1);
+        assert!(!server_vault.root.join("Arch/DB.md").exists());
+        assert!(push_2
+            .approved_mirror_markdown
+            .contains(staged_cid.as_str()));
+        assert!(!push_2.inbox_markdown.contains(staged_cid.as_str()));
+
+        let recalled = engine
+            .recall(RecallRequest::new("SQLite WAL secret_token_999 Payroll"))
+            .await
+            .unwrap();
+        assert!(recalled
+            .formatted_context
+            .contains("Always enable SQLite WAL."));
+        assert!(!recalled.formatted_context.contains("secret_token_999"));
+        assert!(!recalled.formatted_context.contains("Payroll"));
+
+        server_vault.write(
+            "Shared/LocalPrivate.md",
+            "---\naether_tier: private\n---\n# Local\nKeep on local disk only.\n",
+        );
+        let shared_push = engine
+            .push_vault_changes(VaultPushRequest {
+                private_paths: vec!["Shared/LocalPrivate.md".into()],
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(server_vault.root.join("Shared/LocalPrivate.md").exists());
+        assert_eq!(shared_push.sync_report.private_skipped, 1);
+
+        engine.shutdown().await.unwrap();
     }
 }

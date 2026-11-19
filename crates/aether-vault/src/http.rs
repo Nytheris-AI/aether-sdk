@@ -20,7 +20,8 @@ use crate::inbox::{APPROVED_MIRROR_REL_PATH, INBOX_REL_PATH};
 use crate::kv::{KvStorageTier, ModelId, WarmKvRequest};
 use crate::mcp::McpServer;
 use crate::types::{
-    AmuId, CandidateId, RecallRequest, ScopeTag, StageMemoryRequest, TokenBudget, VaultTier,
+    AmuId, CandidateId, RecallRequest, ScopeTag, StageMemoryRequest, TokenBudget, VaultPushRequest,
+    VaultTier,
 };
 
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
@@ -318,6 +319,8 @@ async fn dispatch_route(
             }
         }
         ("POST", "/v1/git/sync") => handle_git_sync(engine, &req.body, agent).await,
+        ("GET", "/v1/vault/pull") => handle_vault_pull(engine, agent).await,
+        ("POST", "/v1/vault/push") => handle_vault_push(engine, &req.body, agent).await,
         ("POST", "/v1/recall") => handle_recall(engine, &req.body, agent).await,
         ("POST", "/v1/stage") => handle_stage(engine, &req.body, agent).await,
         ("POST", "/v1/inspect") => handle_inspect(engine, &req.body, agent).await,
@@ -445,6 +448,40 @@ async fn handle_git_sync(
         opts = opts.with_commit_message(msg);
     }
     match engine.git_sync(opts).await {
+        Ok(rep) => ok_payload(rep),
+        Err(err) => err_payload(err),
+    }
+}
+
+async fn handle_vault_pull(engine: &VaultEngine, agent: Option<&ScopedApiKey>) -> HttpTuple {
+    let res = match agent {
+        Some(a) => engine.pull_vault_state_as(a).await,
+        None => engine.pull_vault_state().await,
+    };
+    match res {
+        Ok(rep) => ok_payload(rep),
+        Err(err) => err_payload(err),
+    }
+}
+
+async fn handle_vault_push(
+    engine: &VaultEngine,
+    body: &[u8],
+    agent: Option<&ScopedApiKey>,
+) -> HttpTuple {
+    let parsed: VaultPushRequest = if body.iter().all(|b| b.is_ascii_whitespace()) {
+        VaultPushRequest::default()
+    } else {
+        match parse_json_body(body) {
+            Ok(req) => req,
+            Err(resp) => return resp,
+        }
+    };
+    let res = match agent {
+        Some(a) => engine.push_vault_changes_as(a, parsed).await,
+        None => engine.push_vault_changes(parsed).await,
+    };
+    match res {
         Ok(rep) => ok_payload(rep),
         Err(err) => err_payload(err),
     }
@@ -1394,6 +1431,198 @@ mod tests {
         let (code, _) =
             http_call_with_auth(addr, "GET", "/v1/status", Some(&reader_tok), None).await;
         assert_eq!(code, 401);
+
+        server.shutdown().await.unwrap();
+        engine.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn control_plane_vault_pull_push_feeds_mcp_queries_and_enforces_scopes() {
+        let server_vault = TempVault::new();
+        let engine = Arc::new(
+            VaultEngine::open(VaultConfig::in_memory(&server_vault.root))
+                .await
+                .unwrap(),
+        );
+        let admin_secret = crate::auth::ApiKeySecret::generate();
+        engine
+            .ensure_bootstrap_admin_key(
+                crate::auth::AgentId::new("bootstrap-admin").unwrap(),
+                &admin_secret,
+            )
+            .await
+            .unwrap();
+        let admin_tok = admin_secret.expose_secret();
+
+        let server = ControlPlaneServer::bind_with_auth(
+            "127.0.0.1:0".parse().unwrap(),
+            Arc::clone(&engine),
+            true,
+        )
+        .await
+        .unwrap();
+        let addr = server.local_addr();
+
+        let (_, reader_issued) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/auth/keys",
+            Some(admin_tok),
+            Some(r#"{"agent_id":"mcp-reader","role":"reader","scopes":["engineering"]}"#),
+        )
+        .await;
+        let reader_tok = reader_issued["secret"].as_str().unwrap().to_string();
+
+        let (_, contrib_issued) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/auth/keys",
+            Some(admin_tok),
+            Some(r#"{"agent_id":"obsidian-plugin","role":"contributor","scopes":["engineering"]}"#),
+        )
+        .await;
+        let contrib_tok = contrib_issued["secret"].as_str().unwrap().to_string();
+
+        let (code, _) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/vault/push",
+            Some(&reader_tok),
+            Some(r#"{"notes":[{"path":"Arch/Cache.md","content":"hello"}]}"#),
+        )
+        .await;
+        assert_eq!(code, 403);
+
+        let (code, _) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/vault/push",
+            Some(&contrib_tok),
+            Some(r#"{"notes":[{"path":"Finance/Budget.md","content":"---\naether_scope: finance\n---\n# Budget\nSecret 99"}]}"#),
+        )
+        .await;
+        assert_eq!(code, 403);
+
+        let push_payload = json!({
+            "notes": [
+                {
+                    "path": "Arch/Cache.md",
+                    "content": "---\naether_tier: warm\naether_scope:\n  - engineering\n---\n# Cache\nUse SGLang RadixAttention for prefix reuse.\n"
+                },
+                {
+                    "path": "Personal/Private.md",
+                    "content": "---\naether_tier: private\n---\n# Private\nsecret_vault_entry_xyz\n"
+                }
+            ]
+        })
+        .to_string();
+        let (code, pushed) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/vault/push",
+            Some(&contrib_tok),
+            Some(&push_payload),
+        )
+        .await;
+        assert_eq!(code, 200);
+        assert_eq!(pushed["sync_report"]["files_updated"], 1);
+        assert_eq!(pushed["sync_report"]["private_skipped"], 1);
+
+        let (code, pulled) =
+            http_call_with_auth(addr, "GET", "/v1/vault/pull", Some(&reader_tok), None).await;
+        assert_eq!(code, 200);
+        assert!(pulled["manifest"]["Arch/Cache.md"].is_string());
+        assert!(pulled["manifest"].get("Personal/Private.md").is_none());
+
+        let (code, mcp_recall) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/mcp",
+            Some(&reader_tok),
+            Some(
+                r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"aether_recall","arguments":{"query":"RadixAttention secret_vault_entry_xyz","structured":true}}}"#,
+            ),
+        )
+        .await;
+        assert_eq!(code, 200);
+        let dyn_ctx = mcp_recall["result"]["structuredContent"]["dynamic_context"]
+            .as_str()
+            .unwrap();
+        assert!(dyn_ctx.contains("RadixAttention"));
+        assert!(!dyn_ctx.contains("secret_vault_entry_xyz"));
+
+        let (code, mcp_inspect) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/mcp",
+            Some(&reader_tok),
+            Some(
+                r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"aether_inspect_source","arguments":{"source_pointer":"Arch/Cache.md#Cache"}}}"#,
+            ),
+        )
+        .await;
+        assert_eq!(code, 200);
+        assert!(mcp_inspect["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Use SGLang RadixAttention"));
+
+        let (code, _) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/vault/push",
+            Some(&contrib_tok),
+            Some(r#"{"run_dream":true}"#),
+        )
+        .await;
+        assert_eq!(code, 403);
+
+        let (code, _) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/vault/push",
+            Some(&contrib_tok),
+            Some(r#"{"inbox_markdown":"- [x] **[WARM | engineering]** Direct approval\n  - `amu_candidate_id`: `cand_abcdef`"}"#),
+        )
+        .await;
+        assert_eq!(code, 403);
+
+        let (code, dream_pushed) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/vault/push",
+            Some(admin_tok),
+            Some(
+                r#"{"notes":[{"path":"Daily/2026-11-19.md","content":"---\naether_scope: engineering\n---\n# Daily\n## Decisions\n- Decision: Always validate VaultPath at API boundaries."}],"run_dream":true}"#,
+            ),
+        )
+        .await;
+        assert_eq!(code, 200);
+        assert_eq!(dream_pushed["dream_report"]["candidates_staged"], 1);
+        assert!(dream_pushed["inbox_markdown"]
+            .as_str()
+            .unwrap()
+            .contains("Always validate VaultPath"));
+
+        let delete_payload = json!({
+            "deleted_paths": ["Arch/Cache.md"]
+        })
+        .to_string();
+        let (code, deleted_res) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/vault/push",
+            Some(&contrib_tok),
+            Some(&delete_payload),
+        )
+        .await;
+        assert_eq!(code, 200);
+        assert_eq!(deleted_res["sync_report"]["files_removed"], 1);
+
+        let (code, pulled_after) =
+            http_call_with_auth(addr, "GET", "/v1/vault/pull", Some(&reader_tok), None).await;
+        assert_eq!(code, 200);
+        assert!(pulled_after["manifest"].get("Arch/Cache.md").is_none());
 
         server.shutdown().await.unwrap();
         engine.shutdown().await.unwrap();

@@ -39,6 +39,7 @@ pub use types::{
     estimate_tokens, Amu, AmuId, AmuKind, AmuStatus, ApprovedMirrorEntry, CandidateId, ContentHash,
     DbTarget, DreamReport, InboxCheckbox, InboxEntry, InboxReconcileReport, RecallEntry,
     RecallRequest, RecallResponse, ScopeTag, SourcePointer, StageMemoryRequest, SyncReport,
-    TokenBudget, VaultConfig, VaultMeta, VaultPath, VaultStatusReport, VaultTier,
+    TokenBudget, VaultConfig, VaultMeta, VaultNotePush, VaultPath, VaultPullResponse,
+    VaultPushRequest, VaultPushResponse, VaultStatusReport, VaultTier,
     DEFAULT_SYNC_REINDEX_THRESHOLD, HOT_PROFILE_MAX_TOKENS, VAULT_SCHEMA_VERSION,
 };
