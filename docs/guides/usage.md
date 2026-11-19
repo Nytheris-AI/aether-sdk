@@ -203,15 +203,19 @@ Use `nytheris-aether-vault` when you want an Obsidian-native local memory daemon
 ### Run the `aether-mcp` Stdio & Control-Plane Server
 
 ```bash
-# Default DB: <vault>/.aether/aether.sqlite, default polling: 2000ms (0 disables polling)
-# Loopback Obsidian mode (no auth required when bound to 127.0.0.1 / ::1)
+# 1. Install the Obsidian companion plugin and print an mcp.json snippet
+cargo run -p nytheris-aether-vault --bin aether-mcp -- \
+  --init --vault /path/to/obsidian-vault --http-addr 127.0.0.1:14771
+
+# 2. Loopback Obsidian HTTP daemon (stays alive until Ctrl-C / SIGTERM without open stdin)
 cargo run -p nytheris-aether-vault --bin aether-mcp -- \
   --vault /path/to/obsidian-vault \
   --db /path/to/aether.sqlite \
   --watch-ms 2000 \
-  --http-addr 127.0.0.1:4771
+  --http-addr 127.0.0.1:14771 \
+  --http-only
 
-# Team HTTP gateway + KV-cache warming + scoped stdio MCP mode
+# 3. Team HTTP gateway + KV-cache warming + scoped stdio MCP mode
 cargo run -p nytheris-aether-vault --bin aether-mcp -- \
   --vault /path/to/team-vault \
   --http-addr 0.0.0.0:4771 \
@@ -230,9 +234,9 @@ When `--vault` is omitted, `aether-mcp` reads `AETHER_VAULT_PATH` or falls back 
 
 ### Team HTTP Gateway & Obsidian Companion Plugin
 
-Without `--require-auth`, `ControlPlaneServer::bind` rejects non-loopback addresses (`127.0.0.1` and `::1` only). Passing `--require-auth` (or calling `ControlPlaneServer::bind_with_auth`) enables non-loopback binds, requires `Authorization: Bearer aek_<hex>` on every request, and exposes the full endpoint surface.
+Without `--require-auth`, `ControlPlaneServer::bind` rejects non-loopback addresses (`127.0.0.1` and `::1` only). Passing `--require-auth` (or calling `ControlPlaneServer::bind_with_auth`) enables non-loopback binds, requires `Authorization: Bearer aek_<hex>` on every data route (`GET /v1/openapi.json` stays publicly readable for Custom GPT Actions and Open WebUI schema import), and exposes the full endpoint surface.
 
-- Local management and Inbox endpoints expose `GET /v1/status`, `GET /v1/inbox`, `POST /v1/inbox/decide` (`Admin`), `POST /v1/inbox/reconcile` (`Admin`), `POST /v1/dream` (`Admin`), and `POST /v1/sync` (`Admin`).
+- Local management and Inbox endpoints expose `GET /v1/openapi.json` (public OpenAPI `3.1.0`), `GET /v1/status`, `GET /v1/inbox`, `POST /v1/inbox/decide` (`Admin`), `POST /v1/inbox/reconcile` (`Admin`), `POST /v1/dream` (`Admin`), and `POST /v1/sync` (`Admin`).
 - Team memory, MCP, Git, and KV endpoints expose `POST /v1/recall` (`Reader+`), `POST /v1/stage` (`Contributor+`), `POST /v1/inspect` (`Reader+`), `POST /v1/mcp` (`Reader+`), `POST /v1/git/sync` (`Admin`), `POST /v1/kv/warm` (`Contributor+`), and `GET /v1/kv/stats` (`Reader+`).
 - Key management endpoints (`Admin`) expose `GET /v1/auth/keys`, `POST /v1/auth/keys`, and `POST /v1/auth/keys/revoke`.
 

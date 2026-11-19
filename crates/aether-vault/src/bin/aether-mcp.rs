@@ -703,7 +703,8 @@ mod tests {
 
     #[test]
     fn init_parses_defaults_and_optional_flags() {
-        let key = "aek_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let generated_key = ApiKeySecret::generate();
+        let key = generated_key.expose_secret();
         let parsed = parse_cli_args_with_env(
             &args(&[
                 "aether-mcp",
@@ -761,7 +762,8 @@ mod tests {
         )
         .expect("write manifest.json");
 
-        let key = "aek_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let generated_key = ApiKeySecret::generate();
+        let key = generated_key.expose_secret();
         let vault_str = vault.path().to_str().expect("utf8 path");
         let plugin_str = plugin_src.path().to_str().expect("utf8 path");
         let parsed = parse_cli_args_with_env(

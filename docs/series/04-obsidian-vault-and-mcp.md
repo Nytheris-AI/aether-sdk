@@ -62,9 +62,11 @@ Finance/
 
 Built-in rules already skip `.obsidian`, `.git`, `.trash`, `.aether`, `Aether/Inbox.md`, `Aether/Compiled`, `.canvas`, `.excalidraw`, and `.excalidraw.md`.
 
+5. *(Optional)* `.aetherhot` at the vault root pins existing folders or globs (for example `Memory/`) into `[AETHER_HOT_PROFILE]` without editing their YAML frontmatter.
+
 ## Step 2: Build and start `aether-mcp`
 
-Compile the release binary and start the vault daemon with its loopback HTTP control plane on `127.0.0.1:14771`:
+Compile the release binary and start the standalone HTTP daemon on `127.0.0.1:14771`:
 
 ```bash
 cargo build --release -p nytheris-aether-vault --bin aether-mcp
@@ -72,25 +74,21 @@ cargo build --release -p nytheris-aether-vault --bin aether-mcp
 ./target/release/aether-mcp \
   --vault /tmp/demo-vault \
   --watch-ms 2000 \
-  --http-addr 127.0.0.1:14771
+  --http-addr 127.0.0.1:14771 \
+  --http-only
 ```
 
-Leave this terminal open while Obsidian and your AI agents run. By default, `aether-mcp` stores the SQLite WAL database at `<vault>/.aether/aether.sqlite` and polls disk changes every `2000` ms (`--watch-ms 0` disables polling). Without `--require-auth`, `ControlPlaneServer::bind` rejects non-loopback addresses and accepts only `127.0.0.1` or `::1`.
+Leave this terminal open while Obsidian and your AI agents run (`--http-only` keeps the server running until `Ctrl-C` or `SIGTERM` without needing `stdin` open). By default, `aether-mcp` stores the SQLite WAL database at `<vault>/.aether/aether.sqlite` and polls disk changes every `2000` ms (`--watch-ms 0` disables polling). Without `--require-auth`, `ControlPlaneServer::bind` rejects non-loopback addresses and accepts only `127.0.0.1` or `::1`.
 
 ## Step 3: Build and install the Obsidian desktop plugin
 
-Build the CommonJS plugin bundle (`main.js`) from `obsidian-aether-plugin`:
+Build the CommonJS plugin bundle (`main.js`) from `obsidian-aether-plugin`, then install it into your vault with `--init` (or copy `main.js` and `manifest.json` manually):
 
 ```bash
 cd obsidian-aether-plugin
 npm run build
-```
-
-Create the plugin folder inside your Obsidian vault and copy `main.js` and `manifest.json` into it:
-
-```bash
-mkdir -p /tmp/demo-vault/.obsidian/plugins/obsidian-aether
-cp main.js manifest.json /tmp/demo-vault/.obsidian/plugins/obsidian-aether/
+cd ..
+./target/release/aether-mcp --init --vault /tmp/demo-vault --http-addr 127.0.0.1:14771
 ```
 
 Now enable and connect the plugin in Obsidian:
@@ -122,7 +120,7 @@ Add `aether-mcp` to your MCP client configuration (such as Claude Desktop, Curso
 
 Passing `--watch-ms 0` on the `stdio` client process lets it share `<vault>/.aether/aether.sqlite` over SQLite WAL without duplicating background scans when the HTTP daemon from Step 2 is already running. If you do not run a separate HTTP daemon, omit `--watch-ms 0` or add `--http-addr 127.0.0.1:14771` so the MCP host launches the full server.
 
-HTTP-capable agents can also call `POST http://127.0.0.1:14771/v1/mcp` directly without spawning a second process. Test all three MCP tools against the running server:
+HTTP-capable agents can also call `POST http://127.0.0.1:14771/v1/mcp` directly without spawning a second process, or import `GET http://127.0.0.1:14771/v1/openapi.json` (OpenAPI `3.1.0`) into REST action clients such as Custom GPT Actions or Open WebUI. Test all three MCP tools against the running server:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:14771/v1/mcp \

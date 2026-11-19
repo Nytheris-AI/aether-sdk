@@ -1,6 +1,6 @@
 # aether-mcp CLI, MCP Tools, HTTP API & Frontmatter
 
-This reference documents the `aether-mcp` binary CLI flags, MCP JSON-RPC 2.0 tool schemas, all 18 `ControlPlaneServer` HTTP endpoints, Obsidian YAML frontmatter keys, `.aetherignore` rules, and the `obsidian-aether-plugin` TypeScript API.
+This reference documents the `aether-mcp` binary CLI flags, MCP JSON-RPC 2.0 tool schemas, all 19 `ControlPlaneServer` HTTP endpoints, Obsidian YAML frontmatter keys, `.aetherignore` and `.aetherhot` rules, and the `obsidian-aether-plugin` TypeScript API.
 
 ## `aether-mcp` CLI flags and environment variables
 
@@ -12,9 +12,11 @@ CLI flags override environment variables when both are set.
 | `--db <path>` | None | `<vault>/.aether/aether.sqlite` | SQLite WAL index database path |
 | `--watch-ms <ms>` | None | `2000` | Vault polling interval in milliseconds (`0` disables polling) |
 | `--http-addr <addr>` | `AETHER_HTTP_ADDR` | Disabled | Bind `SocketAddr` for `ControlPlaneServer` (e.g. `127.0.0.1:14771`) |
+| `--http-only` | None | `false` | Serves `ControlPlaneServer` without `stdio` MCP until `Ctrl-C` / `SIGTERM` (requires `--http-addr`) |
+| `--init` | None | `false` | Installs `obsidian-aether-plugin`, writes `data.json`, prints `mcp.json`, and exits (`AETHER_PLUGIN_DIR` overrides plugin source) |
 | `--require-auth` | `AETHER_REQUIRE_AUTH` (`1`, `true`, `yes`) | `false` | Requires `Authorization: Bearer aek_<hex>` and allows non-loopback HTTP binds |
 | `--bootstrap-admin-key <key>` | `AETHER_BOOTSTRAP_ADMIN_KEY` | None | Ensures an `Admin` key for `AgentId` `"bootstrap-admin"` exists in SQLite |
-| `--api-key <key>` | `AETHER_API_KEY` | None | Binds the `stdio` MCP session to a validated `ScopedApiKey` |
+| `--api-key <key>` | `AETHER_API_KEY` | None | Binds the `stdio` MCP session (or `--init` `data.json` / `mcp.json`) to a validated `ScopedApiKey` |
 | `--kv-endpoint <url>` | `AETHER_KV_ENDPOINT` | None | Attaches `VllmLmCacheHttpAdapter` targeting an `http://` inference endpoint |
 | `--kv-model <id>` | `AETHER_KV_MODEL` | None | Sets `VaultConfig::default_kv_model` (`ModelId`) for recall `kv_hint` metadata |
 
@@ -61,12 +63,13 @@ Scoped sessions require the `Reader` role or higher.
 
 Reads live verbatim Markdown from disk while enforcing traversal guards, `.aetherignore`, `aether_tier: private` rejection, and scoped read authorization.
 
-## HTTP Control Plane & Team API (18 endpoints)
+## HTTP Control Plane & Team API (19 endpoints)
 
-When `require_auth` is `false`, `ControlPlaneServer::bind` permits only `127.0.0.1` and `::1`. When `require_auth` is `true`, every request (except `OPTIONS` CORS preflight returning `204 No Content`) requires `Authorization: Bearer aek_<hex>`. Errors return `{ "error": "..." }` with status `400`, `401`, `403`, `404`, or `500`.
+When `require_auth` is `false`, `ControlPlaneServer::bind` permits only `127.0.0.1` and `::1`. When `require_auth` is `true`, every request (except `OPTIONS` CORS preflight returning `204 No Content` and `GET /v1/openapi.json`) requires `Authorization: Bearer aek_<hex>`. Errors return `{ "error": "..." }` with status `400`, `401`, `403`, `404`, or `500`.
 
 | Method | Path | Minimum role (when authenticated) | Request body or query | Response fields |
 | --- | --- | --- | --- | --- |
+| `GET` | `/v1/openapi.json` | Public (unauthenticated) | None | OpenAPI `3.1.0` specification (`bearerAuth`, `/v1/status`, `/v1/recall`, `/v1/stage`, `/v1/inspect`) |
 | `GET` | `/v1/status` | Valid token (`Reader+`) | None | `VaultStatusReport` (`status`, `schema_version`, `embedder_id`, `embedding_dim`, `active_amus`, `pending_inbox_count`, `approved_inbox_count`, `hot_tokens_used`, `hot_token_budget`, `prefix_hash`) |
 | `GET` | `/v1/inbox` | `Reader` | None | `inbox_path`, `approved_mirror_path`, `pending` (`Vec<InboxEntry>`) |
 | `POST` | `/v1/inbox/decide` | `Admin` (plus write scope check) | `{ candidate_id, decision }` (`"approve"` or `"reject"`) | `{ candidate_id, decision, reconcile: InboxReconcileReport }` |
@@ -86,13 +89,13 @@ When `require_auth` is `false`, `ControlPlaneServer::bind` permits only `127.0.0
 | `POST` | `/v1/auth/keys` | `Admin` | `{ agent_id, role, scopes, expires_at? }` (RFC 3339) | `{ key: ScopedApiKey, secret: "aek_<64-hex>" }` |
 | `POST` | `/v1/auth/keys/revoke` | `Admin` | `{ key_id }` | `{ key_id, revoked: bool }` |
 
-## Obsidian YAML frontmatter and `.aetherignore`
+## Obsidian YAML frontmatter, `.aetherignore`, and `.aetherhot`
 
 ### YAML frontmatter keys
 
 | Key | Accepted values | Default |
 | --- | --- | --- |
-| `aether_tier` | `hot`, `warm`, `cold`, `private` | `warm` |
+| `aether_tier` | `hot`, `warm`, `cold`, `private` | `hot` if matched by `.aetherhot`, else `warm` |
 | `aether_scope` | Scalar, comma-separated, `[a, b]`, or YAML list of `ScopeTag` | `global` |
 | `aether_kind` | `profile`, `rule`, `decision`, `spec`, `fleeting` | `fleeting` under `Daily/` or `Journal/`, `spec` elsewhere |
 | `aether_status` | `active`, `superseded`, `archived` | `active` |
@@ -100,11 +103,13 @@ When `require_auth` is `false`, `ControlPlaneServer::bind` permits only `127.0.0
 | `superseded_by` | `amu_<32-hex>` or UUID | `None` |
 | `tags` | Scalar, `[a, b]`, or YAML list of tags (`#` stripped) | Empty |
 
-### Built-in exclusions and `.aetherignore`
+### Built-in exclusions, `.aetherignore`, and `.aetherhot`
 
 Built-in rules skip paths containing `.obsidian`, `.git`, `.trash`, or `.aether` segments, prefixes `Aether/Inbox.md` and `Aether/Compiled` (except `Aether/Compiled/Approved.md` during `inspect_source`), and extensions `.canvas`, `.excalidraw`, and `.excalidraw.md`.
 
 Place a `.aetherignore` file at the vault root to add newline-separated ignore rules. Blank lines and `#` comments are ignored. Trailing `/` matches directories, `*` and `?` match globs, and paths with `/` match from the vault root.
+
+Place a `.aetherhot` file at the vault root using the same path/glob syntax to promote matching notes into `hot` (`[AETHER_HOT_PROFILE]`) when YAML frontmatter does not specify an explicit `aether_tier`. Explicit frontmatter (`private`, `warm`, `cold`, `hot`) always takes precedence.
 
 ## `obsidian-aether-plugin` options and commands
 

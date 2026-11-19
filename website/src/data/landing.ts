@@ -138,21 +138,21 @@ export const CONVERGENCE_PHASES: readonly ConvergencePhase[] = [
     id: 0,
     num: 'STAGE 01 // INGEST',
     name: 'Multi-Surface Capture',
-    desc: 'Conversations, tool calls, documents, and agent actions stream into a single gRPC/HTTP write endpoint.',
+    desc: 'Conversations, tool calls, Obsidian Markdown vaults, and agent actions stream into unified Rust, HTTP, and MCP endpoints.',
     caption: 'STAGE 01 // MULTI-SURFACE CAPTURE',
   },
   {
     id: 1,
     num: 'STAGE 02 // CONSOLIDATE',
     name: 'Entity & Temporal Synthesis',
-    desc: 'Aether extracts durable facts, deduplicates redundant signals, and updates vector and graph indexes atomically.',
+    desc: 'Aether extracts durable facts, skips noise, deduplicates redundant signals, and updates vector and graph indexes atomically.',
     caption: 'STAGE 02 // ENTITY & TEMPORAL SYNTHESIS',
   },
   {
     id: 2,
     num: 'STAGE 03 // RECALL',
     name: 'Sub-Graph Context Assembly',
-    desc: 'Any downstream model queries the exact slice of memory relevant to the active task.',
+    desc: 'Any downstream model queries deterministic hot prefixes and diversity-capped hybrid slices over Rust, MCP, or OpenAPI 3.1.',
     caption: 'STAGE 03 // SUB-GRAPH CONTEXT ASSEMBLY',
   },
 ];
@@ -193,7 +193,7 @@ export const MEMORY_PLANES: readonly MemoryPlane[] = [
 export const RUST_CORE_SPECS: readonly MetaPair[] = [
   {label: 'MEMORY MODEL', value: 'ZERO-GC OWNERSHIP'},
   {label: 'CONCURRENCY', value: 'TOKIO ASYNC + WORK-STEALING'},
-  {label: 'WIRE PROTOCOL', value: 'TONIC gRPC · AXUM REST'},
+  {label: 'WIRE PROTOCOL', value: 'MCP · OPENAPI 3.1 · HTTP'},
 ];
 
 export const STACK_FILTER_OPTIONS: readonly StackFilterOption[] = [
@@ -277,7 +277,7 @@ export const STORAGE_INTEGRATIONS: readonly StorageIntegration[] = [
     shortCode: 'SQ',
     alt: 'SQLite brand logo',
     description:
-      'Zero-server single-file local memory combining SQLite WAL transactions, FTS5 lexical indexing, and SIMD-accelerated embedded vector search for desktop and edge agents.',
+      'Zero-server single-file local memory combining SQLite WAL transactions, FTS5 lexical indexing, PersonalizedPageRank, and the Obsidian Vault MCP daemon (.aetherhot, .aetherignore, and OpenAPI 3.1).',
     metaLabel: 'LICENSE',
     metaValue: 'PUBLIC DOMAIN / MIT',
   },
@@ -445,8 +445,8 @@ export const PROBE_ORDER: readonly ProbeId[] = ['arch', 'exec', 'support'];
 export const QUICKSTART_SNIPPETS: Record<QuickstartTab, QuickstartOption> = {
   clone: {
     id: 'clone',
-    label: 'GIT CLONE',
-    command: `git clone https://github.com/Nytheris-AI/aether-sdk.git\ncd aether-sdk\ncargo build --release`,
+    label: 'OBSIDIAN + MCP',
+    command: `cargo build --release -p nytheris-aether-vault --bin aether-mcp\n./target/release/aether-mcp --init --vault /path/to/vault\n./target/release/aether-mcp --vault /path/to/vault --http-addr 127.0.0.1:14771 --http-only`,
   },
   cargo: {
     id: 'cargo',

@@ -18,16 +18,17 @@ Build the `aether-mcp` binary from the repository root:
 cargo build --release -p nytheris-aether-vault --bin aether-mcp
 ```
 
-Start the daemon in local loopback mode against your Obsidian vault directory:
+Start the standalone HTTP daemon in local loopback mode against your Obsidian vault directory:
 
 ```bash
 ./target/release/aether-mcp \
   --vault /path/to/vault \
   --watch-ms 2000 \
-  --http-addr 127.0.0.1:3000
+  --http-addr 127.0.0.1:14771 \
+  --http-only
 ```
 
-Keep this terminal open. `aether-mcp` creates its SQLite WAL index at `<vault>/.aether/aether.sqlite` and polls for disk changes every `2000` milliseconds. Without `--require-auth`, `ControlPlaneServer::bind` accepts only `127.0.0.1` or `::1`.
+`--http-only` keeps `ControlPlaneServer` alive until `Ctrl-C` or `SIGTERM` without keeping `stdin` open. `aether-mcp` creates its SQLite WAL index at `<vault>/.aether/aether.sqlite` and polls for disk changes every `2000` milliseconds. Without `--require-auth`, `ControlPlaneServer::bind` accepts only `127.0.0.1` or `::1`.
 
 If you want to bind to a non-loopback address or require bearer tokens for a team setup, generate a bootstrap admin key and pass `--require-auth` with `--bootstrap-admin-key`:
 
@@ -51,11 +52,10 @@ cd obsidian-aether-plugin
 npm run build
 ```
 
-Create the plugin directory inside your vault and copy `main.js` and `manifest.json` into it:
+Create the plugin directory inside your vault and copy `main.js` and `manifest.json` into it (or run `aether-mcp --init` from the repository root to copy the plugin, write `data.json`, and print your `mcp.json` snippet in one step):
 
 ```bash
-mkdir -p /path/to/vault/.obsidian/plugins/obsidian-aether
-cp main.js manifest.json /path/to/vault/.obsidian/plugins/obsidian-aether/
+./target/release/aether-mcp --init --vault /path/to/vault --http-addr 127.0.0.1:14771
 ```
 
 Enable the plugin in Obsidian Desktop:
@@ -69,7 +69,7 @@ Enable the plugin in Obsidian Desktop:
 
 Open **Settings** and select **Aether Memory Companion**. Configure these fields:
 
-1. Set **Aether control-plane URL** to `http://127.0.0.1:3000` for local loopback mode, or to your `https://` gateway URL for a remote server.
+1. Set **Aether control-plane URL** to `http://127.0.0.1:14771` for local loopback mode, or to your `https://` gateway URL for a remote server.
 2. Leave **API key** empty for loopback mode without authentication. For an authenticated server, paste your `aek_...` bearer token.
 3. Click **Test Connection**. Obsidian calls `GET /v1/vault/pull` and shows a notice with the number of indexed notes visible to your token.
 4. Keep **Live vault sync** turned on so Obsidian pushes edits, renames, and deletions after startup layout finishes.
@@ -107,6 +107,15 @@ Finance/
 
 Built-in rules already skip `.obsidian`, `.git`, `.trash`, `.aether`, `Aether/Inbox.md`, `Aether/Compiled`, `.canvas`, `.excalidraw`, and `.excalidraw.md`.
 
+To pin existing notes or folders into `[AETHER_HOT_PROFILE]` without editing their YAML frontmatter, create `.aetherhot` at the vault root using the same path/glob syntax:
+
+```text
+Memory/
+Profile/*.md
+```
+
+Notes matched by `.aetherhot` promote to `hot` unless their frontmatter sets an explicit `aether_tier` (`private`, `warm`, `cold`, or `hot`).
+
 To verify that `private` notes stay off the server, run **Sync Vault with Aether** and confirm the notice reports a non-zero `private-skipped` count. You can also query `POST /v1/inspect` or `aether_inspect_source` for the private note path and confirm the server rejects it.
 
 ## Step 5: Connect an AI agent
@@ -132,7 +141,7 @@ Pass `--watch-ms 0` when the HTTP daemon from Step 1 is already running. Both pr
 
 ### Connect over HTTP or HTTPS
 
-HTTP-capable agents can send JSON-RPC 2.0 requests directly to `POST http://127.0.0.1:3000/v1/mcp` (or `https://<host>/v1/mcp` with an `Authorization: Bearer aek_...` header when `--require-auth` is enabled).
+HTTP-capable agents can send JSON-RPC 2.0 requests directly to `POST http://127.0.0.1:14771/v1/mcp`, or import `GET http://127.0.0.1:14771/v1/openapi.json` (OpenAPI `3.1.0`) into REST tool clients such as ChatGPT Custom GPT Actions or Open WebUI (`https://<host>/v1/openapi.json` with `Authorization: Bearer aek_...` when `--require-auth` is enabled).
 
 ### Use the three MCP tools
 
