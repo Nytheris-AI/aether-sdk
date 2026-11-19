@@ -2750,12 +2750,12 @@ mod tests {
 
         let gitignore = fs::read_to_string(bob_dir.join(".gitignore")).unwrap();
         assert!(gitignore.contains(".aether/"));
-        assert!(gitignore.contains(".obsidian/plugins/obsidian-aether/data.json"));
+        assert!(gitignore.contains(".obsidian/plugins/aether-memory/data.json"));
         let check_plugin_secret = std::process::Command::new("git")
             .args([
                 "check-ignore",
                 "-q",
-                ".obsidian/plugins/obsidian-aether/data.json",
+                ".obsidian/plugins/aether-memory/data.json",
             ])
             .current_dir(&bob_dir)
             .output()

@@ -285,11 +285,11 @@ const REQUIRED_GITIGNORE_RULES: &[(&str, &[&str])] = &[
         &[".aether/", ".aether", ".aether/*"],
     ),
     (
-        ".obsidian/plugins/obsidian-aether/data.json",
+        ".obsidian/plugins/aether-memory/data.json",
         &[
-            ".obsidian/plugins/obsidian-aether/data.json",
-            ".obsidian/plugins/obsidian-aether/*",
-            ".obsidian/plugins/obsidian-aether/",
+            ".obsidian/plugins/aether-memory/data.json",
+            ".obsidian/plugins/aether-memory/*",
+            ".obsidian/plugins/aether-memory/",
             ".obsidian/",
             ".obsidian",
         ],
@@ -707,13 +707,13 @@ Use Valkey.
 
         let gitignore = std::fs::read_to_string(dir.join(".gitignore")).unwrap();
         assert!(gitignore.contains(".aether/"));
-        assert!(gitignore.contains(".obsidian/plugins/obsidian-aether/data.json"));
+        assert!(gitignore.contains(".obsidian/plugins/aether-memory/data.json"));
 
         let check_data = Command::new("git")
             .args([
                 "check-ignore",
                 "-q",
-                ".obsidian/plugins/obsidian-aether/data.json",
+                ".obsidian/plugins/aether-memory/data.json",
             ])
             .current_dir(&dir)
             .output()

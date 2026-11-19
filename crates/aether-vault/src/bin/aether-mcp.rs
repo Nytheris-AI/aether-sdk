@@ -14,7 +14,7 @@ use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 const DEFAULT_INIT_ENDPOINT_URL: &str = "http://127.0.0.1:14771";
-const OBSIDIAN_PLUGIN_ID: &str = "obsidian-aether";
+const OBSIDIAN_PLUGIN_ID: &str = "aether-memory";
 const SOURCE_PLUGIN_DIR_NAME: &str = "obsidian-aether-plugin";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -758,7 +758,7 @@ mod tests {
         .expect("write main.js");
         fs::write(
             plugin_src.path().join("manifest.json"),
-            r#"{"id":"obsidian-aether","version":"0.4.0"}"#,
+            r#"{"id":"aether-memory","version":"0.4.0"}"#,
         )
         .expect("write manifest.json");
 
@@ -788,7 +788,7 @@ mod tests {
 
         assert!(report.copied_main_js);
         assert!(report.copied_manifest_json);
-        let dest = vault.path().join(".obsidian/plugins/obsidian-aether");
+        let dest = vault.path().join(".obsidian/plugins/aether-memory");
         assert_eq!(report.plugin_dir, dest);
         assert_eq!(
             fs::read_to_string(dest.join("main.js")).expect("read main.js"),
@@ -796,7 +796,7 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(dest.join("manifest.json")).expect("read manifest.json"),
-            r#"{"id":"obsidian-aether","version":"0.4.0"}"#
+            r#"{"id":"aether-memory","version":"0.4.0"}"#
         );
 
         let data: Value =
@@ -827,7 +827,7 @@ mod tests {
         fs::create_dir_all(&cwd_plugin).expect("create cwd plugin dir");
         fs::write(
             cwd_plugin.join("manifest.json"),
-            r#"{"id":"obsidian-aether"}"#,
+            r#"{"id":"aether-memory"}"#,
         )
         .expect("write manifest.json");
 
@@ -842,6 +842,10 @@ mod tests {
 
         assert!(!report.copied_main_js);
         assert!(report.copied_manifest_json);
+        assert_eq!(
+            report.plugin_dir,
+            vault.path().join(".obsidian/plugins/aether-memory")
+        );
         assert_eq!(report.endpoint_url, "http://127.0.0.1:14771");
 
         let data: Value =
