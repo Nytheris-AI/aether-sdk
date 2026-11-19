@@ -1,0 +1,9 @@
+# Historical false-positive test fixtures (`let key = "aek_012345..."` in unit tests)
+bcbe9ec34006d21d2221d3dce17115c06dec6a34:crates/aether-vault/src/bin/aether-mcp.rs:generic-api-key:706
+bcbe9ec34006d21d2221d3dce17115c06dec6a34:crates/aether-vault/src/bin/aether-mcp.rs:generic-api-key:764
+4416276670386e0480c5f2294bd8841f5a94fe63:crates/aether-vault/src/bin/aether-mcp.rs:generic-api-key:706
+4416276670386e0480c5f2294bd8841f5a94fe63:crates/aether-vault/src/bin/aether-mcp.rs:generic-api-key:764
+5e9bbf34e416cd69f7c0df9dc3a7796accbb1386:crates/aether-vault/src/bin/aether-mcp.rs:generic-api-key:706
+5e9bbf34e416cd69f7c0df9dc3a7796accbb1386:crates/aether-vault/src/bin/aether-mcp.rs:generic-api-key:764
+b184364d56cc034a0f97b98d2da3cbcb40412332:crates/aether-vault/src/bin/aether-mcp.rs:generic-api-key:706
+b184364d56cc034a0f97b98d2da3cbcb40412332:crates/aether-vault/src/bin/aether-mcp.rs:generic-api-key:764
