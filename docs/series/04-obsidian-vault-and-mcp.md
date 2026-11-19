@@ -163,4 +163,20 @@ You receive a JSON `DreamReport` showing `daily_notes_scanned`, `daily_notes_ski
 
 Check overall vault health anytime with `GET http://127.0.0.1:4771/v1/status`.
 
+## Step 6: Push notes directly from Obsidian (`POST /v1/vault/push`)
+
+When Obsidian runs separately from `aether-mcp` (or when `obsidian-aether-plugin` handles live note sync), the plugin pulls the server's indexed SHA-256 manifest via `GET /v1/vault/pull`, filters `aether_tier: private` and ignored notes client-side, pushes changed notes and deletions to `POST /v1/vault/push`, and writes the returned `Aether/Inbox.md` and `Aether/Compiled/Approved.md` snapshots back into Obsidian:
+
+```bash
+curl -sS http://127.0.0.1:4771/v1/vault/pull
+curl -sS -X POST http://127.0.0.1:4771/v1/vault/push \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "notes": [{"path": "Arch/DB.md", "content": "---\naether_tier: warm\naether_scope: engineering\n---\n# Schema\nUse SQLite WAL mode.\n"}],
+    "private_paths": ["Private/Journal.md"]
+  }'
+```
+
+AI agents connected over MCP (`aether_recall`, `aether_inspect_source`, `aether_stage_memory`) immediately query those compiled memories without direct access to the user's Obsidian process.
+
 **Next in series.** Continue to [Part 5: Team Git Sync, Scoped Auth & GPU KV Warming](./05-team-git-auth-and-kv-warming.md).
