@@ -19,7 +19,7 @@ You can install the plugin from Obsidian Community Plugins, through BRAT, manual
 
 1. Install and enable the **Obsidian42 BRAT** plugin.
 2. Open the **BRAT** plugin settings and select **Add beta plugin**.
-3. Enter `https://github.com/Nytheris-AI/aether-sdk` and add the plugin from release assets.
+3. Enter the dedicated plugin repository (`https://github.com/Nytheris-AI/aether-memory` or your mirrored plugin repository with `manifest.json` at its root) and add the plugin from release assets.
 4. Enable **Aether Memory Companion** under **Community plugins**.
 
 ### Manual release installation
