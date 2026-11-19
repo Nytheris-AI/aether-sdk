@@ -36,13 +36,13 @@ pub(crate) struct ParsedSection {
     pub(crate) embedding: Vec<f32>,
 }
 
-/// Canonical `.aetherignore` plus built-in exclusion evaluator.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct IgnoreRules {
+/// Shared newline-separated path/glob rule evaluator (used by `.aetherignore` and `.aetherhot`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct PathRules {
     patterns: Vec<String>,
 }
 
-impl IgnoreRules {
+impl PathRules {
     pub(crate) fn from_str(contents: &str) -> Self {
         let patterns = contents
             .lines()
@@ -54,11 +54,39 @@ impl IgnoreRules {
         Self { patterns }
     }
 
-    pub(crate) fn load(vault_root: &Path) -> Self {
-        let ignore_path = vault_root.join(".aetherignore");
-        match std::fs::read_to_string(ignore_path) {
+    pub(crate) fn load_file(path: &Path) -> Self {
+        match std::fs::read_to_string(path) {
             Ok(contents) => Self::from_str(&contents),
             Err(_) => Self::default(),
+        }
+    }
+
+    pub(crate) fn matches_normalized(&self, rel: &str) -> bool {
+        !rel.is_empty()
+            && self
+                .patterns
+                .iter()
+                .any(|pat| matches_path_pattern(rel, pat))
+    }
+}
+
+/// Canonical `.aetherignore` plus built-in exclusion evaluator.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct IgnoreRules {
+    rules: PathRules,
+}
+
+impl IgnoreRules {
+    #[cfg(test)]
+    pub(crate) fn from_str(contents: &str) -> Self {
+        Self {
+            rules: PathRules::from_str(contents),
+        }
+    }
+
+    pub(crate) fn load(vault_root: &Path) -> Self {
+        Self {
+            rules: PathRules::load_file(&vault_root.join(".aetherignore")),
         }
     }
 
@@ -106,9 +134,7 @@ impl IgnoreRules {
             return true;
         }
 
-        self.patterns
-            .iter()
-            .any(|pat| matches_ignore_pattern(rel, pat))
+        self.rules.matches_normalized(rel)
     }
 }
 
@@ -128,7 +154,7 @@ fn path_matches_prefix(path: &str, prefix: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
-fn matches_ignore_pattern(rel: &str, pattern: &str) -> bool {
+fn matches_path_pattern(rel: &str, pattern: &str) -> bool {
     if let Some(dir) = pattern.strip_suffix('/') {
         return path_matches_prefix(rel, dir) || rel.split('/').any(|seg| seg == dir);
     }
