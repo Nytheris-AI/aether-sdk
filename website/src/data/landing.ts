@@ -6,6 +6,20 @@ export type StorageCategory = Exclude<StackFilter, 'all'>;
 
 export type ProbeId = 'arch' | 'exec' | 'support';
 
+export type HeroMemoryModeId = 'hot' | 'warm' | 'private';
+
+export interface HeroMemoryMode {
+  readonly id: HeroMemoryModeId;
+  readonly label: string;
+  readonly badge: string;
+  readonly vaultSample: string;
+  readonly ruleHint: string;
+  readonly engineStage: string;
+  readonly routeSummary: string;
+  readonly clientTargets: readonly string[];
+  readonly blocked: boolean;
+}
+
 export type InspectorTab = 'sdk' | 'payload';
 
 export type QuickstartTab = 'clone' | 'cargo';
@@ -100,8 +114,43 @@ export interface ConvergenceState {
 
 export const GITHUB_REPO_URL = 'https://github.com/Nytheris-AI/aether-sdk';
 
-export const GLB_MODEL_URL =
-  'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb';
+export const HERO_MEMORY_MODE_ORDER: readonly HeroMemoryModeId[] = ['hot', 'warm', 'private'];
+
+export const HERO_MEMORY_MODES: Record<HeroMemoryModeId, HeroMemoryMode> = {
+  hot: {
+    id: 'hot',
+    label: 'HOT PREFIX',
+    badge: '[AETHER_HOT_PROFILE]',
+    vaultSample: 'Memory/brand-voice.md',
+    ruleHint: 'Pinned via .aetherhot or aether_tier: hot',
+    engineStage: 'Deterministic amu_id sort · prefix_hash',
+    routeSummary: 'Served in static_prefix on every recall for KV-cache reuse.',
+    clientTargets: ['Cursor / Claude (MCP)', 'ChatGPT (OpenAPI 3.1)', 'Obsidian Plugin'],
+    blocked: false,
+  },
+  warm: {
+    id: 'warm',
+    label: 'WARM HYBRID',
+    badge: '[AETHER_RECALL_CONTEXT]',
+    vaultSample: 'Playbooks/script-workflow.md',
+    ruleHint: 'SQLite FTS5 + Vector + Wikilink PPR',
+    engineStage: 'CrossEncoderReranker · max 2/heading',
+    routeSummary: 'Token-budgeted sections retrieved by aether_recall.',
+    clientTargets: ['Cursor / Claude (MCP)', 'ChatGPT (OpenAPI 3.1)', 'Aether/Inbox.md'],
+    blocked: false,
+  },
+  private: {
+    id: 'private',
+    label: 'PRIVATE GUARD',
+    badge: 'LOCAL DISK ONLY',
+    vaultSample: 'Private/keys.md',
+    ruleHint: 'Blocked by aether_tier: private or .aetherignore',
+    engineStage: 'Dropped at parse boundary · 0 SQLite rows',
+    routeSummary: 'Never indexed, never cached, and rejected by aether_inspect_source.',
+    clientTargets: ['Stays on Local Disk'],
+    blocked: true,
+  },
+};
 
 export const NAV_SECTIONS: readonly NavSectionItem[] = [
   {id: 'architecture', label: '01 // Convergence'},
@@ -113,15 +162,15 @@ export const NAV_SECTIONS: readonly NavSectionItem[] = [
 
 export const HERO_META_ITEMS: readonly MetaPair[] = [
   {label: 'RUNTIME', value: 'NATIVE RUST'},
-  {label: 'VECTOR STORE', value: 'OPEN-SOURCE ANN'},
-  {label: 'GRAPH STORE', value: 'PROPERTY GRAPH'},
+  {label: 'VAULT SYNC', value: 'OBSIDIAN NATIVE'},
+  {label: 'SERVING', value: 'MCP · OPENAPI 3.1'},
   {label: 'LICENSE', value: 'APACHE-2.0'},
 ];
 
 export const HERO_DIAGRAM_STATS: readonly MetaPair[] = [
-  {label: 'ENGINE', value: 'NATIVE RUST'},
-  {label: 'BACKENDS', value: 'VECTOR + GRAPH'},
-  {label: 'ISOLATION', value: 'SCOPED TENANT'},
+  {label: 'VAULT', value: 'OBSIDIAN NATIVE'},
+  {label: 'SERVING', value: 'MCP · OPENAPI 3.1'},
+  {label: 'BOUNDARY', value: 'LOCAL + SCOPED'},
 ];
 
 export const TICKER_ITEMS: readonly string[] = [

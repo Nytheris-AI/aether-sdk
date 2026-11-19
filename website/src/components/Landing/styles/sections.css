@@ -133,74 +133,235 @@
   background-image: var(--tex-hatch-accent);
 }
 
-.aether-landing .core-stage {
+.aether-landing .vault-hero-stage {
   flex: 1;
-  position: relative;
-  min-height: 410px;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: grab;
-  user-select: none;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 20px 20px;
   background-image: var(--tex-halftone-cobalt);
-  background-size: 10px 10px;
+  background-size: 12px 12px;
   background-position: center center;
 }
 
-.aether-landing .core-stage:active {
-  cursor: grabbing;
+.aether-landing .vault-mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--c-line-strong);
+  background: var(--c-surface);
 }
 
-.aether-landing .core-stage::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background:
-    linear-gradient(to right, var(--c-surface) 0%, var(--c-surface) 12%, transparent 12%, transparent 88%, var(--c-surface) 88%, var(--c-surface) 100%),
-    linear-gradient(to bottom, var(--c-surface) 0%, var(--c-surface) 10%, transparent 10%, transparent 90%, var(--c-surface) 90%, var(--c-surface) 100%);
-}
-
-.aether-landing .core-stage::after {
-  content: '';
-  position: absolute;
-  inset: 10% 12%;
-  pointer-events: none;
-  border: 1px dashed var(--c-line);
-  z-index: 0;
-}
-
-.aether-landing .hero-3d-mount {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 1;
-}
-
-.aether-landing .hero-3d-mount canvas {
-  display: block;
-  width: 100% !important;
-  height: 100% !important;
-  outline: none;
-}
-
-.aether-landing .model-status-pill {
-  position: absolute;
-  left: 16px;
-  bottom: 14px;
-  z-index: 2;
+.aether-landing .vault-mode-tab {
+  background: transparent;
+  border: none;
+  border-right: 1px solid var(--c-line);
+  padding: 8px 6px;
   font-family: var(--font-mono);
   font-size: 10px;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--c-ink-subtle);
-  background: var(--c-surface-glass);
+  color: var(--c-ink-muted);
+  cursor: pointer;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.aether-landing .vault-mode-tab:last-child {
+  border-right: none;
+}
+
+.aether-landing .vault-mode-tab:hover {
+  color: var(--c-ink);
+  background: var(--c-surface-tint);
+}
+
+.aether-landing .vault-mode-tab.active {
+  color: var(--c-accent);
+  background-image: var(--tex-hatch-accent);
+  font-weight: 600;
+}
+
+.aether-landing .vault-mode-tab.active.is-blocked {
+  color: var(--c-ink);
+  background-image: var(--tex-hatch-ink);
+}
+
+.aether-landing .vault-topology {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0;
+}
+
+.aether-landing .vault-node {
+  border: 1px solid var(--c-line-strong);
+  background: var(--c-surface);
+  padding: 12px 14px;
+}
+
+.aether-landing .vault-node-engine {
+  border-color: var(--c-accent-line);
+}
+
+.aether-landing .vault-node-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.aether-landing .vault-brand-badge {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
   border: 1px solid var(--c-line);
-  padding: 4px 9px;
-  pointer-events: none;
-  transition: opacity 0.35s ease;
+  background: var(--c-surface-pure);
+  flex-shrink: 0;
+}
+
+.aether-landing .vault-node-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.aether-landing .vault-node-kicker {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--c-ink-subtle);
+}
+
+.aether-landing .vault-node-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-ink);
+  line-height: 1.25;
+}
+
+.aether-landing .vault-pill {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  color: var(--c-accent);
+  border: 1px solid var(--c-accent-line);
+  background: var(--c-accent-soft);
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+
+.aether-landing .vault-note-row {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--c-line);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.aether-landing .vault-note-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--c-ink);
+  background: var(--c-surface-tint);
+  border: 1px solid var(--c-line);
+  padding: 2px 6px;
+}
+
+.aether-landing .vault-note-rule {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--c-ink-muted);
+}
+
+.aether-landing .vault-engine-summary {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--c-ink-muted);
+}
+
+.aether-landing .vault-pipe {
+  position: relative;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.aether-landing .vault-pipe-rail {
+  position: absolute;
+  left: 28px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--c-line-strong);
+}
+
+.aether-landing .vault-pipe-pulse {
+  position: absolute;
+  left: 25px;
+  width: 7px;
+  height: 7px;
+  background: var(--c-accent);
+  opacity: 0.85;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .aether-landing .vault-pipe-pulse {
+    animation: aether-pipe-flow 2s ease-in-out infinite;
+  }
+
+  .aether-landing .vault-pipe-pulse.delay {
+    animation-delay: 0.6s;
+  }
+}
+
+.aether-landing .vault-hero-stage.is-paused .vault-pipe-pulse {
+  animation-play-state: paused;
+  opacity: 0.45;
+}
+
+.aether-landing .vault-pipe-pulse.is-blocked {
+  background: var(--c-ink-subtle);
+  animation: none;
+  opacity: 0.5;
+}
+
+.aether-landing .vault-pipe-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--c-ink-muted);
+  background: var(--c-surface);
+  border: 1px solid var(--c-line);
+  padding: 2px 8px;
+}
+
+.aether-landing .vault-clients {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.aether-landing .vault-client-chip {
+  flex: 1 1 auto;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--c-ink);
+  background: var(--c-surface);
+  border: 1px solid var(--c-line-strong);
+  padding: 7px 10px;
+}
+
+.aether-landing .vault-clients.is-blocked .vault-client-chip {
+  color: var(--c-ink-muted);
+  border-style: dashed;
 }
 
 .aether-landing .diagram-footer {
