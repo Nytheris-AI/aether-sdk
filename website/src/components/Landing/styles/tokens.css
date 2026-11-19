@@ -90,3 +90,10 @@
   from { transform: translateX(0); }
   to { transform: translateX(-50%); }
 }
+
+@keyframes aether-pipe-flow {
+  0% { transform: translateY(-10px); opacity: 0; }
+  30% { opacity: 1; }
+  75% { opacity: 1; }
+  100% { transform: translateY(10px); opacity: 0; }
+}

@@ -2,6 +2,8 @@ import {describe, it} from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CONVERGENCE_PHASES,
+  HERO_MEMORY_MODES,
+  HERO_MEMORY_MODE_ORDER,
   MEMORY_PLANES,
   QUICKSTART_SNIPPETS,
   SANDBOX_PROBES,
@@ -12,12 +14,15 @@ import {
 } from './landing.ts';
 
 describe('landing domain data and pure helpers', () => {
-  it('defines the expected core counts for planes, integrations, probes, and quickstart snippets', () => {
+  it('defines the expected core counts for planes, integrations, probes, hero modes, and quickstart snippets', () => {
     assert.equal(CONVERGENCE_PHASES.length, 3);
     assert.equal(MEMORY_PLANES.length, 3);
     assert.equal(STORAGE_INTEGRATIONS.length, 7);
     assert.equal(Object.keys(SANDBOX_PROBES).length, 3);
     assert.equal(Object.keys(QUICKSTART_SNIPPETS).length, 2);
+    assert.deepEqual(HERO_MEMORY_MODE_ORDER, ['hot', 'warm', 'private']);
+    assert.equal(HERO_MEMORY_MODES.hot.vaultSample, 'Memory/brand-voice.md');
+    assert.equal(HERO_MEMORY_MODES.private.blocked, true);
   });
 
   it('filters storage integrations by category and preserves all 7 for "all"', () => {

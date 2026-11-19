@@ -1,7 +1,7 @@
 import type {ReactNode} from 'react';
 import Link from '@docusaurus/Link';
 import {GITHUB_REPO_URL, HERO_META_ITEMS, type SectionId} from '../../data/landing';
-import {NeuralCore3D} from './NeuralCore3D';
+import {MemoryVaultVisual} from './MemoryVaultVisual';
 
 interface HeroSectionProps {
   readonly onScrollToSection: (id: SectionId) => void;
@@ -40,8 +40,8 @@ export function HeroSection({onScrollToSection}: HeroSectionProps): ReactNode {
 
               <p className="hero-lead reveal-up" style={{['--d' as string]: '200ms'}}>
                 Stateless prompts forget the moment a window closes. Open-source and built natively
-                in Rust, Aether unifies episodic, semantic, and procedural context directly atop
-                your vector, embedded, cache, and graph databases.
+                in Rust, Aether turns Obsidian vaults and vector, cache, and graph stores into
+                shared, privacy-bounded memory served over MCP and OpenAPI 3.1.
               </p>
             </div>
 
@@ -65,7 +65,7 @@ export function HeroSection({onScrollToSection}: HeroSectionProps): ReactNode {
             </div>
           </div>
 
-          <NeuralCore3D />
+          <MemoryVaultVisual />
         </div>
       </div>
     </section>
