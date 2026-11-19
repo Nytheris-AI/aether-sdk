@@ -74,7 +74,7 @@ curl -sS -X POST http://127.0.0.1:4771/v1/git/sync \
 
 During `git_sync`, `VaultEngine` executes five steps:
 
-1. Ensures `.gitignore` ignores `.aether/` so local SQLite files never enter Git history.
+1. Ensures `.gitignore` ignores `.aether/` and `.obsidian/plugins/obsidian-aether/data.json` so local SQLite files and plugin API keys never enter Git history.
 2. Runs `git fetch` and merges into the local branch, redacting any `userinfo@` credentials from reported remotes via `redact_url_userinfo`.
 3. Resolves merge conflicts in `Aether/Inbox.md` and `Aether/Compiled/Approved.md` automatically using a monotonic join-semilattice keyed on `CandidateId` where `Approved` overrides `Rejected`, and `Rejected` overrides `Pending`.
 4. Skips human Markdown notes containing unresolved `<<<<<<<`, `=======`, and `>>>>>>>` conflict markers outside fenced code blocks while keeping prior SQLite AMUs active until a human resolves the conflict.
@@ -82,7 +82,16 @@ During `git_sync`, `VaultEngine` executes five steps:
 
 ## Step 4: Connect `obsidian-aether-plugin` over HTTPS + bearer auth
 
-When `obsidian-aether-plugin` targets a remote gateway, `AetherControlClient` and `AetherCompanionPlugin` require both `https://` and a bearer `apiKey` (unless `allowInsecureRemoteHttp: true` is set for local TLS-terminating proxies or tunnels):
+When targeting a remote authenticated server (`--require-auth`), configure **Settings -> Aether Memory Companion** inside Obsidian:
+
+1. Set **Aether control-plane URL** to your HTTPS gateway (for example `https://vault.internal:4771`).
+2. Paste your scoped token (`aek_<64-hex>`) into **API key** (stored locally in `.obsidian/plugins/obsidian-aether/data.json`, which `git_sync` keeps out of Git).
+3. Click **Test Connection** to confirm connectivity and token permissions.
+4. Configure **Live vault sync**, **Sync debounce (ms)** (`500` to `10000`), optional **Auto-pull interval (seconds)** to refresh `Aether/Inbox.md` and `Aether/Compiled/Approved.md`, and **Default KV model** (for example `llama-3.1-8b`). Turn on **Run Dream consolidation on push** only when using an `Admin` key.
+
+Calling **Sync Vault with Aether** (`aether-sync-vault`) or editing notes with **Live vault sync** enabled pulls `GET /v1/vault/pull`, pushes delta public notes (`POST /v1/vault/push`) without ever transmitting `aether_tier: private` note bodies, and materializes updated `Aether/Inbox.md` and `Aether/Compiled/Approved.md` files back into Obsidian.
+
+For headless or embedded integrations, instantiate `AetherCompanionPlugin` directly in TypeScript:
 
 ```ts
 import { AetherCompanionPlugin, type ObsidianHostAdapter } from './src/main.ts';
@@ -93,8 +102,6 @@ const plugin = new AetherCompanionPlugin(hostAdapter, 'https://vault.internal:47
 });
 await plugin.onload();
 ```
-
-`onload()` adds a status bar item, listens for live Obsidian vault events (`onVaultEvent`) when provided by `ObsidianHostAdapter`, and registers five Obsidian commands (`aether-open-inbox-review`, `aether-trigger-dream-pass`, `aether-sync-vault`, `aether-git-sync`, and `aether-warm-kv-cache`). Calling `plugin.syncVaultWithAether()` (or invoking `aether-sync-vault`) pulls `GET /v1/vault/pull`, pushes delta notes (`POST /v1/vault/push`) without ever transmitting `aether_tier: private` note bodies, and materializes updated `Aether/Inbox.md` and `Aether/Compiled/Approved.md` files back into Obsidian.
 
 ## Step 5: Pre-warm GPU KV caches (`warm_kv_cache`)
 
