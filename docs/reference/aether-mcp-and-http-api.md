@@ -11,7 +11,7 @@ CLI flags override environment variables when both are set.
 | `--vault <path>` | `AETHER_VAULT_PATH` | `.` | Root directory of the Obsidian Markdown vault |
 | `--db <path>` | None | `<vault>/.aether/aether.sqlite` | SQLite WAL index database path |
 | `--watch-ms <ms>` | None | `2000` | Vault polling interval in milliseconds (`0` disables polling) |
-| `--http-addr <addr>` | `AETHER_HTTP_ADDR` | Disabled | Bind `SocketAddr` for `ControlPlaneServer` (e.g. `127.0.0.1:4771`) |
+| `--http-addr <addr>` | `AETHER_HTTP_ADDR` | Disabled | Bind `SocketAddr` for `ControlPlaneServer` (e.g. `127.0.0.1:14771`) |
 | `--require-auth` | `AETHER_REQUIRE_AUTH` (`1`, `true`, `yes`) | `false` | Requires `Authorization: Bearer aek_<hex>` and allows non-loopback HTTP binds |
 | `--bootstrap-admin-key <key>` | `AETHER_BOOTSTRAP_ADMIN_KEY` | None | Ensures an `Admin` key for `AgentId` `"bootstrap-admin"` exists in SQLite |
 | `--api-key <key>` | `AETHER_API_KEY` | None | Binds the `stdio` MCP session to a validated `ScopedApiKey` |
@@ -108,7 +108,7 @@ Place a `.aetherignore` file at the vault root to add newline-separated ignore r
 
 ## `obsidian-aether-plugin` options and commands
 
-`AetherControlClient` and `AetherCompanionPlugin` (default base URL `http://127.0.0.1:4771`) accept `AetherClientOptions`:
+`AetherControlClient` and `AetherCompanionPlugin` (default base URL `http://127.0.0.1:14771`) accept `AetherClientOptions`:
 
 | Field | Type | Default | Behavior |
 | --- | --- | --- | --- |

@@ -26,7 +26,7 @@ use crate::kv::{
     KvCacheStats, KvRecallHint, KvStorageTier, KvTierUsage, KvTimingProfile, KvWarmBatch,
     KvWarmBlockInput, KvWarmReport, ModelId, WarmKvRequest,
 };
-use crate::parser::{self, IgnoreRules, ParsedNote, ParsedSection};
+use crate::parser::{self, HotRules, IgnoreRules, ParsedNote, ParsedSection};
 use crate::prefix;
 use crate::reranker::{CrossEncoderReranker, Reranker};
 use crate::store::{to_memory_item, VaultStore};
@@ -37,6 +37,9 @@ use crate::types::{
     VaultPullResponse, VaultPushRequest, VaultPushResponse, VaultStatusReport, VaultTier,
     VAULT_SCHEMA_VERSION,
 };
+
+const MAX_RECALL_HITS_PER_HEADING: usize = 2;
+const AETHERHOT_REL_PATH: &str = ".aetherhot";
 
 /// Orchestrator for Obsidian vault compilation, hybrid recall, Inbox reconciliation,
 /// Git team sync, scoped agent access control, and KV-cache warming.
@@ -286,6 +289,18 @@ impl VaultEngine {
             return Ok(report.compiled > 0 || report.rejected > 0);
         }
 
+        if rel_path == AETHERHOT_REL_PATH {
+            let report = sync_vault_inner(
+                &self.vault_root,
+                &self.store,
+                self.embedder.as_ref(),
+                self.kv_adapter.as_ref(),
+                &self.config.project_id,
+            )
+            .await?;
+            return Ok(report.files_updated > 0 || report.files_removed > 0);
+        }
+
         let rules = IgnoreRules::load(&self.vault_root);
         if rules.is_ignored(&rel_path) || !rel_path.to_ascii_lowercase().ends_with(".md") {
             return Ok(false);
@@ -313,7 +328,14 @@ impl VaultEngine {
             tracing::warn!(rel_path = %rel_path, "skipping note with unresolved git conflict markers");
             return Ok(false);
         }
-        match parser::parse_note(&rel_path, &raw_md, Utc::now(), self.embedder.as_ref())? {
+        let hot_rules = HotRules::load(&self.vault_root);
+        match parser::parse_note(
+            &rel_path,
+            &raw_md,
+            Utc::now(),
+            self.embedder.as_ref(),
+            &hot_rules,
+        )? {
             ParsedNote::Private => {
                 let (_, evicted_kv) = self.store.remove_file(&rel_path, Some(&hash)).await?;
                 evict_kv_hashes(self.kv_adapter.as_ref(), &evicted_kv).await;
@@ -463,7 +485,7 @@ impl VaultEngine {
 
         let bundle = self
             .store
-            .recall_bundle(query_trimmed, &query_vec, scope_policy, 32)
+            .recall_bundle(query_trimmed, &query_vec, scope_policy, 64)
             .await?;
 
         if query_trimmed.is_empty() {
@@ -527,6 +549,7 @@ impl VaultEngine {
                 .then_with(|| a.amu.amu_id.cmp(&b.amu.amu_id))
         });
         self.reranker.rerank(query_trimmed, &mut ranked_entries);
+        let ranked_entries = cap_heading_diversity(ranked_entries, MAX_RECALL_HITS_PER_HEADING);
 
         let mut resp = prefix::format_recall_response(
             bundle.hot_amus,
@@ -639,6 +662,7 @@ impl VaultEngine {
         let mut manifest_map = self.store.file_manifest().await?;
         manifest_map.remove(INBOX_REL_PATH);
         manifest_map.remove(APPROVED_MIRROR_REL_PATH);
+        manifest_map.remove(AETHERHOT_REL_PATH);
         let manifest: BTreeMap<String, ContentHash> = manifest_map.into_iter().collect();
 
         let (inbox_markdown, approved_mirror_markdown) = self.render_mirrors(agent).await?;
@@ -736,6 +760,10 @@ impl VaultEngine {
         if let Some(ref raw_ignore) = req.aetherignore {
             let ignore_path = self.vault_root.join(".aetherignore");
             let _ = write_file_if_changed(&ignore_path, raw_ignore.as_bytes()).await?;
+        }
+        if let Some(ref raw_hot) = req.aetherhot {
+            let hot_path = self.vault_root.join(AETHERHOT_REL_PATH);
+            let _ = write_file_if_changed(&hot_path, raw_hot.as_bytes()).await?;
         }
         let rules = IgnoreRules::load(&self.vault_root);
 
@@ -1482,6 +1510,15 @@ async fn sync_vault_inner(
 
     let rules = IgnoreRules::load(vault_root);
     let manifest = store.file_manifest().await?;
+    let hot_path = vault_root.join(AETHERHOT_REL_PATH);
+    let hot_bytes = tokio::fs::read(&hot_path).await.ok();
+    let hot_rules = hot_bytes
+        .as_deref()
+        .and_then(|bytes| std::str::from_utf8(bytes).ok())
+        .map(HotRules::from_str)
+        .unwrap_or_default();
+    let hot_hash = hot_bytes.as_deref().map(ContentHash::compute);
+    let hot_rules_changed = manifest.get(AETHERHOT_REL_PATH) != hot_hash.as_ref();
     let scanned_files = scan_vault_markdown_files(vault_root, rules).await?;
 
     let mut seen_paths = HashSet::new();
@@ -1524,7 +1561,7 @@ async fn sync_vault_inner(
             report.files_skipped_self_write += 1;
             continue;
         }
-        if manifest.get(&rel_posix) == Some(&hash) {
+        if !hot_rules_changed && manifest.get(&rel_posix) == Some(&hash) {
             report.files_skipped_unchanged += 1;
             continue;
         }
@@ -1542,7 +1579,13 @@ async fn sync_vault_inner(
     }
 
     for (vault_path, hash, raw_md) in pending_updates {
-        match parser::parse_note(vault_path.as_str(), &raw_md, Utc::now(), embedder)? {
+        match parser::parse_note(
+            vault_path.as_str(),
+            &raw_md,
+            Utc::now(),
+            embedder,
+            &hot_rules,
+        )? {
             ParsedNote::Private => {
                 let (_, evicted_kv) = store.remove_file(vault_path.as_str(), Some(&hash)).await?;
                 evict_kv_hashes(kv_adapter, &evicted_kv).await;
@@ -1563,6 +1606,7 @@ async fn sync_vault_inner(
     for old_path in manifest.keys() {
         if old_path.eq_ignore_ascii_case(INBOX_REL_PATH)
             || old_path.eq_ignore_ascii_case(APPROVED_MIRROR_REL_PATH)
+            || old_path == AETHERHOT_REL_PATH
         {
             continue;
         }
@@ -1572,6 +1616,14 @@ async fn sync_vault_inner(
             if removed {
                 report.files_removed += 1;
             }
+        }
+    }
+
+    if hot_rules_changed {
+        if let Some(ref h) = hot_hash {
+            store.update_file_watermark(AETHERHOT_REL_PATH, h).await?;
+        } else {
+            let _ = store.remove_file(AETHERHOT_REL_PATH, None).await?;
         }
     }
 
@@ -1617,6 +1669,31 @@ async fn scan_vault_markdown_files(
         connector: "vault-fs",
         message: format!("vault scan task error: {err}"),
     })
+}
+
+fn normalize_heading_title(heading_path: &str) -> String {
+    let leaf = heading_path.rsplit(" > ").next().unwrap_or(heading_path);
+    leaf.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+fn cap_heading_diversity(entries: Vec<RecallEntry>, max_per_heading: usize) -> Vec<RecallEntry> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut out = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let key = normalize_heading_title(&entry.amu.heading_path);
+        if !key.is_empty() {
+            let count = counts.entry(key).or_insert(0);
+            if *count >= max_per_heading {
+                continue;
+            }
+            *count += 1;
+        }
+        out.push(entry);
+    }
+    out
 }
 
 fn resolve_wikilink_targets(sections: &mut [ParsedSection], stem_map: &HashMap<String, String>) {
@@ -2839,6 +2916,7 @@ mod tests {
                 private_paths: Vec::new(),
                 inbox_markdown: None,
                 aetherignore: Some("Finance/\n".into()),
+                aetherhot: None,
                 run_dream: false,
             })
             .await
@@ -2862,6 +2940,7 @@ mod tests {
                 private_paths: vec!["Arch/DB.md".into()],
                 inbox_markdown: Some(approved_inbox),
                 aetherignore: None,
+                aetherhot: None,
                 run_dream: false,
             })
             .await
@@ -2898,6 +2977,227 @@ mod tests {
             .unwrap();
         assert!(server_vault.root.join("Shared/LocalPrivate.md").exists());
         assert_eq!(shared_push.sync_report.private_skipped, 1);
+
+        engine.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn recall_caps_identical_normalized_heading_titles_to_preserve_diversity() {
+        let vault = TempVault::new();
+        let boilerplate_notes = [
+            (
+                "Episodes/Ep01.md",
+                "# Chogerlatte (on-screen only, not spoken)\nChogerlatte lower-third badge displayed on screen during intro sequence with standard duration and placement rules.\n",
+            ),
+            (
+                "Episodes/Ep02.md",
+                "# Episode 02\n##  chogerlatte   (ON-SCREEN ONLY, not spoken) \nChogerlatte lower-third badge displayed on screen during outro segment with standard placement rules.\n",
+            ),
+            (
+                "Episodes/Ep03.md",
+                "# Chogerlatte (on-screen only, not spoken)\nChogerlatte lower-third badge displayed on screen during sponsor break with standard placement rules.\n",
+            ),
+            (
+                "Episodes/Ep04.md",
+                "# Episode 04\n## Chogerlatte (on-screen only, not spoken)\nChogerlatte lower-third badge displayed on screen during recap section with standard placement rules.\n",
+            ),
+            (
+                "Episodes/Ep05.md",
+                "# Chogerlatte (on-screen only, not spoken)\nChogerlatte lower-third badge displayed on screen during credits roll with standard placement rules.\n",
+            ),
+        ];
+        for (path, content) in boilerplate_notes {
+            vault.write(path, content);
+        }
+        vault.write(
+            "Brand/Pronunciation.md",
+            "# Brand Pronunciation\nChogerlatte is pronounced cho-ger-lat-te.\n",
+        );
+        vault.write(
+            "Brand/Merch.md",
+            "# Merch Guidelines\nChogerlatte apparel uses cream and espresso tones.\n",
+        );
+
+        let engine = VaultEngine::open(VaultConfig::in_memory(&vault.root))
+            .await
+            .unwrap();
+
+        let resp_full = engine
+            .recall(RecallRequest::new("Chogerlatte on-screen rules"))
+            .await
+            .unwrap();
+        let boilerplate_hits = resp_full
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry
+                    .amu
+                    .heading_path
+                    .to_ascii_lowercase()
+                    .contains("on-screen only, not spoken")
+            })
+            .count();
+        assert!(
+            boilerplate_hits <= 2,
+            "expected at most 2 boilerplate hits, got {boilerplate_hits}: {:?}",
+            resp_full
+                .entries
+                .iter()
+                .map(|e| &e.amu.source_pointer)
+                .collect::<Vec<_>>()
+        );
+        assert!(resp_full.formatted_context.contains("cho-ger-lat-te"));
+        assert!(resp_full.formatted_context.contains("cream and espresso"));
+
+        let mut tight_req = RecallRequest::new("Chogerlatte on-screen rules");
+        tight_req.max_tokens = TokenBudget::new(220).unwrap();
+        let resp_tight = engine.recall(tight_req).await.unwrap();
+        assert!(
+            resp_tight.formatted_context.contains("cho-ger-lat-te")
+                || resp_tight.formatted_context.contains("cream and espresso"),
+            "expected diverse hits within tight budget, got: {}",
+            resp_tight.formatted_context
+        );
+
+        engine.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn aetherhot_promotes_matching_notes_unless_frontmatter_sets_explicit_tier() {
+        let vault = TempVault::new();
+        vault.write(".aetherignore", "Core/Ignored.md\n");
+        vault.write(
+            ".aetherhot",
+            "# always-hot paths\n\nCore/\n*.hot.md\nBrand/Guidelines.md\n",
+        );
+        vault.write(
+            "Core/Identity.md",
+            "# Identity\nAlways write idiomatic Rust without unwrap in production.\n",
+        );
+        vault.write(
+            "Brand/Guidelines.md",
+            "---\naether_scope: brand\n---\n# Guidelines\nBrand tone is direct and technical.\n",
+        );
+        vault.write(
+            "Notes/Rules.hot.md",
+            "# Rules\nPrefer small atomic commits.\n",
+        );
+        vault.write(
+            "Core/OverrideWarm.md",
+            "---\naether_tier: warm\n---\n# Override Warm\nExplicit warm tier stays warm.\n",
+        );
+        vault.write(
+            "Core/OverrideCold.md",
+            "---\naether_tier: cold\n---\n# Override Cold\nExplicit cold tier stays cold.\n",
+        );
+        vault.write(
+            "Core/Secret.md",
+            "---\naether_tier: private\n---\n# Secret\nPrivate secret_hot_token_999 must stay unindexed.\n",
+        );
+        vault.write(
+            "Core/Ignored.md",
+            "# Ignored\nIgnored ignored_hot_token_888 must stay unindexed.\n",
+        );
+        vault.write(
+            "Notes/Regular.md",
+            "# Regular\nOrdinary warm note outside aetherhot.\n",
+        );
+
+        let engine = VaultEngine::open(VaultConfig::in_memory(&vault.root))
+            .await
+            .unwrap();
+
+        let pulled = engine.pull_vault_state().await.unwrap();
+        assert!(!pulled.manifest.contains_key(".aetherhot"));
+
+        let res = engine
+            .recall(RecallRequest::new(
+                "Explicit warm cold Ordinary warm note secret_hot_token_999 ignored_hot_token_888",
+            ))
+            .await
+            .unwrap();
+
+        let hot_paths: Vec<&str> = res
+            .hot_amus
+            .iter()
+            .map(|a| a.source_pointer.relative_path())
+            .collect();
+        assert!(
+            hot_paths.contains(&"Core/Identity.md"),
+            "expected Core/Identity.md in hot_amus, got {hot_paths:?}"
+        );
+        assert!(
+            hot_paths.contains(&"Brand/Guidelines.md"),
+            "expected Brand/Guidelines.md in hot_amus, got {hot_paths:?}"
+        );
+        assert!(
+            hot_paths.contains(&"Notes/Rules.hot.md"),
+            "expected Notes/Rules.hot.md in hot_amus, got {hot_paths:?}"
+        );
+        assert!(!hot_paths.contains(&"Core/OverrideWarm.md"));
+        assert!(!hot_paths.contains(&"Core/OverrideCold.md"));
+        assert!(!hot_paths.contains(&"Core/Secret.md"));
+        assert!(!hot_paths.contains(&"Core/Ignored.md"));
+        assert!(!hot_paths.contains(&"Notes/Regular.md"));
+
+        assert!(res
+            .formatted_context
+            .contains("Explicit warm tier stays warm."));
+        assert!(res
+            .formatted_context
+            .contains("Explicit cold tier stays cold."));
+        assert!(res
+            .formatted_context
+            .contains("Ordinary warm note outside aetherhot."));
+        assert!(!res.formatted_context.contains("secret_hot_token_999"));
+        assert!(!res.formatted_context.contains("ignored_hot_token_888"));
+
+        vault.write(".aetherhot", "Notes/Regular.md\n");
+        let changed = engine
+            .handle_fs_event(&vault.root.join(".aetherhot"))
+            .await
+            .unwrap();
+        assert!(changed);
+
+        let after_edit = engine
+            .recall(RecallRequest::new("idiomatic Rust"))
+            .await
+            .unwrap();
+        let hot_after_edit: Vec<&str> = after_edit
+            .hot_amus
+            .iter()
+            .map(|a| a.source_pointer.relative_path())
+            .collect();
+        assert!(hot_after_edit.contains(&"Notes/Regular.md"));
+        assert!(!hot_after_edit.contains(&"Core/Identity.md"));
+
+        fs::remove_file(vault.root.join(".aetherhot")).unwrap();
+        engine.sync_vault().await.unwrap();
+        let after_delete = engine.recall(RecallRequest::new("")).await.unwrap();
+        assert!(
+            after_delete.hot_amus.is_empty(),
+            "expected no hot_amus after .aetherhot removal, got {:?}",
+            after_delete
+                .hot_amus
+                .iter()
+                .map(|a| a.source_pointer.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        engine
+            .push_vault_changes(VaultPushRequest {
+                aetherhot: Some("Brand/\n".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let after_push = engine.recall(RecallRequest::new("")).await.unwrap();
+        let hot_after_push: Vec<&str> = after_push
+            .hot_amus
+            .iter()
+            .map(|a| a.source_pointer.relative_path())
+            .collect();
+        assert_eq!(hot_after_push, vec!["Brand/Guidelines.md"]);
 
         engine.shutdown().await.unwrap();
     }

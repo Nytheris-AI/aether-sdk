@@ -36,13 +36,13 @@ pub(crate) struct ParsedSection {
     pub(crate) embedding: Vec<f32>,
 }
 
-/// Canonical `.aetherignore` plus built-in exclusion evaluator.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct IgnoreRules {
+/// Shared newline-separated path/glob rule evaluator (used by `.aetherignore` and `.aetherhot`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct PathRules {
     patterns: Vec<String>,
 }
 
-impl IgnoreRules {
+impl PathRules {
     pub(crate) fn from_str(contents: &str) -> Self {
         let patterns = contents
             .lines()
@@ -54,11 +54,68 @@ impl IgnoreRules {
         Self { patterns }
     }
 
-    pub(crate) fn load(vault_root: &Path) -> Self {
-        let ignore_path = vault_root.join(".aetherignore");
-        match std::fs::read_to_string(ignore_path) {
+    pub(crate) fn load_file(path: &Path) -> Self {
+        match std::fs::read_to_string(path) {
             Ok(contents) => Self::from_str(&contents),
             Err(_) => Self::default(),
+        }
+    }
+
+    pub(crate) fn matches_normalized(&self, rel: &str) -> bool {
+        !rel.is_empty()
+            && self
+                .patterns
+                .iter()
+                .any(|pat| matches_path_pattern(rel, pat))
+    }
+
+    pub(crate) fn matches(&self, relative_path: &str) -> bool {
+        let rel = normalize_rel_path(relative_path);
+        self.matches_normalized(&rel)
+    }
+}
+
+/// Canonical `.aetherhot` path/glob evaluator promoting matching notes to `VaultTier::Hot`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct HotRules {
+    rules: PathRules,
+}
+
+impl HotRules {
+    pub(crate) fn from_str(contents: &str) -> Self {
+        Self {
+            rules: PathRules::from_str(contents),
+        }
+    }
+
+    pub(crate) fn load(vault_root: &Path) -> Self {
+        Self {
+            rules: PathRules::load_file(&vault_root.join(".aetherhot")),
+        }
+    }
+
+    pub(crate) fn is_hot(&self, relative_path: &str) -> bool {
+        self.rules.matches(relative_path)
+    }
+}
+
+/// Canonical `.aetherignore` plus built-in exclusion evaluator.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct IgnoreRules {
+    rules: PathRules,
+}
+
+impl IgnoreRules {
+    #[cfg(test)]
+    pub(crate) fn from_str(contents: &str) -> Self {
+        Self {
+            rules: PathRules::from_str(contents),
+        }
+    }
+
+    pub(crate) fn load(vault_root: &Path) -> Self {
+        Self {
+            rules: PathRules::load_file(&vault_root.join(".aetherignore")),
         }
     }
 
@@ -106,9 +163,7 @@ impl IgnoreRules {
             return true;
         }
 
-        self.patterns
-            .iter()
-            .any(|pat| matches_ignore_pattern(rel, pat))
+        self.rules.matches_normalized(rel)
     }
 }
 
@@ -128,7 +183,7 @@ fn path_matches_prefix(path: &str, prefix: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
-fn matches_ignore_pattern(rel: &str, pattern: &str) -> bool {
+fn matches_path_pattern(rel: &str, pattern: &str) -> bool {
     if let Some(dir) = pattern.strip_suffix('/') {
         return path_matches_prefix(rel, dir) || rel.split('/').any(|seg| seg == dir);
     }
@@ -211,8 +266,8 @@ pub(crate) fn inspect_note_frontmatter<'a>(
 ) -> (NoteFrontmatterHint, &'a str) {
     let (fm_text, body) = split_frontmatter(raw_markdown);
     let fm = match fm_text {
-        Some(raw) => parse_frontmatter(raw, rel_path, Utc::now()),
-        None => Frontmatter::default_for_path(rel_path, Utc::now()),
+        Some(raw) => parse_frontmatter(raw, rel_path, Utc::now(), VaultTier::Warm),
+        None => Frontmatter::default_for_path(rel_path, Utc::now(), VaultTier::Warm),
     };
     let scope = fm
         .scopes
@@ -233,8 +288,8 @@ pub(crate) fn inspect_note_frontmatter<'a>(
 pub(crate) fn inspect_note_scopes(rel_path: &str, raw_markdown: &str) -> Vec<ScopeTag> {
     let (fm_text, _) = split_frontmatter(raw_markdown);
     let fm = match fm_text {
-        Some(raw) => parse_frontmatter(raw, rel_path, Utc::now()),
-        None => Frontmatter::default_for_path(rel_path, Utc::now()),
+        Some(raw) => parse_frontmatter(raw, rel_path, Utc::now(), VaultTier::Warm),
+        None => Frontmatter::default_for_path(rel_path, Utc::now(), VaultTier::Warm),
     };
     fm.scopes
 }
@@ -245,7 +300,8 @@ pub(crate) fn is_private_note(raw_markdown: &str) -> bool {
     let Some(fm) = fm_text else {
         return false;
     };
-    parse_frontmatter(fm, "note.md", Utc::now()).tier == RawFrontmatterTier::Private
+    parse_frontmatter(fm, "note.md", Utc::now(), VaultTier::Warm).tier
+        == RawFrontmatterTier::Private
 }
 
 /// Parses YAML frontmatter and splits Markdown outside fenced code blocks into AMUs.
@@ -254,12 +310,20 @@ pub(crate) fn parse_note(
     raw_markdown: &str,
     fallback_valid_from: DateTime<Utc>,
     embedder: &dyn Embedder,
+    hot_rules: &HotRules,
 ) -> Result<ParsedNote> {
     let vault_path = VaultPath::parse(relative_path)?;
+    let default_tier = if hot_rules.is_hot(vault_path.as_str()) {
+        VaultTier::Hot
+    } else {
+        VaultTier::Warm
+    };
     let (fm_text, body) = split_frontmatter(raw_markdown);
     let fm = match fm_text {
-        Some(raw) => parse_frontmatter(raw, vault_path.as_str(), fallback_valid_from),
-        None => Frontmatter::default_for_path(vault_path.as_str(), fallback_valid_from),
+        Some(raw) => parse_frontmatter(raw, vault_path.as_str(), fallback_valid_from, default_tier),
+        None => {
+            Frontmatter::default_for_path(vault_path.as_str(), fallback_valid_from, default_tier)
+        }
     };
 
     let tier = match fm.tier {
@@ -312,7 +376,9 @@ pub(crate) fn parse_note(
         };
 
         let verbatim = raw_sec.verbatim.trim().to_string();
-        if verbatim.is_empty() {
+        if verbatim.is_empty()
+            || (raw_sec.heading_title.is_some() && section_body_lines(&verbatim).is_empty())
+        {
             continue;
         }
 
@@ -409,7 +475,11 @@ struct Frontmatter {
 }
 
 impl Frontmatter {
-    fn default_for_path(rel_path: &str, fallback_valid_from: DateTime<Utc>) -> Self {
+    fn default_for_path(
+        rel_path: &str,
+        fallback_valid_from: DateTime<Utc>,
+        default_tier: VaultTier,
+    ) -> Self {
         let lower = rel_path.to_ascii_lowercase();
         let default_kind = if lower.starts_with("daily/")
             || lower.starts_with("journal/")
@@ -421,7 +491,7 @@ impl Frontmatter {
             AmuKind::Spec
         };
         Self {
-            tier: RawFrontmatterTier::Public(VaultTier::Warm),
+            tier: RawFrontmatterTier::Public(default_tier),
             scopes: vec![ScopeTag::global()],
             kind: default_kind,
             status: AmuStatus::Active,
@@ -459,8 +529,9 @@ fn parse_frontmatter(
     fm_text: &str,
     rel_path: &str,
     fallback_valid_from: DateTime<Utc>,
+    default_tier: VaultTier,
 ) -> Frontmatter {
-    let mut fm = Frontmatter::default_for_path(rel_path, fallback_valid_from);
+    let mut fm = Frontmatter::default_for_path(rel_path, fallback_valid_from, default_tier);
     let mut current_list_key: Option<String> = None;
     let mut parsed_scopes: Vec<ScopeTag> = Vec::new();
     let mut parsed_tags: Vec<String> = Vec::new();
@@ -850,18 +921,22 @@ fn compute_authority_weight(kind: AmuKind, verbatim: &str) -> f32 {
     }
 }
 
+fn section_body_lines(verbatim: &str) -> Vec<&str> {
+    verbatim
+        .lines()
+        .enumerate()
+        .filter_map(|(idx, line)| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || (idx == 0 && parse_atx_heading(trimmed).is_some()) {
+                return None;
+            }
+            Some(trimmed)
+        })
+        .collect()
+}
+
 fn distill_section(heading_path: &str, verbatim: &str) -> String {
-    let mut body_parts: Vec<&str> = Vec::new();
-    for (idx, line) in verbatim.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if idx == 0 && parse_atx_heading(trimmed).is_some() {
-            continue;
-        }
-        body_parts.push(trimmed);
-    }
+    let body_parts = section_body_lines(verbatim);
     let joined = if body_parts.is_empty() {
         heading_path.to_string()
     } else {
@@ -905,7 +980,14 @@ mod tests {
     fn private_notes_are_excluded_at_parse_boundary() {
         let md = "---\naether_tier: private\naether_scope:\n  - personal\n---\n# Secret\nNever index this.\n";
         let embedder = HashedNgramEmbedder::default();
-        let parsed = parse_note("Personal/Diary.md", md, Utc::now(), &embedder).unwrap();
+        let parsed = parse_note(
+            "Personal/Diary.md",
+            md,
+            Utc::now(),
+            &embedder,
+            &HotRules::default(),
+        )
+        .unwrap();
         assert_eq!(parsed, ParsedNote::Private);
         assert!(is_private_note(md));
 
@@ -943,9 +1025,14 @@ Use port `8443`.
 ";
         let embedder = HashedNgramEmbedder::default();
         let fallback = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
-        let ParsedNote::Public(sections) =
-            parse_note("Specs/Auth.md", evergreen, fallback, &embedder).unwrap()
-        else {
+        let ParsedNote::Public(sections) = parse_note(
+            "Specs/Auth.md",
+            evergreen,
+            fallback,
+            &embedder,
+            &HotRules::default(),
+        )
+        .unwrap() else {
             panic!("expected public parsed note");
         };
 
@@ -989,9 +1076,14 @@ Use port `8443`.
 - [ ] another brainstorm item
 - [ ] third unchecked item
 ";
-        let ParsedNote::Public(daily_sections) =
-            parse_note("Daily/2026-04-02.md", daily_tasks, fallback, &embedder).unwrap()
-        else {
+        let ParsedNote::Public(daily_sections) = parse_note(
+            "Daily/2026-04-02.md",
+            daily_tasks,
+            fallback,
+            &embedder,
+            &HotRules::default(),
+        )
+        .unwrap() else {
             panic!("expected daily note");
         };
         assert_eq!(daily_sections[0].amu.kind, AmuKind::Fleeting);
@@ -1034,5 +1126,150 @@ Other text.
         let sim_ab: f32 = a.iter().zip(&b).map(|(x, y)| x * y).sum();
         let sim_ac: f32 = a.iter().zip(&c).map(|(x, y)| x * y).sum();
         assert!(sim_ab > sim_ac, "expected {sim_ab} > {sim_ac}");
+    }
+
+    #[test]
+    fn skips_empty_heading_only_sections_while_preserving_hierarchy_and_slugs() {
+        let md = "\
+# Brand: Chogerlatte
+
+## Usage
+Chogerlatte appears on-screen only, not spoken.
+
+# Brand: Chogerlatte
+Show logo in upper-right corner.
+
+# Trailing Empty Heading
+";
+        let embedder = HashedNgramEmbedder::default();
+        let ParsedNote::Public(sections) = parse_note(
+            "Brand/Guide.md",
+            md,
+            Utc::now(),
+            &embedder,
+            &HotRules::default(),
+        )
+        .unwrap() else {
+            panic!("expected public parsed note");
+        };
+
+        assert_eq!(
+            sections.len(),
+            2,
+            "expected only sections with body text, got: {:?}",
+            sections
+                .iter()
+                .map(|s| (&s.amu.source_pointer, &s.amu.distilled_fact))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            sections[0].amu.source_pointer.as_str(),
+            "Brand/Guide.md#Usage"
+        );
+        assert_eq!(sections[0].amu.heading_path, "Brand: Chogerlatte > Usage");
+        assert_eq!(
+            sections[1].amu.source_pointer.as_str(),
+            "Brand/Guide.md#Brand-Chogerlatte-1"
+        );
+        assert_eq!(
+            extract_verbatim_section(md, &sections[1].amu.source_pointer).unwrap(),
+            "# Brand: Chogerlatte\nShow logo in upper-right corner."
+        );
+
+        let only_headings = "# Empty One\n## Empty Two\n";
+        let ParsedNote::Public(empty_sections) = parse_note(
+            "Brand/Empty.md",
+            only_headings,
+            Utc::now(),
+            &embedder,
+            &HotRules::default(),
+        )
+        .unwrap() else {
+            panic!("expected public parsed note");
+        };
+        assert!(empty_sections.is_empty());
+    }
+
+    #[test]
+    fn hot_rules_promote_matching_notes_unless_explicit_frontmatter_tier_is_set() {
+        let hot_rules =
+            HotRules::from_str("# hot profile rules\n\nCore/\n*.hot.md\nBrand/Logo.md\n");
+        let embedder = HashedNgramEmbedder::default();
+        let now = Utc::now();
+
+        assert!(hot_rules.is_hot("Core/Identity.md"));
+        assert!(hot_rules.is_hot("Notes/Rules.hot.md"));
+        assert!(hot_rules.is_hot("Brand/Logo.md"));
+        assert!(!hot_rules.is_hot("Notes/Regular.md"));
+
+        let ParsedNote::Public(no_fm) = parse_note(
+            "Core/Identity.md",
+            "# Identity\nRust first.\n",
+            now,
+            &embedder,
+            &hot_rules,
+        )
+        .unwrap() else {
+            panic!("expected public note");
+        };
+        assert_eq!(no_fm[0].amu.tier, VaultTier::Hot);
+
+        let ParsedNote::Public(fm_no_tier) = parse_note(
+            "Brand/Logo.md",
+            "---\naether_scope: brand\n---\n# Logo\nCream badge.\n",
+            now,
+            &embedder,
+            &hot_rules,
+        )
+        .unwrap() else {
+            panic!("expected public note");
+        };
+        assert_eq!(fm_no_tier[0].amu.tier, VaultTier::Hot);
+
+        let ParsedNote::Public(explicit_warm) = parse_note(
+            "Core/Warm.md",
+            "---\naether_tier: warm\n---\n# Warm\nStays warm.\n",
+            now,
+            &embedder,
+            &hot_rules,
+        )
+        .unwrap() else {
+            panic!("expected public note");
+        };
+        assert_eq!(explicit_warm[0].amu.tier, VaultTier::Warm);
+
+        let ParsedNote::Public(explicit_cold) = parse_note(
+            "Core/Cold.md",
+            "---\naether_tier: cold\n---\n# Cold\nStays cold.\n",
+            now,
+            &embedder,
+            &hot_rules,
+        )
+        .unwrap() else {
+            panic!("expected public note");
+        };
+        assert_eq!(explicit_cold[0].amu.tier, VaultTier::Cold);
+
+        let private_note = parse_note(
+            "Core/Private.md",
+            "---\naether_tier: private\n---\n# Secret\nStay private.\n",
+            now,
+            &embedder,
+            &hot_rules,
+        )
+        .unwrap();
+        assert_eq!(private_note, ParsedNote::Private);
+
+        let ParsedNote::Public(unmatched) = parse_note(
+            "Notes/Regular.md",
+            "# Regular\nDefault warm.\n",
+            now,
+            &embedder,
+            &hot_rules,
+        )
+        .unwrap() else {
+            panic!("expected public note");
+        };
+        assert_eq!(unmatched[0].amu.tier, VaultTier::Warm);
     }
 }

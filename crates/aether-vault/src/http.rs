@@ -228,15 +228,23 @@ async fn handle_connection(
         return write_no_content(&mut stream).await;
     }
 
-    let agent = match authenticate_http_request(&engine, &req.headers, require_auth).await {
-        Ok(agent) => agent,
-        Err(err_resp) => {
-            return write_json_response(&mut stream, err_resp.0, err_resp.1, &err_resp.2).await;
+    let agent = if is_public_route(&req) {
+        None
+    } else {
+        match authenticate_http_request(&engine, &req.headers, require_auth).await {
+            Ok(agent) => agent,
+            Err(err_resp) => {
+                return write_json_response(&mut stream, err_resp.0, err_resp.1, &err_resp.2).await;
+            }
         }
     };
 
     let (status_code, reason, json_body) = dispatch_route(&engine, &req, agent.as_ref()).await;
     write_json_response(&mut stream, status_code, reason, &json_body).await
+}
+
+fn is_public_route(req: &ParsedHttpRequest) -> bool {
+    req.method == "GET" && req.path == "/v1/openapi.json"
 }
 
 async fn authenticate_http_request(
@@ -260,23 +268,25 @@ async fn authenticate_http_request(
     }
 }
 
+fn find_header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.trim())
+}
+
 fn find_bearer_header(
     headers: &[(String, String)],
 ) -> Option<std::result::Result<&str, AuthError>> {
-    for (name, val) in headers {
-        if name.eq_ignore_ascii_case("authorization") {
-            let trimmed = val.trim();
-            if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("bearer ") {
-                let token = trimmed[7..].trim();
-                if token.is_empty() {
-                    return Some(Err(AuthError::InvalidToken));
-                }
-                return Some(Ok(token));
-            }
+    let trimmed = find_header(headers, "authorization")?;
+    if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("bearer ") {
+        let token = trimmed[7..].trim();
+        if token.is_empty() {
             return Some(Err(AuthError::InvalidToken));
         }
+        return Some(Ok(token));
     }
-    None
+    Some(Err(AuthError::InvalidToken))
 }
 
 async fn dispatch_route(
@@ -285,6 +295,7 @@ async fn dispatch_route(
     agent: Option<&ScopedApiKey>,
 ) -> HttpTuple {
     match (req.method.as_str(), req.path.as_str()) {
+        ("GET", "/v1/openapi.json") => handle_openapi(&req.headers),
         ("GET", "/v1/status") => match engine.status().await {
             Ok(rep) => ok_payload(rep),
             Err(err) => err_payload(err),
@@ -613,6 +624,415 @@ async fn handle_inspect(
         ),
         Err(err) => err_payload(err),
     }
+}
+
+fn handle_openapi(headers: &[(String, String)]) -> HttpTuple {
+    let server_url = infer_server_url(headers);
+    (200, "OK", build_openapi_spec(&server_url))
+}
+
+fn infer_server_url(headers: &[(String, String)]) -> String {
+    let scheme = find_header(headers, "x-forwarded-proto")
+        .and_then(|raw| raw.split(',').next())
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .filter(|proto| matches!(proto.as_str(), "http" | "https"))
+        .unwrap_or_else(|| "http".to_string());
+
+    let host = find_header(headers, "x-forwarded-host")
+        .or_else(|| find_header(headers, "host"))
+        .and_then(|raw| raw.split(',').next())
+        .map(str::trim)
+        .filter(|candidate| is_valid_http_host(candidate));
+
+    match host {
+        Some(h) => format!("{scheme}://{h}"),
+        None => "http://127.0.0.1:4771".to_string(),
+    }
+}
+
+fn is_valid_http_host(host: &str) -> bool {
+    !host.is_empty()
+        && host.len() <= 253
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b':' | b'[' | b']'))
+}
+
+fn error_response_spec(description: &str) -> Value {
+    json!({
+        "description": description,
+        "content": {
+            "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+            }
+        }
+    })
+}
+
+fn build_openapi_spec(server_url: &str) -> Value {
+    json!({
+        "openapi": "3.1.0",
+        "info": {
+            "title": "Aether Vault Control Plane API",
+            "version": env!("CARGO_PKG_VERSION"),
+            "description": "Obsidian-native memory vault HTTP API for hybrid recall, Inbox memory staging, provenance inspection, and health status.",
+            "license": {
+                "name": "Apache-2.0"
+            }
+        },
+        "servers": [
+            {
+                "url": server_url
+            }
+        ],
+        "security": [
+            { "bearerAuth": [] }
+        ],
+        "paths": {
+            "/v1/status": {
+                "get": {
+                    "operationId": "getVaultStatus",
+                    "summary": "Get vault health and index status",
+                    "description": "Returns active AMU counts, pending and approved Inbox counts, HOT prefix token usage, and the deterministic prefix hash.",
+                    "responses": {
+                        "200": {
+                            "description": "Current vault health and index metrics",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/VaultStatusReport" }
+                                }
+                            }
+                        },
+                        "401": error_response_spec("Missing, invalid, expired, or revoked bearer token")
+                    }
+                }
+            },
+            "/v1/recall": {
+                "post": {
+                    "operationId": "recallMemory",
+                    "summary": "Retrieve distilled, source-grounded memory from the vault",
+                    "description": "Runs hybrid lexical, vector, and Personalized PageRank recall across Hot, Warm, and Cold memory tiers while excluding private notes and respecting agent scopes.",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/RecallHttpRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Token-budgeted recall context with static/dynamic prefix split and source-grounded AMUs",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/RecallResponse" }
+                                }
+                            }
+                        },
+                        "400": error_response_spec("Invalid recall request payload, scope, token budget, or model ID"),
+                        "401": error_response_spec("Missing, invalid, expired, or revoked bearer token"),
+                        "403": error_response_spec("Caller role or scope is not permitted to query the requested scope")
+                    }
+                }
+            },
+            "/v1/stage": {
+                "post": {
+                    "operationId": "stageMemory",
+                    "summary": "Stage a proposed fact in Aether Inbox for human approval",
+                    "description": "Appends a candidate memory unit to Aether/Inbox.md for human review before compiling into active vault memory. Requires Contributor or Admin role.",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/StageHttpRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Candidate staged into Aether/Inbox.md",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/StageMemoryResponse" }
+                                }
+                            }
+                        },
+                        "400": error_response_spec("Invalid stage payload, tier, scope, or supersedes_amu_id"),
+                        "401": error_response_spec("Missing, invalid, expired, or revoked bearer token"),
+                        "403": error_response_spec("Caller lacks Contributor+ role or write authorization for the target scope")
+                    }
+                }
+            },
+            "/v1/inspect": {
+                "post": {
+                    "operationId": "inspectSource",
+                    "summary": "Read the verbatim Markdown section for a source pointer",
+                    "description": "Fetches exact Markdown source text for a validated provenance pointer (for example Arch/DB.md#Schema) while enforcing traversal, ignore, privacy, and scope guards.",
+                    "requestBody": {
+                        "required": true,
+                        "content": {
+                            "application/json": {
+                                "schema": { "$ref": "#/components/schemas/InspectHttpRequest" }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Verbatim Markdown content for the requested source pointer",
+                            "content": {
+                                "application/json": {
+                                    "schema": { "$ref": "#/components/schemas/InspectSourceResponse" }
+                                }
+                            }
+                        },
+                        "400": error_response_spec("Invalid or forbidden source pointer"),
+                        "401": error_response_spec("Missing, invalid, expired, or revoked bearer token"),
+                        "403": error_response_spec("Caller lacks read authorization for the source scope"),
+                        "404": error_response_spec("Referenced note or heading section does not exist")
+                    }
+                }
+            }
+        },
+        "components": {
+            "securitySchemes": {
+                "bearerAuth": {
+                    "type": "http",
+                    "scheme": "bearer",
+                    "bearerFormat": "aek_<64-hex>",
+                    "description": "Scoped Aether Vault API key sent as Authorization: Bearer aek_<64-hex>. Required when the server runs with --require-auth."
+                }
+            },
+            "schemas": {
+                "VaultStatusReport": {
+                    "type": "object",
+                    "required": [
+                        "status",
+                        "schema_version",
+                        "embedder_id",
+                        "embedding_dim",
+                        "active_amus",
+                        "pending_inbox_count",
+                        "approved_inbox_count",
+                        "hot_tokens_used",
+                        "hot_token_budget",
+                        "prefix_hash"
+                    ],
+                    "properties": {
+                        "status": { "type": "string" },
+                        "schema_version": { "type": "integer", "minimum": 1 },
+                        "embedder_id": { "type": "string" },
+                        "embedding_dim": { "type": "integer", "minimum": 1 },
+                        "active_amus": { "type": "integer", "minimum": 0 },
+                        "pending_inbox_count": { "type": "integer", "minimum": 0 },
+                        "approved_inbox_count": { "type": "integer", "minimum": 0 },
+                        "hot_tokens_used": { "type": "integer", "minimum": 0 },
+                        "hot_token_budget": { "type": "integer", "minimum": 1 },
+                        "prefix_hash": { "type": "string", "description": "64-character lowercase SHA-256 hex digest of the static HOT prefix" }
+                    }
+                },
+                "RecallHttpRequest": {
+                    "type": "object",
+                    "required": ["query"],
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Natural language or keyword query for Warm/Cold recall"
+                        },
+                        "scope": {
+                            "type": "string",
+                            "description": "Optional scope filter (e.g. engineering, global); intersected with caller scopes"
+                        },
+                        "max_tokens": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "default": 1500,
+                            "description": "Strict positive token ceiling across static_prefix and dynamic_context"
+                        },
+                        "include_hot_profile": {
+                            "type": "boolean",
+                            "default": true,
+                            "description": "Include the deterministic byte-stable HOT profile prefix block"
+                        },
+                        "kv_model": {
+                            "type": "string",
+                            "description": "Optional model identifier for PagedAttention/CacheBlend KV-cache reuse hints"
+                        }
+                    }
+                },
+                "Amu": {
+                    "type": "object",
+                    "required": [
+                        "amu_id",
+                        "tier",
+                        "kind",
+                        "status",
+                        "heading_path",
+                        "distilled_fact",
+                        "source_pointer",
+                        "graph_edges",
+                        "valid_from",
+                        "superseded_by",
+                        "scopes",
+                        "authority_weight",
+                        "content_hash"
+                    ],
+                    "properties": {
+                        "amu_id": { "type": "string" },
+                        "tier": { "type": "string", "enum": ["hot", "warm", "cold"] },
+                        "kind": { "type": "string", "enum": ["profile", "rule", "decision", "spec", "fleeting"] },
+                        "status": { "type": "string", "enum": ["active", "superseded", "archived"] },
+                        "heading_path": { "type": "string" },
+                        "distilled_fact": { "type": "string" },
+                        "source_pointer": { "type": "string" },
+                        "graph_edges": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        },
+                        "valid_from": { "type": "string", "format": "date-time" },
+                        "superseded_by": { "type": ["string", "null"] },
+                        "scopes": {
+                            "type": "array",
+                            "items": { "type": "string" }
+                        },
+                        "authority_weight": { "type": "number" },
+                        "content_hash": { "type": "string" }
+                    }
+                },
+                "RecallEntry": {
+                    "type": "object",
+                    "required": ["amu", "score"],
+                    "properties": {
+                        "amu": { "$ref": "#/components/schemas/Amu" },
+                        "score": { "type": "number" }
+                    }
+                },
+                "KvRecallHint": {
+                    "type": "object",
+                    "required": [
+                        "model_id",
+                        "prefix_block_hashes",
+                        "cache_blend_hashes",
+                        "cache_hit_tokens",
+                        "total_tokens",
+                        "estimated_ttft_saved_ms"
+                    ],
+                    "properties": {
+                        "model_id": { "type": "string" },
+                        "prefix_block_hashes": { "type": "array", "items": { "type": "string" } },
+                        "cache_blend_hashes": { "type": "array", "items": { "type": "string" } },
+                        "cache_hit_tokens": { "type": "integer", "minimum": 0 },
+                        "total_tokens": { "type": "integer", "minimum": 0 },
+                        "estimated_ttft_saved_ms": { "type": "number" }
+                    }
+                },
+                "RecallResponse": {
+                    "type": "object",
+                    "required": [
+                        "formatted_context",
+                        "hot_prefix",
+                        "static_prefix",
+                        "dynamic_context",
+                        "hot_amus",
+                        "warm_cold_amus",
+                        "entries",
+                        "static_prefix_tokens",
+                        "dynamic_tokens",
+                        "tokens_used",
+                        "prefix_hash"
+                    ],
+                    "properties": {
+                        "formatted_context": { "type": "string" },
+                        "hot_prefix": { "type": "string" },
+                        "static_prefix": { "type": "string" },
+                        "dynamic_context": { "type": "string" },
+                        "hot_amus": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/Amu" }
+                        },
+                        "warm_cold_amus": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/Amu" }
+                        },
+                        "entries": {
+                            "type": "array",
+                            "items": { "$ref": "#/components/schemas/RecallEntry" }
+                        },
+                        "static_prefix_tokens": { "type": "integer", "minimum": 0 },
+                        "dynamic_tokens": { "type": "integer", "minimum": 0 },
+                        "tokens_used": { "type": "integer", "minimum": 0 },
+                        "prefix_hash": { "type": "string" },
+                        "kv_hint": { "$ref": "#/components/schemas/KvRecallHint" }
+                    }
+                },
+                "StageHttpRequest": {
+                    "type": "object",
+                    "required": ["proposed_fact"],
+                    "properties": {
+                        "proposed_fact": {
+                            "type": "string",
+                            "description": "Concise, atomic fact or decision to propose for Obsidian review"
+                        },
+                        "suggested_tier": {
+                            "type": "string",
+                            "enum": ["hot", "warm", "cold"],
+                            "default": "warm",
+                            "description": "Suggested memory tier upon approval"
+                        },
+                        "scope": {
+                            "type": "string",
+                            "description": "Target memory scope (defaults to the caller write scope or global)"
+                        },
+                        "target_note": {
+                            "type": "string",
+                            "description": "Suggested Obsidian note path or [[wikilink]] topic"
+                        },
+                        "supersedes_amu_id": {
+                            "type": "string",
+                            "description": "Optional amu_<32-hex> or UUID of an active AMU this candidate replaces"
+                        },
+                        "proposed_by": {
+                            "type": "string",
+                            "description": "Optional author label (overridden by agent_id for scoped keys)"
+                        }
+                    }
+                },
+                "StageMemoryResponse": {
+                    "type": "object",
+                    "required": ["candidate_id", "inbox_path"],
+                    "properties": {
+                        "candidate_id": { "type": "string" },
+                        "inbox_path": { "type": "string" }
+                    }
+                },
+                "InspectHttpRequest": {
+                    "type": "object",
+                    "required": ["source_pointer"],
+                    "properties": {
+                        "source_pointer": {
+                            "type": "string",
+                            "description": "Vault path and optional heading anchor (e.g. Arch/DB.md#Schema)"
+                        }
+                    }
+                },
+                "InspectSourceResponse": {
+                    "type": "object",
+                    "required": ["source_pointer", "content"],
+                    "properties": {
+                        "source_pointer": { "type": "string" },
+                        "content": { "type": "string" }
+                    }
+                },
+                "ErrorResponse": {
+                    "type": "object",
+                    "required": ["error"],
+                    "properties": {
+                        "error": { "type": "string" }
+                    }
+                }
+            }
+        }
+    })
 }
 
 async fn handle_mcp(
@@ -1054,14 +1474,30 @@ mod tests {
         bearer: Option<&str>,
         body: Option<&str>,
     ) -> (u16, Value) {
+        let (code, _, parsed) = http_call_raw(addr, method, path, bearer, &[], body).await;
+        (code, parsed)
+    }
+
+    async fn http_call_raw(
+        addr: SocketAddr,
+        method: &str,
+        path: &str,
+        bearer: Option<&str>,
+        extra_headers: &[(&str, &str)],
+        body: Option<&str>,
+    ) -> (u16, String, Value) {
         let mut stream = TcpStream::connect(addr).await.unwrap();
         let body_str = body.unwrap_or("");
         let auth_hdr = match bearer {
             Some(tok) => format!("Authorization: Bearer {tok}\r\n"),
             None => String::new(),
         };
+        let extra = extra_headers
+            .iter()
+            .map(|(k, v)| format!("{k}: {v}\r\n"))
+            .collect::<String>();
         let req = format!(
-            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{auth_hdr}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body_str}",
+            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{auth_hdr}{extra}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body_str}",
             body_str.len()
         );
         stream.write_all(req.as_bytes()).await.unwrap();
@@ -1078,7 +1514,7 @@ mod tests {
             .parse()
             .unwrap();
         let parsed: Value = serde_json::from_str(json_body).unwrap();
-        (code, parsed)
+        (code, head.to_string(), parsed)
     }
 
     fn git_run(dir: &std::path::Path, args: &[&str]) {
@@ -1626,5 +2062,297 @@ mod tests {
 
         server.shutdown().await.unwrap();
         engine.shutdown().await.unwrap();
+    }
+
+    fn header_value<'a>(head: &'a str, name: &str) -> Option<&'a str> {
+        head.lines().skip(1).find_map(|line| {
+            let (k, v) = line.split_once(':')?;
+            if k.trim().eq_ignore_ascii_case(name) {
+                Some(v.trim())
+            } else {
+                None
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn control_plane_serves_public_openapi_3_1_schema_while_protecting_data_routes() {
+        let vault = TempVault::new();
+        vault.write("Specs/Note.md", "# Note\nOpenAPI test fixture.\n");
+        let engine = Arc::new(
+            VaultEngine::open(VaultConfig::in_memory(&vault.root))
+                .await
+                .unwrap(),
+        );
+        let admin_secret = crate::auth::ApiKeySecret::generate();
+        engine
+            .ensure_bootstrap_admin_key(
+                crate::auth::AgentId::new("bootstrap-admin").unwrap(),
+                &admin_secret,
+            )
+            .await
+            .unwrap();
+        let admin_tok = admin_secret.expose_secret();
+
+        let server = ControlPlaneServer::bind_with_auth(
+            "127.0.0.1:0".parse().unwrap(),
+            Arc::clone(&engine),
+            true,
+        )
+        .await
+        .unwrap();
+        let addr = server.local_addr();
+
+        let (code, head, spec) =
+            http_call_raw(addr, "GET", "/v1/openapi.json", None, &[], None).await;
+        assert_eq!(code, 200);
+        assert!(head.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert_eq!(
+            header_value(&head, "content-type"),
+            Some("application/json")
+        );
+        assert_eq!(spec["openapi"], "3.1.0");
+        assert!(spec["info"]["title"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty()));
+        assert!(spec["info"]["version"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty()));
+        assert_eq!(spec["servers"][0]["url"], "http://127.0.0.1");
+
+        let bearer_scheme = &spec["components"]["securitySchemes"]["bearerAuth"];
+        assert_eq!(bearer_scheme["type"], "http");
+        assert_eq!(bearer_scheme["scheme"], "bearer");
+        assert_eq!(spec["security"][0]["bearerAuth"], json!([]));
+
+        for (path, method) in [
+            ("/v1/recall", "post"),
+            ("/v1/stage", "post"),
+            ("/v1/inspect", "post"),
+            ("/v1/status", "get"),
+        ] {
+            let op = &spec["paths"][path][method];
+            assert!(
+                op.is_object(),
+                "expected OpenAPI path {method} {path} to be present"
+            );
+            assert!(
+                op["operationId"].as_str().is_some_and(|s| !s.is_empty()),
+                "expected operationId on {method} {path}"
+            );
+            assert!(
+                op["responses"]["200"].is_object(),
+                "expected 200 response on {method} {path}"
+            );
+        }
+
+        let recall_schema_ref = spec["paths"]["/v1/recall"]["post"]["requestBody"]["content"]
+            ["application/json"]["schema"]["$ref"]
+            .as_str();
+        assert_eq!(
+            recall_schema_ref,
+            Some("#/components/schemas/RecallHttpRequest")
+        );
+        assert_eq!(
+            spec["components"]["schemas"]["RecallHttpRequest"]["required"],
+            json!(["query"])
+        );
+        assert_eq!(
+            spec["components"]["schemas"]["StageHttpRequest"]["required"],
+            json!(["proposed_fact"])
+        );
+        assert_eq!(
+            spec["components"]["schemas"]["InspectHttpRequest"]["required"],
+            json!(["source_pointer"])
+        );
+
+        let (code, _, authed_spec) =
+            http_call_raw(addr, "GET", "/v1/openapi.json", Some(admin_tok), &[], None).await;
+        assert_eq!(code, 200);
+        assert_eq!(authed_spec["openapi"], "3.1.0");
+
+        let (code, _, proxied_spec) = http_call_raw(
+            addr,
+            "GET",
+            "/v1/openapi.json",
+            None,
+            &[
+                ("X-Forwarded-Proto", "https"),
+                ("X-Forwarded-Host", "vault.example.com"),
+            ],
+            None,
+        )
+        .await;
+        assert_eq!(code, 200);
+        assert_eq!(
+            proxied_spec["servers"][0]["url"],
+            "https://vault.example.com"
+        );
+
+        let (code, _, bad_host_spec) = http_call_raw(
+            addr,
+            "GET",
+            "/v1/openapi.json",
+            None,
+            &[("X-Forwarded-Host", "evil.example.com/inject")],
+            None,
+        )
+        .await;
+        assert_eq!(code, 200);
+        assert_eq!(bad_host_spec["servers"][0]["url"], "http://127.0.0.1:4771");
+
+        assert_openapi_refs_resolve(&spec);
+        assert_required_fields_match_live_response(
+            &spec,
+            "VaultStatusReport",
+            &http_call_with_auth(addr, "GET", "/v1/status", Some(admin_tok), None)
+                .await
+                .1,
+        );
+        assert_required_fields_match_live_response(
+            &spec,
+            "RecallResponse",
+            &http_call_with_auth(
+                addr,
+                "POST",
+                "/v1/recall",
+                Some(admin_tok),
+                Some(r#"{"query":"OpenAPI"}"#),
+            )
+            .await
+            .1,
+        );
+        assert_required_fields_match_live_response(
+            &spec,
+            "StageMemoryResponse",
+            &http_call_with_auth(
+                addr,
+                "POST",
+                "/v1/stage",
+                Some(admin_tok),
+                Some(r#"{"proposed_fact":"OpenAPI schema test fact."}"#),
+            )
+            .await
+            .1,
+        );
+        assert_required_fields_match_live_response(
+            &spec,
+            "InspectSourceResponse",
+            &http_call_with_auth(
+                addr,
+                "POST",
+                "/v1/inspect",
+                Some(admin_tok),
+                Some(r#"{"source_pointer":"Specs/Note.md#Note"}"#),
+            )
+            .await
+            .1,
+        );
+
+        let (code, _) = http_call(addr, "POST", "/v1/openapi.json", Some("{}")).await;
+        assert_eq!(code, 401);
+        let (code, _) = http_call_with_auth(
+            addr,
+            "POST",
+            "/v1/openapi.json",
+            Some(admin_tok),
+            Some("{}"),
+        )
+        .await;
+        assert_eq!(code, 404);
+
+        for (method, path, body) in [
+            ("GET", "/v1/status", None),
+            ("POST", "/v1/recall", Some(r#"{"query":"note"}"#)),
+            ("POST", "/v1/stage", Some(r#"{"proposed_fact":"test"}"#)),
+            (
+                "POST",
+                "/v1/inspect",
+                Some(r#"{"source_pointer":"Specs/Note.md"}"#),
+            ),
+        ] {
+            let (unauth_code, _) = http_call(addr, method, path, body).await;
+            assert_eq!(
+                unauth_code, 401,
+                "{method} {path} must still require bearer auth"
+            );
+        }
+
+        server.shutdown().await.unwrap();
+
+        let loopback_server =
+            ControlPlaneServer::bind("127.0.0.1:0".parse().unwrap(), Arc::clone(&engine))
+                .await
+                .unwrap();
+        let (code, _, loopback_spec) = http_call_raw(
+            loopback_server.local_addr(),
+            "GET",
+            "/v1/openapi.json",
+            None,
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(code, 200);
+        assert_eq!(loopback_spec["openapi"], "3.1.0");
+
+        loopback_server.shutdown().await.unwrap();
+        engine.shutdown().await.unwrap();
+    }
+
+    fn assert_openapi_refs_resolve(spec: &Value) {
+        fn walk(root: &Value, node: &Value) {
+            match node {
+                Value::Object(map) => {
+                    assert!(
+                        !map.contains_key("nullable"),
+                        "OpenAPI 3.1.0 must use type arrays instead of `nullable`"
+                    );
+                    if let Some(reference) = map.get("$ref").and_then(Value::as_str) {
+                        let schema_name = reference
+                            .strip_prefix("#/components/schemas/")
+                            .unwrap_or_else(|| panic!("unexpected $ref target `{reference}`"));
+                        assert!(
+                            root["components"]["schemas"][schema_name].is_object(),
+                            "missing schema for $ref `{reference}`"
+                        );
+                    }
+                    for child in map.values() {
+                        walk(root, child);
+                    }
+                }
+                Value::Array(items) => {
+                    for child in items {
+                        walk(root, child);
+                    }
+                }
+                _ => {}
+            }
+        }
+        walk(spec, spec);
+    }
+
+    fn assert_required_fields_match_live_response(
+        spec: &Value,
+        schema_name: &str,
+        payload: &Value,
+    ) {
+        let schema = &spec["components"]["schemas"][schema_name];
+        let required = schema["required"].as_array().unwrap();
+        let props = schema["properties"].as_object().unwrap();
+        let obj = payload.as_object().unwrap();
+        for field in required {
+            let name = field.as_str().unwrap();
+            assert!(
+                obj.contains_key(name),
+                "live payload missing required `{schema_name}` field `{name}`"
+            );
+        }
+        for key in obj.keys() {
+            assert!(
+                props.contains_key(key),
+                "live payload returned undocumented `{schema_name}` field `{key}`"
+            );
+        }
     }
 }

@@ -883,6 +883,8 @@ pub struct VaultPushRequest {
     #[serde(default)]
     pub aetherignore: Option<String>,
     #[serde(default)]
+    pub aetherhot: Option<String>,
+    #[serde(default)]
     pub run_dream: bool,
 }
 

@@ -17,6 +17,8 @@ import type {
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
 
+export const DEFAULT_CONTROL_PLANE_URL = 'http://127.0.0.1:14771';
+
 /**
  * Validates that the companion control-plane URL points strictly to loopback HTTP.
  */
@@ -91,7 +93,7 @@ export class AetherControlClient {
   private readonly apiKey: string | null;
 
   constructor(
-    baseUrl = 'http://127.0.0.1:4771',
+    baseUrl = DEFAULT_CONTROL_PLANE_URL,
     fetchOrOptions: FetchLike | AetherClientOptions = fetch,
   ) {
     const opts: AetherClientOptions =
