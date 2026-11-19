@@ -1,3 +1,5 @@
+import {DEFAULT_CONTROL_PLANE_URL} from './api.ts';
+
 export interface AetherPluginSettings {
   endpointUrl: string;
   apiKey: string;
@@ -10,7 +12,7 @@ export interface AetherPluginSettings {
 }
 
 export const DEFAULT_SETTINGS: AetherPluginSettings = {
-  endpointUrl: 'http://127.0.0.1:3000',
+  endpointUrl: DEFAULT_CONTROL_PLANE_URL,
   apiKey: '',
   liveSyncEnabled: true,
   syncDebounceMs: 1500,

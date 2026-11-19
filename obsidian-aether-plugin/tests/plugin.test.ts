@@ -16,6 +16,7 @@ import {
   type ObsidianCommandDescriptor,
   type ObsidianHostAdapter,
 } from '../src/main.ts';
+import {DEFAULT_SETTINGS, normalizePluginSettings} from '../src/settings-model.ts';
 import type {InboxEntry, VaultEvent, VaultStatusReport} from '../src/types.ts';
 
 function createMockHost() {
@@ -53,12 +54,28 @@ function createMockHost() {
 }
 
 describe('Aether Obsidian Companion Plugin', () => {
+  it('defaults control-plane endpoint URL to loopback port 14771 across client, plugin, and settings', () => {
+    const mock = createMockHost();
+    assert.equal(DEFAULT_SETTINGS.endpointUrl, 'http://127.0.0.1:14771');
+    assert.equal(normalizePluginSettings(null).endpointUrl, 'http://127.0.0.1:14771');
+    assert.equal(
+      normalizePluginSettings({endpointUrl: '   '}).endpointUrl,
+      'http://127.0.0.1:14771',
+    );
+    assert.equal(
+      normalizePluginSettings({endpointUrl: 'http://127.0.0.1:3000'}).endpointUrl,
+      'http://127.0.0.1:3000',
+    );
+    assert.equal(new AetherControlClient().baseUrl, 'http://127.0.0.1:14771');
+    assert.equal(new AetherCompanionPlugin(mock.host).client.baseUrl, 'http://127.0.0.1:14771');
+  });
+
   it('enforces loopback URLs and rejects remote hosts', () => {
-    assert.equal(assertLoopbackBaseUrl('http://127.0.0.1:4771'), 'http://127.0.0.1:4771');
-    assert.equal(assertLoopbackBaseUrl('http://localhost:4771'), 'http://localhost:4771');
-    assert.throws(() => assertLoopbackBaseUrl('http://192.168.1.50:4771'));
-    assert.throws(() => assertLoopbackBaseUrl('https://127.0.0.1:4771'));
-    assert.throws(() => new AetherControlClient('http://example.com:4771'));
+    assert.equal(assertLoopbackBaseUrl('http://127.0.0.1:14771'), 'http://127.0.0.1:14771');
+    assert.equal(assertLoopbackBaseUrl('http://localhost:14771'), 'http://localhost:14771');
+    assert.throws(() => assertLoopbackBaseUrl('http://192.168.1.50:14771'));
+    assert.throws(() => assertLoopbackBaseUrl('https://127.0.0.1:14771'));
+    assert.throws(() => new AetherControlClient('http://example.com:14771'));
   });
 
   it('formats status bar indicator and drives 1-click Inbox approval and Dream command over HTTP', async () => {
@@ -185,19 +202,19 @@ describe('Aether Obsidian Companion Plugin', () => {
 
   it('enforces remote bearer auth policy and drives Git sync and KV warming commands', async () => {
     assert.equal(
-      assertControlPlaneBaseUrl('https://team-vault.internal:4771', {apiKey: 'aek_test1234'}),
-      'https://team-vault.internal:4771',
+      assertControlPlaneBaseUrl('https://team-vault.internal:14771', {apiKey: 'aek_test1234'}),
+      'https://team-vault.internal:14771',
     );
-    assert.throws(() => assertControlPlaneBaseUrl('https://team-vault.internal:4771'));
+    assert.throws(() => assertControlPlaneBaseUrl('https://team-vault.internal:14771'));
     assert.throws(() =>
-      assertControlPlaneBaseUrl('http://192.168.1.50:4771', {apiKey: 'aek_test1234'}),
+      assertControlPlaneBaseUrl('http://192.168.1.50:14771', {apiKey: 'aek_test1234'}),
     );
     assert.equal(
-      assertControlPlaneBaseUrl('http://192.168.1.50:4771', {
+      assertControlPlaneBaseUrl('http://192.168.1.50:14771', {
         apiKey: 'aek_test1234',
         allowInsecureRemoteHttp: true,
       }),
-      'http://192.168.1.50:4771',
+      'http://192.168.1.50:14771',
     );
 
     const statusState: VaultStatusReport = {
@@ -830,24 +847,24 @@ describe('Aether Obsidian Companion Plugin', () => {
 
     const transport = createRequestUrlFetch(mockRequestUrl);
     const mockHost = createMockHost();
-    const plugin = new AetherCompanionPlugin(mockHost.host, 'http://127.0.0.1:4771', {
+    const plugin = new AetherCompanionPlugin(mockHost.host, 'http://127.0.0.1:14771', {
       fetchImpl: transport,
       apiKey: 'aek_initial_token',
       defaultKvModel: 'llama-3.1-8b',
     });
     await plugin.onload();
-    assert.equal(requests[0]?.url, 'http://127.0.0.1:4771/v1/status');
+    assert.equal(requests[0]?.url, 'http://127.0.0.1:14771/v1/status');
     assert.equal(requests[0]?.auth, 'Bearer aek_initial_token');
     assert.equal(mockHost.statusTexts.at(-1), 'Aether: 9 AMUs | 0 Inbox | HOT 42/2000');
 
-    plugin.reconfigure('https://vault.internal:4771', {
+    plugin.reconfigure('https://vault.internal:14771', {
       fetchImpl: transport,
       apiKey: 'aek_rotated_token',
       defaultKvModel: 'qwen2.5-coder',
       runDreamOnPush: true,
     });
     await plugin.refreshStatus();
-    assert.equal(requests[1]?.url, 'https://vault.internal:4771/v1/status');
+    assert.equal(requests[1]?.url, 'https://vault.internal:14771/v1/status');
     assert.equal(requests[1]?.auth, 'Bearer aek_rotated_token');
     assert.equal(plugin.defaultKvModel, 'qwen2.5-coder');
     assert.equal(plugin.runDreamOnPush, true);
