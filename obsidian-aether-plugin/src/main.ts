@@ -1,4 +1,9 @@
-import {AetherControlClient, type AetherClientOptions, type FetchLike} from './api.ts';
+import {
+  AetherControlClient,
+  DEFAULT_CONTROL_PLANE_URL,
+  type AetherClientOptions,
+  type FetchLike,
+} from './api.ts';
 import type {
   DreamReport,
   GitSyncOptionsRequest,
@@ -295,7 +300,7 @@ export class AetherCompanionPlugin {
 
   constructor(
     host: ObsidianHostAdapter,
-    baseUrl = 'http://127.0.0.1:4771',
+    baseUrl = DEFAULT_CONTROL_PLANE_URL,
     fetchOrOptions: FetchLike | AetherClientOptions = fetch,
   ) {
     this.host = host;
