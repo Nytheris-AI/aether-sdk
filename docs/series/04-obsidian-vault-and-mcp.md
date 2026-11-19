@@ -64,7 +64,7 @@ Built-in rules already skip `.obsidian`, `.git`, `.trash`, `.aether`, `Aether/In
 
 ## Step 2: Build and start `aether-mcp`
 
-Compile the release binary and start the vault daemon with its loopback HTTP control plane on `127.0.0.1:3000`:
+Compile the release binary and start the vault daemon with its loopback HTTP control plane on `127.0.0.1:14771`:
 
 ```bash
 cargo build --release -p nytheris-aether-vault --bin aether-mcp
@@ -72,7 +72,7 @@ cargo build --release -p nytheris-aether-vault --bin aether-mcp
 ./target/release/aether-mcp \
   --vault /tmp/demo-vault \
   --watch-ms 2000 \
-  --http-addr 127.0.0.1:3000
+  --http-addr 127.0.0.1:14771
 ```
 
 Leave this terminal open while Obsidian and your AI agents run. By default, `aether-mcp` stores the SQLite WAL database at `<vault>/.aether/aether.sqlite` and polls disk changes every `2000` ms (`--watch-ms 0` disables polling). Without `--require-auth`, `ControlPlaneServer::bind` rejects non-loopback addresses and accepts only `127.0.0.1` or `::1`.
@@ -98,7 +98,7 @@ Now enable and connect the plugin in Obsidian:
 1. Open `/tmp/demo-vault` as a vault in Obsidian.
 2. Open **Settings**, open **Community plugins**, disable Restricted Mode if prompted, and enable **Aether Memory Companion**.
 3. Open **Settings** and select **Aether Memory Companion**.
-4. Confirm **Aether control-plane URL** is `http://127.0.0.1:3000` and leave **API key** empty for loopback mode.
+4. Confirm **Aether control-plane URL** is `http://127.0.0.1:14771` and leave **API key** empty for loopback mode.
 5. Click **Test Connection**. Obsidian shows a notice reporting the count of indexed notes.
 6. Keep **Live vault sync** turned on so edits sync after Obsidian finishes loading its layout.
 7. Run **Sync Vault with Aether** from the Obsidian Command Palette (or click the **Aether: Idle** status bar item).
@@ -120,20 +120,20 @@ Add `aether-mcp` to your MCP client configuration (such as Claude Desktop, Curso
 }
 ```
 
-Passing `--watch-ms 0` on the `stdio` client process lets it share `<vault>/.aether/aether.sqlite` over SQLite WAL without duplicating background scans when the HTTP daemon from Step 2 is already running. If you do not run a separate HTTP daemon, omit `--watch-ms 0` or add `--http-addr 127.0.0.1:3000` so the MCP host launches the full server.
+Passing `--watch-ms 0` on the `stdio` client process lets it share `<vault>/.aether/aether.sqlite` over SQLite WAL without duplicating background scans when the HTTP daemon from Step 2 is already running. If you do not run a separate HTTP daemon, omit `--watch-ms 0` or add `--http-addr 127.0.0.1:14771` so the MCP host launches the full server.
 
-HTTP-capable agents can also call `POST http://127.0.0.1:3000/v1/mcp` directly without spawning a second process. Test all three MCP tools against the running server:
+HTTP-capable agents can also call `POST http://127.0.0.1:14771/v1/mcp` directly without spawning a second process. Test all three MCP tools against the running server:
 
 ```bash
-curl -sS -X POST http://127.0.0.1:3000/v1/mcp \
+curl -sS -X POST http://127.0.0.1:14771/v1/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"aether_recall","arguments":{"query":"SQLite WAL","scope":"engineering","max_tokens":1500,"structured":true}}}'
 
-curl -sS -X POST http://127.0.0.1:3000/v1/mcp \
+curl -sS -X POST http://127.0.0.1:14771/v1/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"aether_stage_memory","arguments":{"proposed_fact":"Set busy_timeout to 5000 ms on SQLite connections.","suggested_tier":"warm","scope":"engineering","target_note":"Arch/DB.md"}}}'
 
-curl -sS -X POST http://127.0.0.1:3000/v1/mcp \
+curl -sS -X POST http://127.0.0.1:14771/v1/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"aether_inspect_source","arguments":{"source_pointer":"Arch/DB.md#Schema"}}}'
 ```
@@ -180,8 +180,8 @@ aether_scope: engineering
 - Decision: Switched local cache from Redis to SQLite WAL in [[Arch/DB]].
 ```
 
-Run **Trigger Dream Pass** from the Obsidian Command Palette (or send `curl -sS -X POST http://127.0.0.1:3000/v1/dream`). Obsidian shows a notice with scanned notes, staged candidates, and flagged contradictions, and updates `Aether/Inbox.md` with any newly proposed facts. The worker records a SHA-256 watermark in `dream_watermarks` so unchanged Daily Notes are skipped on later passes, and sets `supersedes_amu_id` when replacement cues (`switched`, `migrated`, `replaced`, `instead of`, `no longer`, `deprecated`, `superseded`) match an active AMU.
+Run **Trigger Dream Pass** from the Obsidian Command Palette (or send `curl -sS -X POST http://127.0.0.1:14771/v1/dream`). Obsidian shows a notice with scanned notes, staged candidates, and flagged contradictions, and updates `Aether/Inbox.md` with any newly proposed facts. The worker records a SHA-256 watermark in `dream_watermarks` so unchanged Daily Notes are skipped on later passes, and sets `supersedes_amu_id` when replacement cues (`switched`, `migrated`, `replaced`, `instead of`, `no longer`, `deprecated`, `superseded`) match an active AMU.
 
-Check overall vault health anytime with `GET http://127.0.0.1:3000/v1/status`.
+Check overall vault health anytime with `GET http://127.0.0.1:14771/v1/status`.
 
 **Next in series.** Continue to [Part 5: Team Git Sync, Scoped Auth & GPU KV Warming](./05-team-git-auth-and-kv-warming.md).
