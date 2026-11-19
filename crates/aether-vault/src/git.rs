@@ -279,30 +279,58 @@ pub(crate) struct GitMergeOutcome {
     pub(crate) in_merge_state: bool,
 }
 
-pub(crate) fn ensure_aether_gitignored_blocking(vault_root: &Path) -> Result<bool> {
-    let check = Command::new("git")
-        .args(["check-ignore", "-q", ".aether/aether.sqlite"])
-        .current_dir(vault_root)
-        .output()
-        .map_err(|err| permanent_git_err(format!("failed to invoke git check-ignore: {err}")))?;
-    if check.status.success() {
-        return Ok(false);
-    }
+const REQUIRED_GITIGNORE_RULES: &[(&str, &[&str])] = &[
+    (
+        ".aether/aether.sqlite",
+        &[".aether/", ".aether", ".aether/*"],
+    ),
+    (
+        ".obsidian/plugins/obsidian-aether/data.json",
+        &[
+            ".obsidian/plugins/obsidian-aether/data.json",
+            ".obsidian/plugins/obsidian-aether/*",
+            ".obsidian/plugins/obsidian-aether/",
+            ".obsidian/",
+            ".obsidian",
+        ],
+    ),
+];
 
+pub(crate) fn ensure_aether_gitignored_blocking(vault_root: &Path) -> Result<bool> {
     let gitignore_path = vault_root.join(".gitignore");
     let existing = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
-    if existing
-        .lines()
-        .any(|line| matches!(line.trim(), ".aether/" | ".aether" | ".aether/*"))
-    {
+    let mut updated = existing.clone();
+    let mut changed = false;
+
+    for &(probe_path, accepted_lines) in REQUIRED_GITIGNORE_RULES {
+        let check = Command::new("git")
+            .args(["check-ignore", "-q", probe_path])
+            .current_dir(vault_root)
+            .output()
+            .map_err(|err| {
+                permanent_git_err(format!("failed to invoke git check-ignore: {err}"))
+            })?;
+        if check.status.success() {
+            continue;
+        }
+        let already_present = updated
+            .lines()
+            .any(|line| accepted_lines.contains(&line.trim()));
+        if already_present {
+            continue;
+        }
+        if !updated.is_empty() && !updated.ends_with('\n') {
+            updated.push('\n');
+        }
+        updated.push_str(accepted_lines[0]);
+        updated.push('\n');
+        changed = true;
+    }
+
+    if !changed {
         return Ok(false);
     }
 
-    let mut updated = existing;
-    if !updated.is_empty() && !updated.ends_with('\n') {
-        updated.push('\n');
-    }
-    updated.push_str(".aether/\n");
     inbox::atomic_write_file(&gitignore_path, updated.as_bytes())?;
     Ok(true)
 }
@@ -659,5 +687,42 @@ Use Valkey.
         assert_eq!(merged[&cid_rej].status, CandidateLatticeStatus::Rejected);
         assert_eq!(merged[&cid_pend].status, CandidateLatticeStatus::Pending);
         let _ = pending_only;
+    }
+
+    #[test]
+    fn ensure_aether_gitignored_ignores_aether_dir_and_plugin_data_json() {
+        let dir =
+            std::env::temp_dir().join(format!("aether_gitignore_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let init = Command::new("git")
+            .args(["init"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(init.status.success());
+
+        std::fs::write(dir.join(".gitignore"), ".aether/\n").unwrap();
+        let changed = ensure_aether_gitignored_blocking(&dir).unwrap();
+        assert!(changed);
+
+        let gitignore = std::fs::read_to_string(dir.join(".gitignore")).unwrap();
+        assert!(gitignore.contains(".aether/"));
+        assert!(gitignore.contains(".obsidian/plugins/obsidian-aether/data.json"));
+
+        let check_data = Command::new("git")
+            .args([
+                "check-ignore",
+                "-q",
+                ".obsidian/plugins/obsidian-aether/data.json",
+            ])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(check_data.status.success());
+
+        let changed_again = ensure_aether_gitignored_blocking(&dir).unwrap();
+        assert!(!changed_again);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

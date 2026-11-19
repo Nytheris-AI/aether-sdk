@@ -10,7 +10,11 @@ use crate::types::{
 };
 
 const BUILTIN_IGNORED_DIRS: &[&str] = &[".obsidian", ".git", ".trash", ".aether"];
-const BUILTIN_IGNORED_PREFIXES: &[&str] = &["aether/inbox.md", "aether/compiled"];
+const BUILTIN_IGNORED_PREFIXES: &[&str] = &[
+    "aether/inbox.md",
+    "aether/compiled",
+    ".obsidian/plugins/obsidian-aether/data.json",
+];
 const BUILTIN_IGNORED_EXTENSIONS: &[&str] = &[".canvas", ".excalidraw", ".excalidraw.md"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -885,6 +889,7 @@ mod tests {
         let rules = IgnoreRules::from_str("# private notes\nFinance/\n*.secret.md\nDrafts/*.tmp\n");
 
         assert!(rules.is_ignored(".obsidian/plugins/foo/main.js"));
+        assert!(rules.is_ignored(".obsidian/plugins/obsidian-aether/data.json"));
         assert!(rules.is_ignored(".git/HEAD"));
         assert!(rules.is_ignored(".trash/Old.md"));
         assert!(rules.is_ignored("Aether/Inbox.md"));
