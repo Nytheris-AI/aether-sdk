@@ -473,7 +473,6 @@ export const RELEASE_CHECKS = [
 ];
 
 /**
- * Validates release artifacts, manifest rules, version parity, and standalone config hygiene.
  * @param {ValidateReleaseInput} input
  * @returns {ReleaseVerificationReport}
  */
@@ -521,7 +520,6 @@ export function validateRelease(input) {
 }
 
 /**
- * Reads plugin files from disk and validates them as a standalone Obsidian Community Plugin release.
  * @param {string} rootDir
  * @param {{ tag?: string }} [options]
  * @returns {ReleaseVerificationReport}
@@ -546,7 +544,6 @@ export function verifyReleaseDirectory(rootDir, options = {}) {
 }
 
 /**
- * Parses CLI flags (`--tag`, `--dir`, `--help`) for release verification.
  * @param {readonly string[]} argv
  * @param {string} defaultDir
  * @returns {CliParseResult}
@@ -609,7 +606,6 @@ export function parseCliArgs(argv, defaultDir) {
 }
 
 /**
- * Formats a verification report into human-readable lines.
  * @param {ReleaseVerificationReport} report
  * @returns {string}
  */
@@ -627,7 +623,6 @@ export function formatVerificationReport(report) {
 }
 
 /**
- * Runs the CLI entrypoint and returns an exit code (`0` on pass, `1` on failure).
  * @param {readonly string[]} argv
  * @param {string} defaultDir
  * @param {CliIo} [io]
