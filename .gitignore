@@ -6,6 +6,11 @@ website/node_modules/
 website/build/
 website/.docusaurus/
 
+# Obsidian companion plugin
+obsidian-aether-plugin/node_modules/
+obsidian-aether-plugin/main.js
+obsidian-aether-plugin/main.js.map
+
 # Local dev state & AI session artifacts
 .aether/
 .audit/

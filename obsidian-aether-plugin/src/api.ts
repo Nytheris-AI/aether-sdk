@@ -79,6 +79,7 @@ export interface AetherClientOptions {
   apiKey?: string;
   allowInsecureRemoteHttp?: boolean;
   defaultKvModel?: string;
+  runDreamOnPush?: boolean;
 }
 
 /**

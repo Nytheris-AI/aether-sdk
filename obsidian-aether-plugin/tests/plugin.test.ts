@@ -3,6 +3,11 @@ import http from 'node:http';
 import {describe, it} from 'node:test';
 import {AetherControlClient, assertControlPlaneBaseUrl, assertLoopbackBaseUrl} from '../src/api.ts';
 import {
+  ObsidianDesktopAdapter,
+  PathDebouncer,
+  createRequestUrlFetch,
+} from '../src/desktop-adapter.ts';
+import {
   AetherCompanionPlugin,
   computeSha256Hex,
   formatStatusBarText,
@@ -611,6 +616,14 @@ describe('Aether Obsidian Companion Plugin', () => {
       files.set('Arch/DB.md', '---\naether_tier: private\n---\n# DB\nNOW_PRIVATE_BODY\n');
       await emitVaultEvent({kind: 'modify', path: 'Arch/DB.md'});
       assert.equal(indexedNotes.has('Arch/DB.md'), false);
+      const lastPush = JSON.parse(pushedPayloads.at(-1)!.raw) as {
+        private_paths?: string[];
+        deleted_paths?: string[];
+        notes?: unknown[];
+      };
+      assert.deepEqual(lastPush.private_paths, ['Arch/DB.md']);
+      assert.deepEqual(lastPush.deleted_paths, ['Arch/DB.md']);
+      assert.equal(lastPush.notes?.length ?? 0, 0);
       assert.equal(
         pushedPayloads.some((p) => p.raw.includes('NOW_PRIVATE_BODY')),
         false,
@@ -633,5 +646,210 @@ describe('Aether Obsidian Companion Plugin', () => {
         server.close((err) => (err ? reject(err) : resolve()));
       });
     }
+  });
+
+  it('desktop adapter gates events on onLayoutReady, creates parent folders, uses vault.read, and debounces safely', async () => {
+    const folders = new Set<string>();
+    const createdFolders: string[] = [];
+    const files = new Map<string, string>([['Arch/DB.md', '# DB\nInitial WAL text.\n']]);
+    const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+    const registeredEvents: unknown[] = [];
+    let layoutReadyCallback: (() => void) | null = null;
+    let readCallCount = 0;
+    let cachedReadCallCount = 0;
+
+    const makeFileObj = (path: string) => ({
+      path,
+      name: path.split('/').pop() ?? path,
+      extension: path.split('.').pop() ?? '',
+    });
+    const makeFolderObj = (path: string) => ({
+      path,
+      name: path.split('/').pop() ?? path,
+      children: [],
+    });
+
+    const emitObsidian = (name: string, ...args: unknown[]) => {
+      for (const cb of listeners.get(name) ?? []) {
+        cb(...args);
+      }
+    };
+
+    const mockApp = {
+      vault: {
+        getMarkdownFiles() {
+          return [...files.keys()]
+            .filter((p) => p.toLowerCase().endsWith('.md'))
+            .map((p) => makeFileObj(p));
+        },
+        getAbstractFileByPath(path: string) {
+          if (files.has(path)) {
+            return makeFileObj(path);
+          }
+          if (folders.has(path)) {
+            return makeFolderObj(path);
+          }
+          return null;
+        },
+        async read(file: {path: string}) {
+          readCallCount += 1;
+          return files.get(file.path) ?? '';
+        },
+        async cachedRead(file: {path: string}) {
+          cachedReadCallCount += 1;
+          return files.get(file.path) ?? '';
+        },
+        async createFolder(path: string) {
+          folders.add(path);
+          createdFolders.push(path);
+        },
+        async create(path: string, data: string) {
+          files.set(path, data);
+          return makeFileObj(path);
+        },
+        async modify(file: {path: string}, data: string) {
+          files.set(file.path, data);
+        },
+        on(name: string, cb: (...args: unknown[]) => void) {
+          const list = listeners.get(name) ?? [];
+          list.push(cb);
+          listeners.set(name, list);
+          return {name, cb};
+        },
+      },
+      workspace: {
+        onLayoutReady(cb: () => void) {
+          layoutReadyCallback = cb;
+        },
+      },
+    };
+
+    const adapter = new ObsidianDesktopAdapter({
+      app: mockApp as never,
+      registerEvent(ref) {
+        registeredEvents.push(ref);
+      },
+      addStatusBarItem() {
+        return {setText() {}};
+      },
+      addCommand() {},
+      notify() {},
+      openInboxPane() {},
+      debounceMs: 25,
+      isLiveSyncEnabled: () => true,
+    });
+
+    const content = await adapter.readFile('./Arch/DB.md');
+    assert.equal(content, '# DB\nInitial WAL text.\n');
+    assert.equal(readCallCount, 1);
+    assert.equal(cachedReadCallCount, 0);
+
+    await adapter.writeFile('Aether/Compiled/Approved.md', '# Approved\nEntry 1\n');
+    assert.deepEqual(createdFolders, ['Aether', 'Aether/Compiled']);
+    assert.equal(files.get('Aether/Compiled/Approved.md'), '# Approved\nEntry 1\n');
+
+    await adapter.writeFile('Aether/Compiled/Approved.md', '# Approved\nEntry 2\n');
+    assert.equal(files.get('Aether/Compiled/Approved.md'), '# Approved\nEntry 2\n');
+    assert.equal(createdFolders.length, 2);
+
+    const dispatched: VaultEvent[] = [];
+    adapter.onVaultEvent(async (ev) => {
+      dispatched.push(ev);
+    });
+    assert.equal(registeredEvents.length, 0);
+
+    emitObsidian('create', makeFileObj('Startup/Old.md'));
+    assert.equal(dispatched.length, 0);
+
+    assert.ok(layoutReadyCallback);
+    (layoutReadyCallback as () => void)();
+    assert.equal(registeredEvents.length, 4);
+
+    emitObsidian('modify', makeFileObj('Arch/DB.md'));
+    emitObsidian('modify', makeFileObj('Arch/DB.md'));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(dispatched.length, 1);
+    assert.deepEqual(dispatched[0], {kind: 'modify', path: 'Arch/DB.md'});
+
+    emitObsidian('modify', makeFileObj('Arch/Old.md'));
+    emitObsidian('rename', makeFileObj('Arch/New.md'), 'Arch/Old.md');
+    emitObsidian('delete', makeFileObj('Arch/New.md'));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.deepEqual(dispatched.slice(1), [
+      {kind: 'rename', oldPath: 'Arch/Old.md', newPath: 'Arch/New.md'},
+      {kind: 'delete', path: 'Arch/New.md'},
+    ]);
+
+    emitObsidian('modify', makeFileObj('Arch/PendingDispose.md'));
+    adapter.dispose();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(dispatched.length, 3);
+
+    const debouncer = new PathDebouncer(50);
+    let flushedCount = 0;
+    debouncer.enqueue({kind: 'modify', path: 'x.md'}, async () => {
+      flushedCount += 1;
+    });
+    await debouncer.flushOrCancel('cancel');
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    assert.equal(flushedCount, 0);
+  });
+
+  it('bridges AetherControlClient through Obsidian requestUrl transport and supports hot reconfigure', async () => {
+    const requests: Array<{url: string; method?: string; auth?: string; body?: string}> = [];
+    const mockRequestUrl = async (req: {
+      url: string;
+      method?: string;
+      headers?: Record<string, string>;
+      body?: string;
+    }) => {
+      requests.push({
+        url: req.url,
+        method: req.method,
+        auth: req.headers?.Authorization,
+        body: req.body,
+      });
+      return {
+        status: 200,
+        headers: {'content-type': 'application/json'},
+        text: JSON.stringify({
+          status: 'ok',
+          schema_version: 3,
+          embedder_id: 'hashed-ngram-256-v1',
+          embedding_dim: 256,
+          active_amus: 9,
+          pending_inbox_count: 0,
+          approved_inbox_count: 1,
+          hot_tokens_used: 42,
+          hot_token_budget: 2000,
+          prefix_hash: '0'.repeat(64),
+        }),
+        json: {},
+      };
+    };
+
+    const transport = createRequestUrlFetch(mockRequestUrl);
+    const mockHost = createMockHost();
+    const plugin = new AetherCompanionPlugin(mockHost.host, 'http://127.0.0.1:4771', {
+      fetchImpl: transport,
+      apiKey: 'aek_initial_token',
+      defaultKvModel: 'llama-3.1-8b',
+    });
+    await plugin.onload();
+    assert.equal(requests[0]?.url, 'http://127.0.0.1:4771/v1/status');
+    assert.equal(requests[0]?.auth, 'Bearer aek_initial_token');
+    assert.equal(mockHost.statusTexts.at(-1), 'Aether: 9 AMUs | 0 Inbox | HOT 42/2000');
+
+    plugin.reconfigure('https://vault.internal:4771', {
+      fetchImpl: transport,
+      apiKey: 'aek_rotated_token',
+      defaultKvModel: 'qwen2.5-coder',
+      runDreamOnPush: true,
+    });
+    await plugin.refreshStatus();
+    assert.equal(requests[1]?.url, 'https://vault.internal:4771/v1/status');
+    assert.equal(requests[1]?.auth, 'Bearer aek_rotated_token');
+    assert.equal(plugin.defaultKvModel, 'qwen2.5-coder');
+    assert.equal(plugin.runDreamOnPush, true);
   });
 });

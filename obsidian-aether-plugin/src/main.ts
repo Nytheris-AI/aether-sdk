@@ -18,7 +18,11 @@ import type {
 const INBOX_REL_PATH = 'Aether/Inbox.md';
 const APPROVED_MIRROR_REL_PATH = 'Aether/Compiled/Approved.md';
 const BUILTIN_IGNORED_DIRS = new Set(['.obsidian', '.git', '.trash', '.aether']);
-const BUILTIN_IGNORED_PREFIXES = ['aether/inbox.md', 'aether/compiled'];
+const BUILTIN_IGNORED_PREFIXES = [
+  'aether/inbox.md',
+  'aether/compiled',
+  '.obsidian/plugins/obsidian-aether/data.json',
+];
 const BUILTIN_IGNORED_EXTENSIONS = ['.canvas', '.excalidraw', '.excalidraw.md'];
 
 export interface StatusBarHandle {
@@ -196,23 +200,26 @@ export function formatVaultSyncNotice(report: SyncReport): string {
 export class InboxReviewController {
   pending: InboxEntry[] = [];
   lastError: string | null = null;
-  private readonly client: AetherControlClient;
+  private readonly getClient: () => AetherControlClient;
   private readonly onRefreshStatus: () => Promise<void>;
 
-  constructor(client: AetherControlClient, onRefreshStatus: () => Promise<void>) {
-    this.client = client;
+  constructor(
+    clientOrGetter: AetherControlClient | (() => AetherControlClient),
+    onRefreshStatus: () => Promise<void>,
+  ) {
+    this.getClient = typeof clientOrGetter === 'function' ? clientOrGetter : () => clientOrGetter;
     this.onRefreshStatus = onRefreshStatus;
   }
 
   async refresh(): Promise<InboxEntry[]> {
-    const resp = await this.client.getInbox();
+    const resp = await this.getClient().getInbox();
     this.pending = resp.pending;
     this.lastError = null;
     return this.pending;
   }
 
   async decide(candidateId: string, decision: InboxDecision): Promise<void> {
-    await this.client.decideCandidate(candidateId, decision);
+    await this.getClient().decideCandidate(candidateId, decision);
     this.pending = this.pending.filter((entry) => entry.candidate_id !== candidateId);
     this.lastError = null;
     await this.onRefreshStatus();
@@ -278,9 +285,10 @@ export function renderInboxPane(
  * Dream pass, Git sync, and KV-cache warming commands.
  */
 export class AetherCompanionPlugin {
-  readonly client: AetherControlClient;
+  client: AetherControlClient;
   readonly inboxController: InboxReviewController;
-  readonly defaultKvModel: string;
+  defaultKvModel: string;
+  runDreamOnPush: boolean;
   private readonly host: ObsidianHostAdapter;
   private readonly lastWrittenHashes = new Map<string, string>();
   private statusBar: StatusBarHandle | null = null;
@@ -292,14 +300,24 @@ export class AetherCompanionPlugin {
   ) {
     this.host = host;
     this.client = new AetherControlClient(baseUrl, fetchOrOptions);
-    this.defaultKvModel =
-      typeof fetchOrOptions === 'object' && fetchOrOptions.defaultKvModel
-        ? fetchOrOptions.defaultKvModel
-        : 'llama-3.1-8b';
-    this.inboxController = new InboxReviewController(this.client, async () => {
-      await this.syncMirrorsFromServer();
-      await this.refreshStatus();
-    });
+    this.defaultKvModel = resolveDefaultKvModel(fetchOrOptions);
+    this.runDreamOnPush = resolveRunDreamOnPush(fetchOrOptions);
+    this.inboxController = new InboxReviewController(
+      () => this.client,
+      async () => {
+        await this.syncMirrorsFromServer();
+        await this.refreshStatus();
+      },
+    );
+  }
+
+  reconfigure(
+    baseUrl: string,
+    fetchOrOptions: FetchLike | AetherClientOptions = fetch,
+  ): void {
+    this.client = new AetherControlClient(baseUrl, fetchOrOptions);
+    this.defaultKvModel = resolveDefaultKvModel(fetchOrOptions);
+    this.runDreamOnPush = resolveRunDreamOnPush(fetchOrOptions);
   }
 
   async onload(): Promise<void> {
@@ -351,10 +369,19 @@ export class AetherCompanionPlugin {
 
   async syncVaultWithAether(options: {runDream?: boolean} = {}): Promise<VaultPushResponse> {
     const pulled = await this.client.pullVaultState();
-    const pushReq = await this.buildDeltaPushRequest(pulled, options.runDream);
+    const pushReq = await this.buildDeltaPushRequest(
+      pulled,
+      options.runDream ?? this.runDreamOnPush,
+    );
     const resp = await this.pushAndApplyMirrors(pushReq);
     this.host.notify(formatVaultSyncNotice(resp.sync_report));
     return resp;
+  }
+
+  async pullMirrors(): Promise<void> {
+    await this.syncMirrorsFromServer();
+    await this.inboxController.refresh();
+    await this.refreshStatus();
   }
 
   async handleVaultEvent(event: VaultEvent): Promise<VaultPushResponse | null> {
@@ -433,7 +460,10 @@ export class AetherCompanionPlugin {
     }
 
     if (isPrivateMarkdownNote(content)) {
-      return this.pushAndApplyMirrors({private_paths: [relPath]});
+      return this.pushAndApplyMirrors({
+        private_paths: [relPath],
+        deleted_paths: [relPath],
+      });
     }
     return this.pushAndApplyMirrors({notes: [{path: relPath, content}]});
   }
@@ -600,6 +630,16 @@ export class AetherCompanionPlugin {
     this.lastWrittenHashes.set(normPath, nextHash);
     await this.host.writeFile(path, content);
   }
+}
+
+function resolveDefaultKvModel(fetchOrOptions: FetchLike | AetherClientOptions): string {
+  return typeof fetchOrOptions === 'object' && fetchOrOptions.defaultKvModel
+    ? fetchOrOptions.defaultKvModel
+    : 'llama-3.1-8b';
+}
+
+function resolveRunDreamOnPush(fetchOrOptions: FetchLike | AetherClientOptions): boolean {
+  return typeof fetchOrOptions === 'object' && Boolean(fetchOrOptions.runDreamOnPush);
 }
 
 function isManagedMirrorPath(relPath: string): boolean {
