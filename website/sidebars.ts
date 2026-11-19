@@ -29,6 +29,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'How-To Guides',
       items: [
+        'guides/obsidian-setup',
         'guides/usage',
         'guides/memory',
         'guides/observability',
