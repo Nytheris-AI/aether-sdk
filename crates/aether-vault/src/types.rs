@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -861,6 +862,48 @@ pub struct VaultStatusReport {
     pub hot_tokens_used: usize,
     pub hot_token_budget: usize,
     pub prefix_hash: ContentHash,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaultNotePush {
+    pub path: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaultPushRequest {
+    #[serde(default)]
+    pub notes: Vec<VaultNotePush>,
+    #[serde(default)]
+    pub deleted_paths: Vec<String>,
+    #[serde(default)]
+    pub private_paths: Vec<String>,
+    #[serde(default)]
+    pub inbox_markdown: Option<String>,
+    #[serde(default)]
+    pub aetherignore: Option<String>,
+    #[serde(default)]
+    pub run_dream: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaultPushResponse {
+    pub sync_report: SyncReport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dream_report: Option<DreamReport>,
+    pub inbox_path: String,
+    pub inbox_markdown: String,
+    pub approved_mirror_path: String,
+    pub approved_mirror_markdown: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VaultPullResponse {
+    pub manifest: BTreeMap<String, ContentHash>,
+    pub inbox_path: String,
+    pub inbox_markdown: String,
+    pub approved_mirror_path: String,
+    pub approved_mirror_markdown: String,
 }
 
 /// Deterministic token estimator used by prefix budgeting (`ceil(len / 4)`, `0` when empty).

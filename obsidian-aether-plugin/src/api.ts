@@ -8,6 +8,9 @@ import type {
   KvCacheStats,
   KvWarmReport,
   SyncReport,
+  VaultPullResponse,
+  VaultPushRequest,
+  VaultPushResponse,
   VaultStatusReport,
   WarmKvRequest,
 } from './types.ts';
@@ -76,6 +79,7 @@ export interface AetherClientOptions {
   apiKey?: string;
   allowInsecureRemoteHttp?: boolean;
   defaultKvModel?: string;
+  runDreamOnPush?: boolean;
 }
 
 /**
@@ -126,6 +130,14 @@ export class AetherControlClient {
 
   async gitSync(options: GitSyncOptionsRequest = {}): Promise<GitSyncReport> {
     return this.request<GitSyncReport>('POST', '/v1/git/sync', options);
+  }
+
+  async pullVaultState(): Promise<VaultPullResponse> {
+    return this.request<VaultPullResponse>('GET', '/v1/vault/pull');
+  }
+
+  async pushVaultChanges(req: VaultPushRequest = {}): Promise<VaultPushResponse> {
+    return this.request<VaultPushResponse>('POST', '/v1/vault/push', req);
   }
 
   async warmKvCache(req: WarmKvRequest): Promise<KvWarmReport> {

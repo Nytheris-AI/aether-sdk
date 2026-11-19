@@ -129,3 +129,39 @@ export interface KvCacheStats {
   tier_usage: KvTierUsage;
   models: string[];
 }
+
+export interface VaultNotePush {
+  path: string;
+  content: string;
+}
+
+export interface VaultPushRequest {
+  notes?: VaultNotePush[];
+  deleted_paths?: string[];
+  private_paths?: string[];
+  inbox_markdown?: string;
+  aetherignore?: string;
+  run_dream?: boolean;
+}
+
+export interface VaultPushResponse {
+  sync_report: SyncReport;
+  dream_report?: DreamReport;
+  inbox_path: string;
+  inbox_markdown: string;
+  approved_mirror_path: string;
+  approved_mirror_markdown: string;
+}
+
+export interface VaultPullResponse {
+  manifest: Record<string, string>;
+  inbox_path: string;
+  inbox_markdown: string;
+  approved_mirror_path: string;
+  approved_mirror_markdown: string;
+}
+
+export type VaultEvent =
+  | {kind: 'create' | 'modify'; path: string}
+  | {kind: 'delete'; path: string}
+  | {kind: 'rename'; oldPath: string; newPath: string};

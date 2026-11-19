@@ -1,6 +1,6 @@
 # aether-mcp CLI, MCP Tools, HTTP API & Frontmatter
 
-This reference documents the `aether-mcp` binary CLI flags, MCP JSON-RPC 2.0 tool schemas, all 16 `ControlPlaneServer` HTTP endpoints, Obsidian YAML frontmatter keys, `.aetherignore` rules, and the `obsidian-aether-plugin` TypeScript API.
+This reference documents the `aether-mcp` binary CLI flags, MCP JSON-RPC 2.0 tool schemas, all 18 `ControlPlaneServer` HTTP endpoints, Obsidian YAML frontmatter keys, `.aetherignore` rules, and the `obsidian-aether-plugin` TypeScript API.
 
 ## `aether-mcp` CLI flags and environment variables
 
@@ -61,7 +61,7 @@ Scoped sessions require the `Reader` role or higher.
 
 Reads live verbatim Markdown from disk while enforcing traversal guards, `.aetherignore`, `aether_tier: private` rejection, and scoped read authorization.
 
-## HTTP Control Plane & Team API (16 endpoints)
+## HTTP Control Plane & Team API (18 endpoints)
 
 When `require_auth` is `false`, `ControlPlaneServer::bind` permits only `127.0.0.1` and `::1`. When `require_auth` is `true`, every request (except `OPTIONS` CORS preflight returning `204 No Content`) requires `Authorization: Bearer aek_<hex>`. Errors return `{ "error": "..." }` with status `400`, `401`, `403`, `404`, or `500`.
 
@@ -74,6 +74,8 @@ When `require_auth` is `false`, `ControlPlaneServer::bind` permits only `127.0.0
 | `POST` | `/v1/dream` | `Admin` | None | `DreamReport` (`daily_notes_scanned`, `daily_notes_skipped_unchanged`, `candidates_staged`, `contradictions_flagged`, `staged_candidate_ids`) |
 | `POST` | `/v1/sync` | `Admin` | None | `SyncReport` (`files_scanned`, `files_skipped_unchanged`, `files_skipped_self_write`, `files_updated`, `files_removed`, `private_skipped`, `amus_indexed`, `inbox_approved`, `inbox_rejected`, `reindexed_amus`) |
 | `POST` | `/v1/git/sync` | `Admin` | Optional `{ remote, branch, push, commit_message }` | `GitSyncReport` (`remote`, `branch`, `head_commit`, `merged_cleanly`, `aether_conflicts_resolved`, `conflicted_files`, `sync_report`, `pushed`) |
+| `GET` | `/v1/vault/pull` | `Reader` | None | `VaultPullResponse` (`manifest`, `inbox_path`, `inbox_markdown`, `approved_mirror_path`, `approved_mirror_markdown`) |
+| `POST` | `/v1/vault/push` | `Contributor` (`Admin` for Inbox decisions or `run_dream`) | `{ notes?, deleted_paths?, private_paths?, inbox_markdown?, aetherignore?, run_dream? }` | `VaultPushResponse` (`sync_report`, `dream_report?`, `inbox_path`, `inbox_markdown`, `approved_mirror_path`, `approved_mirror_markdown`) |
 | `POST` | `/v1/recall` | `Reader` | `{ query, scope?, max_tokens?, include_hot_profile?, kv_model? }` | `RecallResponse` (`formatted_context`, `hot_prefix`, `static_prefix`, `dynamic_context`, `hot_amus`, `warm_cold_amus`, `entries`, `static_prefix_tokens`, `dynamic_tokens`, `tokens_used`, `prefix_hash`, `kv_hint?`) |
 | `POST` | `/v1/stage` | `Contributor` | `{ proposed_fact, suggested_tier?, scope?, target_note?, supersedes_amu_id?, proposed_by? }` | `{ candidate_id, inbox_path }` |
 | `POST` | `/v1/inspect` | `Reader` | `{ source_pointer }` | `{ source_pointer, content }` |
@@ -115,11 +117,14 @@ Place a `.aetherignore` file at the vault root to add newline-separated ignore r
 | `allowInsecureRemoteHttp` | `boolean \| undefined` | `false` | Allows `http://` for non-loopback hosts, otherwise remote endpoints require `https://` |
 | `defaultKvModel` | `string \| undefined` | `'llama-3.1-8b'` | Default `model_id` passed by `AetherCompanionPlugin::warmKvCache` |
 
-### Registered Obsidian commands
+### Registered Obsidian commands and vault adapter hooks
 
 | Command ID | Command name | Action |
 | --- | --- | --- |
 | `aether-open-inbox-review` | `Open Aether Inbox Review` | Refreshes `GET /v1/inbox` and opens the 1-click approval pane |
-| `aether-trigger-dream-pass` | `Trigger Dream Pass` | Calls `POST /v1/dream`, refreshes Inbox and status bar, shows notice |
-| `aether-git-sync` | `Git Sync Team Vault` | Calls `POST /v1/git/sync`, refreshes Inbox and status bar, shows notice |
+| `aether-trigger-dream-pass` | `Trigger Dream Pass` | Calls `POST /v1/dream`, refreshes Inbox/mirrors and status bar, shows notice |
+| `aether-sync-vault` | `Sync Vault with Aether` | Calls `GET /v1/vault/pull` + `POST /v1/vault/push` with changed public notes, client-filtered `private_paths`, and deletions; writes updated `Inbox.md` and `Approved.md` back into Obsidian |
+| `aether-git-sync` | `Git Sync Team Vault` | Calls `POST /v1/git/sync`, refreshes Inbox/mirrors and status bar, shows notice |
 | `aether-warm-kv-cache` | `Warm GPU KV Cache` | Calls `POST /v1/kv/warm` for `defaultKvModel`, shows TTFT reduction notice |
+
+`ObsidianHostAdapter` also accepts optional vault data hooks (`listMarkdownFiles`, `readFile`, `writeFile`, `onVaultEvent`) so `AetherCompanionPlugin` can stream note `create`, `modify`, `delete`, and `rename` events and synchronize `Aether/Inbox.md` and `Aether/Compiled/Approved.md` back into the user's Obsidian vault while filtering `aether_tier: private` notes locally.
