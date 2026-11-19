@@ -818,29 +818,31 @@ describe('Aether Obsidian Companion Plugin', () => {
       url: string;
       method?: string;
       headers?: Record<string, string>;
-      body?: string;
+      body?: string | ArrayBuffer;
     }) => {
       requests.push({
         url: req.url,
         method: req.method,
         auth: req.headers?.Authorization,
-        body: req.body,
+        body: typeof req.body === 'string' ? req.body : undefined,
+      });
+      const text = JSON.stringify({
+        status: 'ok',
+        schema_version: 3,
+        embedder_id: 'hashed-ngram-256-v1',
+        embedding_dim: 256,
+        active_amus: 9,
+        pending_inbox_count: 0,
+        approved_inbox_count: 1,
+        hot_tokens_used: 42,
+        hot_token_budget: 2000,
+        prefix_hash: '0'.repeat(64),
       });
       return {
         status: 200,
         headers: {'content-type': 'application/json'},
-        text: JSON.stringify({
-          status: 'ok',
-          schema_version: 3,
-          embedder_id: 'hashed-ngram-256-v1',
-          embedding_dim: 256,
-          active_amus: 9,
-          pending_inbox_count: 0,
-          approved_inbox_count: 1,
-          hot_tokens_used: 42,
-          hot_token_budget: 2000,
-          prefix_hash: '0'.repeat(64),
-        }),
+        arrayBuffer: new TextEncoder().encode(text).buffer,
+        text,
         json: {},
       };
     };
