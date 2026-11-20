@@ -784,7 +784,7 @@ impl VaultEngine {
                 continue;
             }
             let full = vp.join_on(&self.vault_root);
-            if full.exists() && !rules.is_ignored(vp.as_str()) {
+            if full.exists() && !rules.is_ignored(vp.as_str()) && !is_private_on_disk(&full).await {
                 let _ = tokio::fs::remove_file(&full).await;
             }
             let (removed, evicted_kv) = self.store.remove_file(vp.as_str(), None).await?;
@@ -1982,6 +1982,13 @@ async fn write_file_if_changed(path: &Path, bytes: &[u8]) -> Result<bool> {
     Ok(true)
 }
 
+async fn is_private_on_disk(full: &Path) -> bool {
+    tokio::fs::read_to_string(full)
+        .await
+        .ok()
+        .is_some_and(|disk_text| parser::is_private_note(&disk_text))
+}
+
 async fn purge_private_note(
     vault_root: &Path,
     store: &VaultStore,
@@ -1989,14 +1996,8 @@ async fn purge_private_note(
     vp: &VaultPath,
 ) -> Result<usize> {
     let full = vp.join_on(vault_root);
-    if full.exists() {
-        let is_private_on_disk = tokio::fs::read_to_string(&full)
-            .await
-            .ok()
-            .is_some_and(|disk_text| parser::is_private_note(&disk_text));
-        if !is_private_on_disk {
-            let _ = tokio::fs::remove_file(&full).await;
-        }
+    if full.exists() && !is_private_on_disk(&full).await {
+        let _ = tokio::fs::remove_file(&full).await;
     }
     let (_, evicted_kv) = store.remove_file(vp.as_str(), None).await?;
     evict_kv_hashes(kv_adapter, &evicted_kv).await;
@@ -2876,6 +2877,32 @@ mod tests {
             stats_before_restart.persisted_blocks
         );
         reopened.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn push_vault_changes_never_deletes_private_notes_from_disk_via_deleted_paths() {
+        let vault = TempVault::new();
+        let note = vault.root.join("Personal/Diary.md");
+        std::fs::create_dir_all(note.parent().unwrap()).unwrap();
+        std::fs::write(&note, "---\naether_tier: private\n---\n# Secret\nkeep me\n").unwrap();
+        let engine = VaultEngine::open(VaultConfig::in_memory(&vault.root))
+            .await
+            .unwrap();
+
+        engine
+            .push_vault_changes(VaultPushRequest {
+                notes: Vec::new(),
+                deleted_paths: vec!["Personal/Diary.md".into()],
+                private_paths: vec!["Personal/Diary.md".into()],
+                inbox_markdown: None,
+                aetherignore: None,
+                aetherhot: None,
+                run_dream: false,
+            })
+            .await
+            .unwrap();
+
+        assert!(note.exists(), "private note must stay on disk");
     }
 
     #[tokio::test]
