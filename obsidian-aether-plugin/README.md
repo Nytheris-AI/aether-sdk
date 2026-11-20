@@ -121,5 +121,5 @@ npm run verify:release
 To verify a tagged release archive against a specific SemVer release tag, pass `--tag` without a `v` prefix.
 
 ```bash
-node scripts/verify-release.mjs --tag 0.4.0
+node scripts/verify-release.mjs --tag 0.4.1
 ```
