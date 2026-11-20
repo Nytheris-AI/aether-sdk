@@ -99,7 +99,7 @@ Open **Settings** and select **Aether Memory Companion**. You can use the **Loca
 5. Set **Sync debounce (ms)** between `500` and `10000` (default `1500`) to control how long the plugin waits after a note edit before pushing.
 6. Set **Auto-pull interval (seconds)** to a positive number if you want background polling to refresh `Aether/Inbox.md` and `Aether/Compiled/Approved.md` (`0` disables polling).
 7. Keep **Run Dream consolidation on push** turned off unless you use an `Admin` key on an authenticated server or run in local loopback mode.
-8. Set **Default KV model** (for example `llama-3.1-8b`) if you plan to run **Warm GPU KV Cache**.
+8. Optional: turn on **Enable GPU KV-cache warming** if you run your own vLLM or SGLang server, then set **Default KV model** (for example `llama-3.1-8b`) to use **Warm GPU KV Cache**.
 
 Run **Sync Vault with Aether** from the Obsidian Command Palette, or click the **Aether: Idle** status bar item. The status bar updates to `Aether: Synced (HH:mm)` and shows a notice with updated, indexed, removed, and private-skipped counts.
 
