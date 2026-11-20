@@ -2,6 +2,8 @@
 
 Connect an Obsidian Desktop vault to `aether-mcp` and an MCP-compatible AI agent so both share compiled memory while `private` notes stay local.
 
+Want to see it first? Watch the [Obsidian and AI agent walkthrough](./obsidian-walkthrough.md), recorded from a real vault.
+
 ## Prerequisites
 
 - **Obsidian Desktop 1.5.0 or later** (mobile is not supported because `aether-memory` sets `isDesktopOnly` to `true`)

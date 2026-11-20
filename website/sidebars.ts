@@ -30,6 +30,7 @@ const sidebars: SidebarsConfig = {
       label: 'How-To Guides',
       items: [
         'guides/obsidian-setup',
+        'guides/obsidian-walkthrough',
         'guides/usage',
         'guides/memory',
         'guides/observability',
