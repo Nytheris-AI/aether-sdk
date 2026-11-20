@@ -1,58 +1,142 @@
-.aether-inbox-card {
+/* Connection card at the top of the settings tab. */
+.aether-connection {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--size-4-3);
+  margin-bottom: var(--size-4-4);
+  padding: var(--size-4-3) var(--size-4-4);
   background-color: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
-  padding: var(--size-4-3);
-  margin-bottom: var(--size-4-3);
 }
 
-.aether-inbox-card > div:first-child {
-  font-family: var(--font-monospace);
-  font-size: var(--font-ui-smaller);
+.aether-connection-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 0.45em;
+  border-radius: 50%;
+  background-color: var(--text-faint);
+}
+
+.aether-connection[data-tone='ok'] .aether-connection-dot {
+  background-color: var(--color-green);
+}
+
+.aether-connection[data-tone='bad'] .aether-connection-dot {
+  background-color: var(--color-red);
+}
+
+.aether-connection[data-tone='neutral'] .aether-connection-dot {
+  animation: aether-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes aether-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aether-connection[data-tone='neutral'] .aether-connection-dot {
+    animation: none;
+  }
+}
+
+.aether-connection-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.aether-connection-title {
+  color: var(--text-normal);
+  font-weight: var(--font-semibold);
+}
+
+.aether-connection-detail {
+  margin-top: var(--size-2-1);
   color: var(--text-muted);
-  margin-bottom: var(--size-4-2);
-  word-break: break-word;
-}
-
-.aether-inbox-card > p {
-  color: var(--text-normal);
   font-size: var(--font-ui-small);
-  line-height: 1.45;
-  margin: 0 0 var(--size-4-3) 0;
+  line-height: var(--line-height-normal);
+  overflow-wrap: anywhere;
 }
 
-.aether-inbox-card > div:last-child {
+.aether-connection-action {
+  flex: none;
+}
+
+/* Inbox review pane. Buttons use Obsidian's own button styles (`mod-cta` marks the primary one). */
+.aether-inbox-header {
   display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: var(--size-4-2);
-  align-items: center;
 }
 
-.aether-inbox-card > div:last-child button {
-  border-radius: var(--radius-s);
-  font-size: var(--font-ui-smaller);
-  padding: var(--size-4-1) var(--size-4-3);
-  cursor: pointer;
-  border: 1px solid var(--background-modifier-border);
-  background-color: var(--background-secondary);
+.aether-inbox-header h3 {
+  margin: 0;
+}
+
+.aether-inbox-count {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.aether-inbox-empty {
+  margin-top: var(--size-4-3);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: var(--line-height-normal);
+}
+
+.aether-inbox-empty p {
+  margin: 0 0 var(--size-4-2) 0;
+}
+
+.aether-inbox-empty .aether-inbox-empty-title {
   color: var(--text-normal);
+  font-weight: var(--font-semibold);
 }
 
-.aether-inbox-card > div:last-child button:hover {
-  background-color: var(--background-modifier-hover);
+.aether-inbox-card {
+  margin-top: var(--size-4-3);
+  padding: var(--size-4-3);
+  background-color: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
 }
 
-.aether-inbox-card > div:last-child button:first-child {
-  background-color: var(--interactive-accent);
-  border-color: var(--interactive-accent);
-  color: var(--text-on-accent);
+.aether-inbox-card[aria-busy='true'] {
+  opacity: 0.7;
 }
 
-.aether-inbox-card > div:last-child button:first-child:hover {
-  background-color: var(--interactive-accent-hover);
-  border-color: var(--interactive-accent-hover);
+.aether-inbox-fact {
+  margin: 0 0 var(--size-4-2) 0;
+  color: var(--text-normal);
+  line-height: var(--line-height-normal);
 }
 
-.aether-inbox-card > div:last-child button:focus-visible {
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: 2px;
+.aether-inbox-meta {
+  margin-bottom: var(--size-4-3);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.aether-inbox-error {
+  color: var(--text-error);
+  font-size: var(--font-ui-small);
+}
+
+.aether-inbox-error:not(:empty) {
+  margin-bottom: var(--size-4-2);
+}
+
+.aether-inbox-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
 }
