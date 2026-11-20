@@ -28,7 +28,12 @@ import {
   type ObsidianCommandDescriptor,
   type ObsidianHostAdapter,
 } from '../src/main.ts';
-import {DEFAULT_SETTINGS, normalizePluginSettings} from '../src/settings-model.ts';
+import {
+  buildLocalStartCommand,
+  buildServiceInstallCommand,
+  DEFAULT_SETTINGS,
+  normalizePluginSettings,
+} from '../src/settings-model.ts';
 import type {InboxEntry, VaultEvent, VaultStatusReport} from '../src/types.ts';
 
 function createMockHost() {
@@ -1138,5 +1143,22 @@ describe('Aether Obsidian Release Verification', () => {
         assert.equal(check.status, 'pass', `${check.id}: ${check.message}`);
       }
     }
+  });
+});
+
+describe('onboarding command builders', () => {
+  it('formats local start and service install commands from vault path and endpoint URL', () => {
+    assert.equal(
+      buildLocalStartCommand('/Users/alice/My Vault', 'http://127.0.0.1:14771'),
+      'aether-mcp --vault "/Users/alice/My Vault" --http-addr 127.0.0.1:14771 --http-only',
+    );
+    assert.equal(
+      buildServiceInstallCommand('/Users/alice/My Vault', 'http://localhost:15000'),
+      'aether-mcp service install --vault "/Users/alice/My Vault" --http-addr 127.0.0.1:15000',
+    );
+    assert.equal(
+      buildLocalStartCommand('', 'https://aether.team.example.com'),
+      'aether-mcp --vault "/path/to/your/vault" --http-addr 127.0.0.1:14771 --http-only',
+    );
   });
 });

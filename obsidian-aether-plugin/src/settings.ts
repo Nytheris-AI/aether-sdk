@@ -1,6 +1,10 @@
 import {type App, Notice, Plugin, PluginSettingTab, Setting} from 'obsidian';
 import {
+  AETHER_MCP_INSTALL_COMMAND,
+  AETHER_MCP_WINDOWS_INSTALL_COMMAND,
   type AetherPluginSettings,
+  buildLocalStartCommand,
+  buildServiceInstallCommand,
   DEFAULT_SETTINGS,
   normalizeNonNegativeInt,
   normalizePluginSettings,
@@ -14,6 +18,15 @@ export interface AetherSettingsPluginHost extends Plugin {
   saveSettings(): Promise<void>;
   reconfigureClient(): void;
   testConnection(): Promise<VaultPullResponse>;
+}
+
+async function copyCommandToClipboard(command: string, label: string): Promise<void> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(command);
+    new Notice(`Copied ${label} to clipboard.`);
+    return;
+  }
+  new Notice(command);
 }
 
 export class AetherSettingTab extends PluginSettingTab {
@@ -77,6 +90,38 @@ export class AetherSettingTab extends PluginSettingTab {
               btn.setDisabled(false);
             }
           }),
+      );
+
+    new Setting(containerEl)
+      .setName('Local server quickstart')
+      .setDesc(
+        'Copy commands to install aether-mcp, register it as a background service, or run it in a terminal.',
+      )
+      .addButton((btn) =>
+        btn.setButtonText('Copy Install').onClick(async () => {
+          const isWindows =
+            typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('win');
+          const cmd = isWindows ? AETHER_MCP_WINDOWS_INSTALL_COMMAND : AETHER_MCP_INSTALL_COMMAND;
+          await copyCommandToClipboard(cmd, 'install command');
+        }),
+      )
+      .addButton((btn) =>
+        btn.setButtonText('Copy Service Install').onClick(async () => {
+          const cmd = buildServiceInstallCommand(
+            this.resolveVaultBasePath(),
+            this.plugin.settings.endpointUrl,
+          );
+          await copyCommandToClipboard(cmd, 'service install command');
+        }),
+      )
+      .addButton((btn) =>
+        btn.setButtonText('Copy Start').onClick(async () => {
+          const cmd = buildLocalStartCommand(
+            this.resolveVaultBasePath(),
+            this.plugin.settings.endpointUrl,
+          );
+          await copyCommandToClipboard(cmd, 'start command');
+        }),
       );
 
     new Setting(containerEl).setName('Live Sync & Lattice').setHeading();
@@ -156,6 +201,11 @@ export class AetherSettingTab extends PluginSettingTab {
             await this.applyAndPersist();
           }),
       );
+  }
+
+  private resolveVaultBasePath(): string {
+    const adapter = this.app.vault.adapter as {basePath?: unknown};
+    return typeof adapter.basePath === 'string' ? adapter.basePath : '';
   }
 
   private async applyAndPersist(): Promise<void> {
