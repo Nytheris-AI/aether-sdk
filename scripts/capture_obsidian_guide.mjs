@@ -103,7 +103,7 @@ async function main() {
   const settings = new Page({port: CDP, out, frames});
   await settings.connect('Settings');
   await settings.send('Emulation.setDeviceMetricsOverride', {width: 1000, height: 760, deviceScaleFactor: 1, mobile: false});
-  await settings.eval('[...document.querySelectorAll(".vertical-tab-nav-item")].find(e=>e.textContent.includes("Aether Memory Companion")).click()');
+  await settings.eval('[...document.querySelectorAll(".vertical-tab-nav-item")].find(e=>e.textContent.includes("AMC")).click()');
   await sleep(800);
   await settings.shot('01-settings.png');
   await settings.eval('[...document.querySelectorAll("button")].find(b=>b.textContent==="Test connection").click()');

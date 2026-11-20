@@ -82,7 +82,7 @@ cargo build --release -p nytheris-aether-vault --bin aether-mcp
 
 ## Step 2: Install the Obsidian plugin (`aether-memory`)
 
-Install **Aether Memory Companion** in Obsidian Desktop using either of these methods (the Obsidian Community plugins directory listing is pending review):
+Install **AMC** (Aether Memory Companion) in Obsidian Desktop using either of these methods (the Obsidian Community plugins directory listing is pending review):
 
 - **BRAT (beta)**: Install **Obsidian42 BRAT**, select **Add beta plugin**, and enter `https://github.com/Nytheris-AI/aether-memory`.
 - **CLI (`--init`)**: If you built the plugin locally from `obsidian-aether-plugin/`, run `aether-mcp --init --vault /path/to/vault --http-addr 127.0.0.1:14771` to copy `main.js`, `manifest.json`, and `styles.css`, write `data.json`, and print your `mcp.json` snippet.
@@ -92,11 +92,11 @@ Enable the plugin in Obsidian Desktop:
 1. Open `/path/to/vault` as a vault in Obsidian.
 2. Open **Settings**, then select **Community plugins**.
 3. Turn off Restricted Mode if Obsidian prompts you.
-4. Enable **Aether Memory Companion**.
+4. Enable **AMC**.
 
 ## Step 3: Configure plugin settings and run initial sync
 
-Open **Settings** and select **Aether Memory Companion**. You can use the **Local server quickstart** buttons (**Copy install**, **Copy service install**, and **Copy start**) to copy pre-filled commands for your vault, then configure these fields:
+Open **Settings** and select **AMC**. You can use the **Local server quickstart** buttons (**Copy install**, **Copy service install**, and **Copy start**) to copy pre-filled commands for your vault, then configure these fields:
 
 1. Set **Aether control-plane URL** to `http://127.0.0.1:14771` for local loopback mode, or to your `https://` gateway URL for a remote server.
 2. Leave **API key** empty for loopback mode without authentication. For an authenticated server, paste your `aek_...` bearer token.

@@ -1,4 +1,4 @@
-# Submit Aether Memory Companion to the Obsidian directory
+# Submit AMC to the Obsidian directory
 
 This page is the working checklist and the text to paste when submitting the plugin to the Obsidian community plugin directory.
 Do the BRAT soak first, then submit.
@@ -35,12 +35,15 @@ Read both on the day of submission and check the items they list against [Review
 | Field | Value |
 | --- | --- |
 | Plugin id | `aether-memory` |
-| Name | `Aether Memory Companion` |
+| Name | `AMC` |
 | Author | `Nytheris` |
 | Repository | `Nytheris-AI/aether-memory` |
 | Description | `Give your AI agents memory from your vault via MCP. Syncs notes to a local aether-mcp server and keeps private notes on disk.` |
 | Minimum Obsidian version | `1.5.0` |
 | Desktop only | Yes |
+
+The name is short on purpose, because Obsidian prefixes every command in the palette with it ("AMC: Sync vault with Aether").
+Directory search uses the name, author, and description, so the description keeps the words Aether, MCP, and memory.
 
 ## Reviewer notes
 
@@ -84,7 +87,7 @@ The five fields and their order match the existing entries.
 ```json
 {
   "id": "aether-memory",
-  "name": "Aether Memory Companion",
+  "name": "AMC",
   "author": "Nytheris",
   "description": "Give your AI agents memory from your vault via MCP. Syncs notes to a local aether-mcp server and keeps private notes on disk.",
   "repo": "Nytheris-AI/aether-memory"

@@ -6,7 +6,7 @@ sidebar_position: 4
 
 # Part 4: Obsidian Vault Compiler & MCP Server
 
-In this tutorial, you build and run the `aether-mcp` vault server, install the **Aether Memory Companion** plugin inside Obsidian, connect an AI agent over MCP, and approve agent-proposed facts back into your vault.
+In this tutorial, you build and run the `aether-mcp` vault server, install the **AMC** (Aether Memory Companion) plugin inside Obsidian, connect an AI agent over MCP, and approve agent-proposed facts back into your vault.
 
 **Before you begin.** Complete [Part 1: Quickstart & Your First Memory](./01-quickstart-first-memory.md). Create a scratch Obsidian vault directory such as `/tmp/demo-vault`, or use an existing local vault folder.
 
@@ -94,8 +94,8 @@ cd ..
 Now enable and connect the plugin in Obsidian:
 
 1. Open `/tmp/demo-vault` as a vault in Obsidian.
-2. Open **Settings**, open **Community plugins**, disable Restricted Mode if prompted, and enable **Aether Memory Companion**.
-3. Open **Settings** and select **Aether Memory Companion**.
+2. Open **Settings**, open **Community plugins**, disable Restricted Mode if prompted, and enable **AMC**.
+3. Open **Settings** and select **AMC**.
 4. Confirm **Aether control-plane URL** is `http://127.0.0.1:14771` and leave **API key** empty for loopback mode.
 5. Check the connection card at the top. It shows **Connected to aether-mcp** with the count of indexed notes. Select **Test connection** to check again.
 6. Keep **Live vault sync** turned on so edits sync after Obsidian finishes loading its layout.

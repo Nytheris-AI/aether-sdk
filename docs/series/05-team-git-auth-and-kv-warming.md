@@ -82,7 +82,7 @@ During `git_sync`, `VaultEngine` executes five steps:
 
 ## Step 4: Connect `obsidian-aether-plugin` over HTTPS + bearer auth
 
-When targeting a remote authenticated server (`--require-auth`), configure **Settings -> Aether Memory Companion** inside Obsidian:
+When targeting a remote authenticated server (`--require-auth`), configure **Settings -> AMC** inside Obsidian:
 
 1. Set **Aether control-plane URL** to your HTTPS gateway (for example `https://vault.internal:4771`).
 2. Paste your scoped token (`aek_<64-hex>`) into **API key**. The plugin stores that token locally in `.obsidian/plugins/aether-memory/data.json`, which `git_sync` keeps out of Git.
