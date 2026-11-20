@@ -1120,7 +1120,7 @@ describe('Aether Obsidian Release Verification', () => {
   it('verifies tracked plugin files before build and full release directory when main.js is built', () => {
     const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
     const hasBundle = fs.existsSync(path.join(pluginRoot, 'main.js'));
-    const report = verifyReleaseDirectory(pluginRoot, {tag: '0.4.1'});
+    const report = verifyReleaseDirectory(pluginRoot, {tag: '0.4.2'});
 
     if (hasBundle) {
       assert.equal(report.ok, true, formatVerificationReport(report));

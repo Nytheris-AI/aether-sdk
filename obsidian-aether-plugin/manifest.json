@@ -1,7 +1,7 @@
 {
   "id": "aether-memory",
   "name": "Aether Memory Companion",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "minAppVersion": "1.5.0",
   "description": "Give your AI agents memory from your vault via MCP. Syncs notes to a local aether-mcp server and keeps private notes on disk.",
   "author": "Nytheris",
