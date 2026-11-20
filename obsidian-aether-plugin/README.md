@@ -38,7 +38,7 @@ aether-mcp --vault /path/to/vault --http-addr 127.0.0.1:14771 --http-only
 
 ## Configuration
 
-Open **Settings** and select **Aether Memory Companion** to configure the connection, sync behavior, and KV-cache warming target. The settings tab stores values in `AetherPluginSettings`.
+Open **Settings** and select **Aether Memory Companion** to configure the connection, sync behavior, and optional KV-cache warming. The settings tab stores values in `AetherPluginSettings`.
 
 ### Connection and authentication
 
@@ -55,18 +55,22 @@ Open **Settings** and select **Aether Memory Companion** to configure the connec
 
 ### Advanced: GPU KV-cache warming
 
+This section is for people who run their own vLLM or SGLang server and want the vault's most-used context kept warm in its KV cache.
+Most users can ignore it.
+
+- **Enable GPU KV-cache warming.** Sets `kvWarmingEnabled` (default `false`). Shows the two settings below and adds the **Warm GPU KV Cache** command. Existing installs that already set a KV endpoint or model keep the feature on after upgrading.
 - **KV endpoint (optional).** Sets `kvEndpoint` (default empty). Records the inference endpoint associated with KV-cache warming telemetry.
 - **Default KV model.** Sets `kvModel` (default empty in settings, falling back to `llama-3.1-8b` in `AetherCompanionPlugin`). Sets the `model_id` parameter sent by the **Warm GPU KV Cache** command.
 
 ## Obsidian commands
 
-The plugin registers five commands in the Obsidian Command Palette and updates the status bar between `Aether: Idle`, `Aether: Syncing…`, `Aether: Synced (HH:mm)`, and `Aether: Offline`. Clicking the status bar item triggers a vault sync.
+The plugin registers four commands in the Obsidian Command Palette, plus a fifth when GPU KV-cache warming is enabled, and updates the status bar between `Aether: Idle`, `Aether: Syncing…`, `Aether: Synced (HH:mm)`, and `Aether: Offline`. Clicking the status bar item triggers a vault sync.
 
 - **Open Aether Inbox Review** (`aether-open-inbox-review`). Calls `GET /v1/inbox` and opens the **Aether Memory Inbox** pane in the right sidebar with **Approve** and **Reject** buttons.
 - **Trigger Dream Pass** (`aether-trigger-dream-pass`). Calls `POST /v1/dream`, refreshes local mirror notes and pending Inbox counts, and displays a summary notice.
 - **Sync Vault with Aether** (`aether-sync-vault`). Pulls the server manifest (`GET /v1/vault/pull`), hashes local Markdown files with SHA-256, pushes changed public notes (`POST /v1/vault/push`), and writes updated `Aether/Inbox.md` and `Aether/Compiled/Approved.md` files back to the vault.
 - **Git Sync Team Vault** (`aether-git-sync`). Calls `POST /v1/git/sync` to fetch, merge, and reconcile vault and Aether lattice conflicts, then refreshes local mirror notes.
-- **Warm GPU KV Cache** (`aether-warm-kv-cache`). Calls `POST /v1/kv/warm` for the configured default KV model and reports warmed blocks, tokens, and estimated time-to-first-token reduction.
+- **Warm GPU KV Cache** (`aether-warm-kv-cache`, only when **Enable GPU KV-cache warming** is on). Calls `POST /v1/kv/warm` for the configured default KV model and reports warmed blocks, tokens, and estimated time-to-first-token reduction.
 
 ## Frontmatter and exclusions
 
