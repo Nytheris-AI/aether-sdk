@@ -5,6 +5,7 @@ import {
   type AetherPluginSettings,
   buildLocalStartCommand,
   buildServiceInstallCommand,
+  describeConnectionError,
   DEFAULT_SETTINGS,
   normalizeNonNegativeInt,
   normalizePluginSettings,
@@ -89,7 +90,7 @@ export class AetherSettingTab extends PluginSettingTab {
               const count = Object.keys(pulled.manifest).length;
               new Notice(`Aether connected: ${count} indexed note(s) visible.`);
             } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
+              const message = describeConnectionError(err, this.plugin.settings.endpointUrl);
               new Notice(`Aether connection failed: ${message}`);
             } finally {
               btn.setDisabled(false);

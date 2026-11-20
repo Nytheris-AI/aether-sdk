@@ -14,6 +14,7 @@ import {
   DEFAULT_SETTINGS,
   normalizePluginSettings,
 } from './settings.ts';
+import {describeConnectionError} from './settings-model.ts';
 import type {VaultPullResponse} from './types.ts';
 
 const VIEW_TYPE_AETHER_INBOX = 'aether-inbox-review';
@@ -53,13 +54,13 @@ function formatClockHm(date: Date): string {
   return `${hh}:${mm}`;
 }
 
-function formatErrorNotice(prefix: string, err: unknown): string {
-  const detail = err instanceof Error ? err.message : String(err);
-  return `${prefix}: ${detail}`;
-}
-
 export default class ObsidianDesktopPlugin extends Plugin implements AetherSettingsPluginHost {
   settings: AetherPluginSettings = {...DEFAULT_SETTINGS};
+
+  private formatError(prefix: string, err: unknown): string {
+    return `${prefix}: ${describeConnectionError(err, this.settings.endpointUrl)}`;
+  }
+
   private adapter: ObsidianDesktopAdapter | null = null;
   private companion: AetherCompanionPlugin | null = null;
   private statusBarEl: HTMLElement | null = null;
@@ -96,7 +97,7 @@ export default class ObsidianDesktopPlugin extends Plugin implements AetherSetti
       isLiveSyncEnabled: () => this.settings.liveSyncEnabled,
       onSyncError: (err) => {
         this.setStatusText('Aether: Offline');
-        new Notice(formatErrorNotice('Aether live sync failed', err));
+        new Notice(this.formatError('Aether live sync failed', err));
       },
     });
 
@@ -119,7 +120,7 @@ export default class ObsidianDesktopPlugin extends Plugin implements AetherSetti
       }
     } catch (err) {
       this.setStatusText('Aether: Offline');
-      new Notice(formatErrorNotice('Aether initialization warning', err));
+      new Notice(this.formatError('Aether initialization warning', err));
     }
 
     this.configureAutoPullTimer();
@@ -150,7 +151,7 @@ export default class ObsidianDesktopPlugin extends Plugin implements AetherSetti
       void this.companion.refreshStatus();
     } catch (err) {
       this.setStatusText('Aether: Offline');
-      new Notice(formatErrorNotice('Aether settings error', err));
+      new Notice(this.formatError('Aether settings error', err));
     }
   }
 
@@ -171,21 +172,22 @@ export default class ObsidianDesktopPlugin extends Plugin implements AetherSetti
   }
 
   private registerGuardedCommand(cmd: ObsidianCommandDescriptor): void {
+    const run = async (): Promise<void> => {
+      if (cmd.id === 'aether-sync-vault') {
+        await this.runSyncWithStatus();
+        return;
+      }
+      try {
+        await cmd.callback();
+      } catch (err) {
+        this.setStatusText('Aether: Offline');
+        new Notice(this.formatError(`Aether ${cmd.name} failed`, err));
+      }
+    };
     this.addCommand({
       id: cmd.id,
       name: cmd.name,
-      callback: async () => {
-        if (cmd.id === 'aether-sync-vault') {
-          await this.runSyncWithStatus();
-          return;
-        }
-        try {
-          await cmd.callback();
-        } catch (err) {
-          this.setStatusText('Aether: Offline');
-          new Notice(formatErrorNotice(`Aether ${cmd.name} failed`, err));
-        }
-      },
+      callback: run,
     });
   }
 
@@ -201,7 +203,7 @@ export default class ObsidianDesktopPlugin extends Plugin implements AetherSetti
       this.setStatusText(`Aether: Synced (${formatClockHm(new Date())})`);
     } catch (err) {
       this.setStatusText('Aether: Offline');
-      new Notice(formatErrorNotice('Aether sync failed', err));
+      new Notice(this.formatError('Aether sync failed', err));
     }
   }
 

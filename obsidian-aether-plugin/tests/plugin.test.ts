@@ -32,6 +32,7 @@ import {
   buildLocalStartCommand,
   buildServiceInstallCommand,
   DEFAULT_SETTINGS,
+  describeConnectionError,
   normalizePluginSettings,
 } from '../src/settings-model.ts';
 import type {InboxEntry, VaultEvent, VaultStatusReport} from '../src/types.ts';
@@ -1171,5 +1172,22 @@ describe('community plugin manifest', () => {
     assert.ok(manifest.description.endsWith('.'), 'description must end with a period');
     assert.match(manifest.description, /^Give your AI agents memory/);
     assert.doesNotMatch(manifest.description, /obsidian/i);
+  });
+});
+
+describe('friendly connection errors', () => {
+  const url = 'http://127.0.0.1:14771';
+
+  it('tells the user to start aether-mcp when the server is unreachable', () => {
+    for (const raw of ['net::ERR_CONNECTION_REFUSED', 'connect ECONNREFUSED 127.0.0.1:14771', 'Failed to fetch']) {
+      const msg = describeConnectionError(new Error(raw), url);
+      assert.ok(msg.includes(`Cannot reach aether-mcp at ${url}`), msg);
+      assert.ok(msg.includes('Local server quickstart'), msg);
+    }
+  });
+
+  it('keeps other errors unchanged', () => {
+    assert.equal(describeConnectionError(new Error('Unauthorized (401)'), url), 'Unauthorized (401)');
+    assert.equal(describeConnectionError('plain string', url), 'plain string');
   });
 });
