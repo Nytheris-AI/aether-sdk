@@ -37,7 +37,7 @@ Run `aether-mcp` with `--init` after building the plugin locally to install the 
 aether-mcp --init --vault /path/to/vault --http-addr 127.0.0.1:14771
 ```
 
-Start the HTTP control plane before syncing in Obsidian.
+Start the HTTP control plane before syncing in Obsidian (or install it as an auto-starting service with `aether-mcp service install --vault /path/to/vault`). The **Local server quickstart** buttons in plugin settings can copy these commands with your vault path pre-filled.
 
 ```bash
 aether-mcp --vault /path/to/vault --http-addr 127.0.0.1:14771 --http-only
