@@ -232,7 +232,7 @@ async function main() {
   await obs.eval('[...document.querySelectorAll("button")].find(b=>b.textContent.includes("Trust author"))?.click()');
   for (let i = 0; i < 20 && !(await obs.eval('!!app.plugins.plugins["aether-memory"]')); i++) await sleep(500);
   await sleep(1500);
-  await obs.palette('Sync Vault with Aether');
+  await obs.palette('Sync vault with Aether');
   await sleep(2500);
 
   try {
@@ -292,7 +292,7 @@ async function main() {
   if (!pending) throw new Error('no staged candidate reached the inbox');
 
   mark('5. You review it in Obsidian and approve. Nothing becomes memory without you.');
-  await obs.palette('Open Aether Inbox Review');
+  await obs.palette('Open Aether inbox review');
   await sleep(2500);
   await obs.eval('[...document.querySelectorAll("button")].find(b=>b.textContent.includes("Approve"))?.click()');
   await sleep(3000);

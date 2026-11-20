@@ -97,7 +97,7 @@ async function main() {
   await sleep(1500);
   const status = () => page.eval('[...document.querySelectorAll(".status-bar-item")].map(e=>e.textContent).find(t=>t.includes("Aether"))');
 
-  // 1-2. Settings (Obsidian opens them in their own window) and Test Connection.
+  // 1-2. Settings (Obsidian opens them in their own window) and Test connection.
   await page.eval('app.setting.open()');
   await sleep(2500);
   const settings = new Page({port: CDP, out, frames});
@@ -106,7 +106,7 @@ async function main() {
   await settings.eval('[...document.querySelectorAll(".vertical-tab-nav-item")].find(e=>e.textContent.includes("Aether Memory Companion")).click()');
   await sleep(800);
   await settings.shot('01-settings.png');
-  await settings.eval('[...document.querySelectorAll("button")].find(b=>b.textContent==="Test Connection").click()');
+  await settings.eval('[...document.querySelectorAll("button")].find(b=>b.textContent==="Test connection").click()');
   await sleep(1200);
   await settings.shot('02-test-connection.png');
   await page.eval('app.setting.close()');
@@ -115,7 +115,7 @@ async function main() {
   // 3. First sync from the command palette.
   await page.clip('03-sync.webm', async () => {
     await sleep(800);
-    await page.palette('Sync Vault with Aether');
+    await page.palette('Sync vault with Aether');
     await sleep(3500);
   });
   await page.shot('04-synced.png');
@@ -138,7 +138,7 @@ async function main() {
   await post('/v1/mcp', {jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name: 'aether_stage_memory',
     arguments: {proposed_fact: 'User prefers short, plain-language release notes.', suggested_tier: 'warm'}}});
   await page.clip('08-inbox-approve.webm', async () => {
-    await page.palette('Open Aether Inbox Review');
+    await page.palette('Open Aether inbox review');
     await sleep(2000);
     await page.shot('09-inbox-pending.png');
     await page.eval('[...document.querySelectorAll("button")].find(b=>b.textContent.includes("Approve"))?.click()');
@@ -150,11 +150,11 @@ async function main() {
   mcp.kill();
   await sleep(800);
   await page.clip('11-offline-recovery.webm', async () => {
-    await page.palette('Sync Vault with Aether');
+    await page.palette('Sync vault with Aether');
     await sleep(2500);
     mcp = startMcp();
     await sleep(2000);
-    await page.palette('Sync Vault with Aether');
+    await page.palette('Sync vault with Aether');
     await sleep(3000);
   });
   console.log('final status:', await status());
