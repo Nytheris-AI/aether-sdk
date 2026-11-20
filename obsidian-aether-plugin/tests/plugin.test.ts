@@ -22,7 +22,12 @@ import {
 import {
   AetherCompanionPlugin,
   computeSha256Hex,
+  formatDreamNotice,
+  formatGitSyncNotice,
+  formatKvWarmNotice,
   formatStatusBarText,
+  formatVaultSyncNotice,
+  renderInboxPane,
   isIgnoredVaultPath,
   isPrivateMarkdownNote,
   type ObsidianCommandDescriptor,
@@ -32,7 +37,9 @@ import {
   buildLocalStartCommand,
   buildServiceInstallCommand,
   DEFAULT_SETTINGS,
+  classifyConnectionError,
   describeConnectionError,
+  describeConnectionState,
   normalizePluginSettings,
 } from '../src/settings-model.ts';
 import type {InboxEntry, VaultEvent, VaultStatusReport} from '../src/types.ts';
@@ -192,7 +199,7 @@ describe('Aether Obsidian Companion Plugin', () => {
       const plugin = new AetherCompanionPlugin(mock.host, baseUrl);
       await plugin.onload();
 
-      assert.equal(mock.statusTexts.at(-1), 'Aether: 4 AMUs | 0 Inbox | HOT 120/2000');
+      assert.equal(mock.statusTexts.at(-1), 'Aether: Idle');
       assert.equal(formatStatusBarText(null), 'Aether: Offline');
 
       const dreamCmd = mock.commands.get('aether-trigger-dream-pass');
@@ -200,8 +207,8 @@ describe('Aether Obsidian Companion Plugin', () => {
       await dreamCmd.callback();
 
       assert.equal(plugin.inboxController.pending.length, 1);
-      assert.equal(mock.statusTexts.at(-1), 'Aether: 4 AMUs | 1 Inbox | HOT 120/2000');
-      assert.ok(mock.notices.at(-1)?.includes('staged 1 candidate(s)'));
+      assert.equal(mock.statusTexts.at(-1), 'Aether: 1 to review');
+      assert.ok(mock.notices.at(-1)?.includes('1 memory proposed'));
 
       const reviewCmd = mock.commands.get('aether-open-inbox-review');
       assert.ok(reviewCmd);
@@ -210,7 +217,7 @@ describe('Aether Obsidian Companion Plugin', () => {
 
       await plugin.inboxController.decide('cand_123456abcdef', 'approve');
       assert.equal(plugin.inboxController.pending.length, 0);
-      assert.equal(mock.statusTexts.at(-1), 'Aether: 5 AMUs | 0 Inbox | HOT 120/2000');
+      assert.equal(mock.statusTexts.at(-1), 'Aether: Idle');
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
@@ -365,8 +372,8 @@ describe('Aether Obsidian Companion Plugin', () => {
       const gitSyncCmd = mock.commands.get('aether-git-sync');
       assert.ok(gitSyncCmd);
       await gitSyncCmd.callback();
-      assert.equal(mock.statusTexts.at(-1), 'Aether: 8 AMUs | 0 Inbox | HOT 180/2000');
-      assert.ok(mock.notices.at(-1)?.includes('resolved 2 Aether conflict(s)'));
+      assert.equal(mock.statusTexts.at(-1), 'Aether: Idle');
+      assert.ok(mock.notices.at(-1)?.includes('2 Aether conflicts resolved'));
 
       const kvWarmCmd = mock.commands.get('aether-warm-kv-cache');
       assert.ok(kvWarmCmd);
@@ -625,7 +632,7 @@ describe('Aether Obsidian Companion Plugin', () => {
       assert.ok(files.get('Aether/Inbox.md')?.includes('cand_111122223333'));
       assert.equal(
         notices.at(-1),
-        'Aether vault sync: updated 1 file(s), indexed 1 AMU(s), removed 0 file(s), skipped 1 private.',
+        'Synced: 1 note updated, 1 private note kept on this device.',
       );
 
       const emitVaultEvent = vaultEventHandlers[0];
@@ -877,7 +884,7 @@ describe('Aether Obsidian Companion Plugin', () => {
     await plugin.onload();
     assert.equal(requests[0]?.url, 'http://127.0.0.1:14771/v1/status');
     assert.equal(requests[0]?.auth, 'Bearer aek_initial_token');
-    assert.equal(mockHost.statusTexts.at(-1), 'Aether: 9 AMUs | 0 Inbox | HOT 42/2000');
+    assert.equal(mockHost.statusTexts.at(-1), 'Aether: Idle');
 
     plugin.reconfigure('https://vault.internal:14771', {
       fetchImpl: transport,
@@ -1234,5 +1241,171 @@ describe('Obsidian UI text guidelines', () => {
         assert.ok(isSentenceCase(cmd.name), `command name not in sentence case: "${cmd.name}"`);
       }
     });
+  });
+});
+
+describe('plain-language status and notices', () => {
+  const baseStatus: VaultStatusReport = {
+    status: 'ok',
+    active_amus: 4,
+    pending_inbox_count: 0,
+    approved_inbox_count: 0,
+    hot_tokens_used: 10,
+    hot_token_budget: 2000,
+    embedder_id: 'x',
+    embedding_dim: 8,
+    prefix_hash: 'h',
+    schema_version: 3,
+  };
+
+  it('shows how many memories wait for review in the status bar', () => {
+    assert.equal(formatStatusBarText(null), 'Aether: Offline');
+    assert.equal(formatStatusBarText(baseStatus), 'Aether: Idle');
+    assert.equal(formatStatusBarText({...baseStatus, pending_inbox_count: 1}), 'Aether: 1 to review');
+    assert.equal(formatStatusBarText({...baseStatus, pending_inbox_count: 3}), 'Aether: 3 to review');
+  });
+
+  it('writes sync, dream, git, and KV notices without internal jargon', () => {
+    const sync = {files_scanned: 5, files_updated: 2, files_removed: 1, files_skipped_unchanged: 0, files_skipped_self_write: 0, amus_indexed: 9, reindexed_amus: 0, private_skipped: 3, inbox_approved: 0, inbox_rejected: 0};
+    assert.equal(formatVaultSyncNotice(sync), 'Synced: 2 notes updated, 1 note removed, 3 private notes kept on this device.');
+    assert.equal(
+      formatVaultSyncNotice({...sync, files_updated: 0, files_removed: 0, private_skipped: 0}),
+      'Vault is up to date.',
+    );
+    assert.equal(
+      formatDreamNotice({daily_notes_scanned: 3, candidates_staged: 1, contradictions_flagged: 2} as never),
+      'Dream pass finished: 3 daily notes scanned, 1 memory proposed, 2 contradictions flagged.',
+    );
+    assert.equal(
+      formatGitSyncNotice({branch: 'main', merged_cleanly: true, conflicted_files: [], aether_conflicts_resolved: 2, sync_report: sync} as never),
+      'Git sync finished on main (no conflicts): 2 Aether conflicts resolved.',
+    );
+    assert.equal(
+      formatKvWarmNotice({model_id: 'qwen', blocks_warmed: 4, tokens_warmed: 512, ttft_reduction_pct: 90.84} as never),
+      'KV cache warmed for qwen: 512 tokens, about 90.8% faster first token.',
+    );
+    for (const text of [formatVaultSyncNotice(sync), formatGitSyncNotice({branch: 'm', merged_cleanly: true, conflicted_files: [], aether_conflicts_resolved: 0, sync_report: sync} as never)]) {
+      assert.doesNotMatch(text, /AMU/);
+    }
+  });
+});
+
+describe('connection state view', () => {
+  const url = 'http://127.0.0.1:14771';
+
+  it('classifies failures into offline, rejected key, or other', () => {
+    assert.equal(classifyConnectionError(new Error('net::ERR_CONNECTION_REFUSED')).kind, 'offline');
+    assert.equal(classifyConnectionError(new Error('Aether control plane error (401): unauthorized')).kind, 'rejected');
+    assert.equal(classifyConnectionError(new Error('Aether control plane error (403): forbidden')).kind, 'rejected');
+    const other = classifyConnectionError(new Error('Aether control plane error (500): boom'));
+    assert.equal(other.kind, 'error');
+  });
+
+  it('describes each state with a title, detail, and tone', () => {
+    assert.deepEqual(describeConnectionState({kind: 'checking'}, url), {
+      tone: 'neutral',
+      title: 'Checking connection...',
+      detail: url,
+    });
+    const ok = describeConnectionState({kind: 'connected', noteCount: 1}, url);
+    assert.equal(ok.tone, 'ok');
+    assert.equal(ok.title, 'Connected to aether-mcp');
+    assert.equal(ok.detail, `${url}. 1 note indexed.`);
+    assert.equal(describeConnectionState({kind: 'connected', noteCount: 12}, url).detail, `${url}. 12 notes indexed.`);
+    const off = describeConnectionState({kind: 'offline'}, url);
+    assert.equal(off.tone, 'bad');
+    assert.equal(off.title, "Can't reach aether-mcp");
+    assert.ok(off.detail.includes(url));
+    assert.equal(describeConnectionState({kind: 'rejected'}, url).title, 'The server rejected the API key');
+    assert.equal(describeConnectionState({kind: 'error', message: 'boom'}, url).detail, 'boom');
+  });
+});
+
+describe('inbox pane rendering', () => {
+  class FakeEl {
+    children: FakeEl[] = [];
+    textContent = '';
+    className = '';
+    disabled = false;
+    attrs: Record<string, string> = {};
+    onclick: (() => unknown) | null = null;
+    ownerDocument: {createElement(tag: string): FakeEl};
+    tag: string;
+    constructor(ownerDocument: {createElement(tag: string): FakeEl}, tag: string) {
+      this.ownerDocument = ownerDocument;
+      this.tag = tag;
+    }
+    appendChild(child: FakeEl): FakeEl {
+      this.children.push(child);
+      return child;
+    }
+    replaceChildren(...kids: FakeEl[]): void {
+      this.children = [...kids];
+    }
+    setAttribute(name: string, value: string): void {
+      this.attrs[name] = value;
+    }
+  }
+  const doc = {createElement: (tag: string) => new FakeEl(doc, tag)};
+  const root = (): FakeEl => new FakeEl(doc, 'div');
+  const textOf = (el: FakeEl): string => [el.textContent, ...el.children.map(textOf)].filter(Boolean).join(' ');
+  const find = (el: FakeEl, pred: (e: FakeEl) => boolean): FakeEl[] =>
+    [el, ...el.children.flatMap((c) => find(c, pred))].filter(pred);
+
+  const entry: InboxEntry = {
+    checkbox: 'pending',
+    tier: 'warm',
+    scope: 'global',
+    proposed_fact: 'Release notes should be short.',
+    candidate_id: 'cand_abcdef123456',
+    target_link: null,
+    proposed_by: 'mcp-agent',
+    proposed_date: '2026-11-20',
+    supersedes_amu_id: null,
+  };
+
+  function controllerWith(pending: InboxEntry[], decide: () => Promise<void> = async () => undefined) {
+    return {pending, lastError: null, decide} as never;
+  }
+
+  it('teaches what the inbox is when it is empty', () => {
+    const el = root();
+    renderInboxPane(el as never, controllerWith([]));
+    const text = textOf(el);
+    assert.match(text, /Aether inbox/);
+    assert.match(text, /Nothing to review/);
+    assert.match(text, /approve/i);
+  });
+
+  it('shows who proposed a memory and hides the candidate id', () => {
+    const el = root();
+    renderInboxPane(el as never, controllerWith([entry]));
+    const text = textOf(el);
+    assert.match(text, /Release notes should be short\./);
+    assert.match(text, /Proposed by mcp-agent/);
+    assert.match(text, /2026-11-20/);
+    assert.match(text, /global/);
+    assert.doesNotMatch(text, /cand_/);
+    const buttons = find(el, (e) => e.tag === 'button');
+    assert.deepEqual(buttons.map((b) => b.textContent), ['Approve', 'Reject']);
+    assert.ok(buttons[0].className.includes('mod-cta'));
+    assert.ok(!buttons[1].className.includes('mod-cta'));
+  });
+
+  it('shows a recoverable error and re-enables the buttons when a decision fails', async () => {
+    const el = root();
+    renderInboxPane(
+      el as never,
+      controllerWith([entry], async () => {
+        throw new Error('Aether control plane error (500): boom');
+      }),
+    );
+    const [approve, reject] = find(el, (e) => e.tag === 'button');
+    await approve.onclick?.();
+    assert.match(textOf(el), /Couldn't approve/);
+    assert.match(textOf(el), /boom/);
+    const after = find(el, (e) => e.tag === 'button');
+    assert.ok(after.every((b) => b.disabled === false));
+    assert.ok(reject);
   });
 });

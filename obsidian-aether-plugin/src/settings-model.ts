@@ -128,3 +128,59 @@ export function describeConnectionError(err: unknown, endpointUrl: string): stri
   }
   return detail;
 }
+
+export function plural(count: number, one: string, many = `${one}s`): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
+export type ConnectionState =
+  | {kind: 'checking'}
+  | {kind: 'connected'; noteCount: number}
+  | {kind: 'offline'}
+  | {kind: 'rejected'}
+  | {kind: 'error'; message: string};
+
+export interface ConnectionView {
+  tone: 'neutral' | 'ok' | 'bad';
+  title: string;
+  detail: string;
+}
+
+/** Sorts a failed request into the states the settings card knows how to explain. */
+export function classifyConnectionError(err: unknown): Exclude<ConnectionState, {kind: 'checking' | 'connected'}> {
+  const message = err instanceof Error ? err.message : String(err);
+  if (UNREACHABLE.test(message)) {
+    return {kind: 'offline'};
+  }
+  if (/\((401|403)\)|unauthor|forbidden/i.test(message)) {
+    return {kind: 'rejected'};
+  }
+  return {kind: 'error', message};
+}
+
+export function describeConnectionState(state: ConnectionState, endpointUrl: string): ConnectionView {
+  switch (state.kind) {
+    case 'checking':
+      return {tone: 'neutral', title: 'Checking connection...', detail: endpointUrl};
+    case 'connected':
+      return {
+        tone: 'ok',
+        title: 'Connected to aether-mcp',
+        detail: `${endpointUrl}. ${plural(state.noteCount, 'note')} indexed.`,
+      };
+    case 'offline':
+      return {
+        tone: 'bad',
+        title: "Can't reach aether-mcp",
+        detail: `Nothing is answering at ${endpointUrl}. Install and start it with "Local server quickstart" below, then test again.`,
+      };
+    case 'rejected':
+      return {
+        tone: 'bad',
+        title: 'The server rejected the API key',
+        detail: 'Check the API key below. Servers that require authentication need a key that starts with aek_.',
+      };
+    case 'error':
+      return {tone: 'bad', title: 'Connection problem', detail: state.message};
+  }
+}
