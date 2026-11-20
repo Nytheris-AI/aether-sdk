@@ -97,6 +97,9 @@ jobs:
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: Aether Memory Companion ${{ steps.meta.outputs.tag }}
+          # scripts/install.sh and install.ps1 resolve aether-mcp via releases/latest on this repo,
+          # so a plugin release must never take the "Latest" label here.
+          make_latest: false
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: |
