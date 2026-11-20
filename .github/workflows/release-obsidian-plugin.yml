@@ -1,0 +1,208 @@
+name: Release Obsidian Plugin
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Bare semver release tag (e.g. 0.4.0). Defaults to manifest.json version when omitted."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: obsidian-aether-plugin/package-lock.json
+
+      - name: Resolve release tag
+        id: meta
+        working-directory: obsidian-aether-plugin
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_TAG:-}" ]; then
+            TAG="${INPUT_TAG}"
+          elif [ "${REF_TYPE:-}" = "tag" ]; then
+            TAG="${REF_NAME}"
+          else
+            TAG="$(node -e "const m = JSON.parse(require('fs').readFileSync('manifest.json', 'utf8')); process.stdout.write(m.version);")"
+          fi
+          if [[ ! "${TAG}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag '${TAG}' must match bare semver X.Y.Z without a 'v' prefix."
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install dependencies
+        working-directory: obsidian-aether-plugin
+        run: npm ci
+
+      - name: Run plugin tests
+        working-directory: obsidian-aether-plugin
+        run: npm test
+
+      - name: Typecheck plugin
+        working-directory: obsidian-aether-plugin
+        run: npm run typecheck
+
+      - name: Build plugin bundle
+        working-directory: obsidian-aether-plugin
+        run: npm run build
+
+      - name: Verify release bundle
+        working-directory: obsidian-aether-plugin
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: node scripts/verify-release.mjs --tag "${TAG}"
+
+      - name: Stage release files for dedicated repo sync
+        if: vars.OBSIDIAN_PLUGIN_REPO != ''
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          cp \
+            obsidian-aether-plugin/main.js \
+            obsidian-aether-plugin/manifest.json \
+            obsidian-aether-plugin/versions.json \
+            obsidian-aether-plugin/styles.css \
+            release-assets/
+
+      - name: Upload release artifact for dedicated repo sync
+        if: vars.OBSIDIAN_PLUGIN_REPO != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: obsidian-plugin-release
+          path: release-assets/
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            obsidian-aether-plugin/main.js
+            obsidian-aether-plugin/manifest.json
+            obsidian-aether-plugin/versions.json
+            obsidian-aether-plugin/styles.css
+
+  sync-obsidian-repo:
+    needs: release
+    if: vars.OBSIDIAN_PLUGIN_REPO != ''
+    runs-on: ubuntu-latest
+    env:
+      HAS_SYNC_TOKEN: ${{ secrets.OBSIDIAN_PLUGIN_SYNC_TOKEN != '' }}
+    steps:
+      - name: Skip when sync token is not configured
+        if: env.HAS_SYNC_TOKEN != 'true'
+        run: echo "OBSIDIAN_PLUGIN_SYNC_TOKEN is not set; skipping dedicated Obsidian plugin repo sync."
+
+      - name: Checkout monorepo source
+        if: env.HAS_SYNC_TOKEN == 'true'
+        uses: actions/checkout@v7
+        with:
+          path: source
+
+      - name: Download verified release assets
+        if: env.HAS_SYNC_TOKEN == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          name: obsidian-plugin-release
+          path: release-assets
+
+      - name: Sync plugin root and tag dedicated Obsidian repository
+        if: env.HAS_SYNC_TOKEN == 'true'
+        env:
+          OBSIDIAN_PLUGIN_REPO: ${{ vars.OBSIDIAN_PLUGIN_REPO }}
+          OBSIDIAN_PLUGIN_SYNC_TOKEN: ${{ secrets.OBSIDIAN_PLUGIN_SYNC_TOKEN }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${OBSIDIAN_PLUGIN_REPO}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::OBSIDIAN_PLUGIN_REPO '${OBSIDIAN_PLUGIN_REPO}' must be in owner/repo format."
+            exit 1
+          fi
+
+          ASKPASS_SCRIPT="$(mktemp)"
+          trap 'rm -f "${ASKPASS_SCRIPT}"' EXIT
+          cat <<'EOF' > "${ASKPASS_SCRIPT}"
+          #!/usr/bin/env sh
+          case "$1" in
+            *Username*) echo "x-access-token" ;;
+            *) printf '%s\n' "${OBSIDIAN_PLUGIN_SYNC_TOKEN}" ;;
+          esac
+          EOF
+          chmod 700 "${ASKPASS_SCRIPT}"
+          export GIT_ASKPASS="${ASKPASS_SCRIPT}"
+          export GIT_TERMINAL_PROMPT=0
+
+          SERVER_URL="${GITHUB_SERVER_URL:-https://github.com}"
+          git -c credential.helper= clone "${SERVER_URL}/${OBSIDIAN_PLUGIN_REPO}.git" target
+
+          rsync -a --checksum --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='node_modules' \
+            --exclude='main.js' \
+            --exclude='main.js.map' \
+            --filter='protect /LICENSE' \
+            --filter='protect /README.md' \
+            source/obsidian-aether-plugin/ target/
+
+          cd target
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git rev-parse --verify HEAD >/dev/null 2>&1; then
+            TARGET_BRANCH="$(git symbolic-ref --short HEAD)"
+          else
+            TARGET_BRANCH="main"
+            git checkout -B "${TARGET_BRANCH}"
+          fi
+
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): sync obsidian-aether-plugin ${TAG}"
+            git -c credential.helper= push -u origin "HEAD:${TARGET_BRANCH}"
+          fi
+
+          EXISTING_TAG="$(git -c credential.helper= ls-remote --tags origin "refs/tags/${TAG}")"
+          if [ -z "${EXISTING_TAG}" ]; then
+            git tag -a "${TAG}" -m "Release ${TAG}"
+            git -c credential.helper= push origin "refs/tags/${TAG}"
+          fi
+
+      - name: Publish GitHub release to dedicated Obsidian repository
+        if: env.HAS_SYNC_TOKEN == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ vars.OBSIDIAN_PLUGIN_REPO }}
+          token: ${{ secrets.OBSIDIAN_PLUGIN_SYNC_TOKEN }}
+          tag_name: ${{ needs.release.outputs.tag }}
+          name: ${{ needs.release.outputs.tag }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/main.js
+            release-assets/manifest.json
+            release-assets/versions.json
+            release-assets/styles.css

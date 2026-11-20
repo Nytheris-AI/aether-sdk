@@ -26,7 +26,7 @@ const BUILTIN_IGNORED_DIRS = new Set(['.obsidian', '.git', '.trash', '.aether'])
 const BUILTIN_IGNORED_PREFIXES = [
   'aether/inbox.md',
   'aether/compiled',
-  '.obsidian/plugins/obsidian-aether/data.json',
+  '.obsidian/plugins/aether-memory/data.json',
 ];
 const BUILTIN_IGNORED_EXTENSIONS = ['.canvas', '.excalidraw', '.excalidraw.md'];
 

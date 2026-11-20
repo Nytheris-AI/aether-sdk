@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import {describe, it} from 'node:test';
+import {fileURLToPath} from 'node:url';
+import {
+  REQUIRED_RELEASE_FILES,
+  formatVerificationReport,
+  parseCliArgs,
+  runReleaseCli,
+  validateRelease,
+  verifyReleaseDirectory,
+} from '../scripts/verify-release.mjs';
 import {AetherControlClient, assertControlPlaneBaseUrl, assertLoopbackBaseUrl} from '../src/api.ts';
 import {
   ObsidianDesktopAdapter,
@@ -382,6 +394,8 @@ describe('Aether Obsidian Companion Plugin', () => {
 
     const ignoreFile = '# user ignores\nFinance/\n*.secret.md\n';
     assert.equal(isIgnoredVaultPath('.obsidian/workspace.md', ignoreFile), true);
+    assert.equal(isIgnoredVaultPath('.obsidian/plugins/aether-memory/data.json'), true);
+    assert.equal(isIgnoredVaultPath('.obsidian/plugins/aether-memory/data.json', ignoreFile), true);
     assert.equal(isIgnoredVaultPath('.git/HEAD', ignoreFile), true);
     assert.equal(isIgnoredVaultPath('Aether/Inbox.md', ignoreFile), true);
     assert.equal(isIgnoredVaultPath('Aether/Compiled/Approved.md', ignoreFile), true);
@@ -818,29 +832,31 @@ describe('Aether Obsidian Companion Plugin', () => {
       url: string;
       method?: string;
       headers?: Record<string, string>;
-      body?: string;
+      body?: string | ArrayBuffer;
     }) => {
       requests.push({
         url: req.url,
         method: req.method,
         auth: req.headers?.Authorization,
-        body: req.body,
+        body: typeof req.body === 'string' ? req.body : undefined,
+      });
+      const text = JSON.stringify({
+        status: 'ok',
+        schema_version: 3,
+        embedder_id: 'hashed-ngram-256-v1',
+        embedding_dim: 256,
+        active_amus: 9,
+        pending_inbox_count: 0,
+        approved_inbox_count: 1,
+        hot_tokens_used: 42,
+        hot_token_budget: 2000,
+        prefix_hash: '0'.repeat(64),
       });
       return {
         status: 200,
         headers: {'content-type': 'application/json'},
-        text: JSON.stringify({
-          status: 'ok',
-          schema_version: 3,
-          embedder_id: 'hashed-ngram-256-v1',
-          embedding_dim: 256,
-          active_amus: 9,
-          pending_inbox_count: 0,
-          approved_inbox_count: 1,
-          hot_tokens_used: 42,
-          hot_token_budget: 2000,
-          prefix_hash: '0'.repeat(64),
-        }),
+        arrayBuffer: new TextEncoder().encode(text).buffer,
+        text,
         json: {},
       };
     };
@@ -868,5 +884,259 @@ describe('Aether Obsidian Companion Plugin', () => {
     assert.equal(requests[1]?.auth, 'Bearer aek_rotated_token');
     assert.equal(plugin.defaultKvModel, 'qwen2.5-coder');
     assert.equal(plugin.runDreamOnPush, true);
+  });
+});
+
+function createValidReleaseFixture() {
+  const manifest = {
+    id: 'aether-memory',
+    name: 'Aether Memory Companion',
+    version: '0.4.0',
+    minAppVersion: '1.5.0',
+    description: 'Privacy-preserving two-way vault sync, Git lattice sync, and KV-cache warming for Aether MCP.',
+    author: 'Nytheris',
+    authorUrl: 'https://github.com/Nytheris-AI/aether-sdk',
+    isDesktopOnly: true,
+  };
+  const pkg = {
+    name: 'nytheris-aether-obsidian-plugin',
+    version: '0.4.0',
+    private: true,
+    type: 'module',
+    devDependencies: {
+      '@types/node': '^24.0.0',
+      esbuild: '^0.25.0',
+      obsidian: '^1.5.0',
+      typescript: '~6.0.2',
+    },
+  };
+  return {
+    'main.js': '"use strict";module.exports=function(){};',
+    'manifest.json': JSON.stringify(manifest, null, 2),
+    'versions.json': JSON.stringify({'0.4.0': '1.5.0'}),
+    'styles.css': '.aether-inbox-card { color: var(--text-normal); }',
+    'README.md': '# Aether Memory Companion\n',
+    LICENSE: 'Apache License Version 2.0\n',
+    'package.json': JSON.stringify(pkg, null, 2),
+    'tsconfig.json': JSON.stringify({compilerOptions: {typeRoots: ['./node_modules/@types']}}),
+    'esbuild.config.mjs': "import esbuild from 'esbuild';\nexport default esbuild;\n",
+  };
+}
+
+describe('Aether Obsidian Release Verification', () => {
+  it('exposes the six required Obsidian Community Plugin release artifacts', () => {
+    assert.deepEqual(
+      [...REQUIRED_RELEASE_FILES].sort(),
+      ['LICENSE', 'README.md', 'main.js', 'manifest.json', 'styles.css', 'versions.json'].sort(),
+    );
+  });
+
+  it('passes validateRelease for valid artifacts, standalone config, and matching tag', () => {
+    const files = createValidReleaseFixture();
+    const withTag = validateRelease({files, tag: '0.4.0'});
+    assert.equal(withTag.ok, true, formatVerificationReport(withTag));
+    assert.equal(
+      withTag.checks.every((check) => check.status === 'pass'),
+      true,
+      'expected every check to pass when --tag matches manifest.version',
+    );
+
+    const withoutTag = validateRelease({files});
+    assert.equal(withoutTag.ok, true, formatVerificationReport(withoutTag));
+    const tagCheck = withoutTag.checks.find((check) => check.id === 'release-tag-match');
+    assert.equal(tagCheck?.status, 'skip');
+  });
+
+  it('rejects manifest ids containing obsidian, ending with plugin, or using invalid characters', () => {
+    for (const badId of ['obsidian-aether', 'aether-plugin', 'aetherplugin', 'Aether_1', '1aether']) {
+      const files = createValidReleaseFixture();
+      const manifest = JSON.parse(files['manifest.json']);
+      manifest.id = badId;
+      files['manifest.json'] = JSON.stringify(manifest);
+
+      const report = validateRelease({files});
+      assert.equal(report.ok, false, `expected id "${badId}" to fail validation`);
+      const idCheck = report.checks.find((check) => check.id === 'manifest-id-policy');
+      assert.equal(idCheck?.status, 'fail', `expected manifest-id-policy failure for "${badId}"`);
+    }
+  });
+
+  it('rejects missing or mismatched versions.json entries and package.json version mismatches', () => {
+    const missingEntry = createValidReleaseFixture();
+    missingEntry['versions.json'] = JSON.stringify({'0.3.0': '1.5.0'});
+    const missingReport = validateRelease({files: missingEntry});
+    assert.equal(missingReport.ok, false);
+    assert.equal(
+      missingReport.checks.find((c) => c.id === 'versions-json-parity')?.status,
+      'fail',
+    );
+
+    const wrongMinApp = createValidReleaseFixture();
+    wrongMinApp['versions.json'] = JSON.stringify({'0.4.0': '1.4.0'});
+    const mismatchReport = validateRelease({files: wrongMinApp});
+    assert.equal(mismatchReport.ok, false);
+    assert.equal(
+      mismatchReport.checks.find((c) => c.id === 'versions-json-parity')?.status,
+      'fail',
+    );
+
+    const pkgMismatch = createValidReleaseFixture();
+    const pkg = JSON.parse(pkgMismatch['package.json']);
+    pkg.version = '0.3.9';
+    pkgMismatch['package.json'] = JSON.stringify(pkg);
+    const pkgReport = validateRelease({files: pkgMismatch});
+    assert.equal(pkgReport.ok, false);
+    assert.equal(
+      pkgReport.checks.find((c) => c.id === 'package-json-standalone')?.status,
+      'fail',
+    );
+  });
+
+  it('rejects tags with v prefix or version mismatch and accepts exact SemVer tag', () => {
+    const files = createValidReleaseFixture();
+
+    const prefixed = validateRelease({files, tag: 'v0.4.0'});
+    assert.equal(prefixed.ok, false);
+    const prefixedCheck = prefixed.checks.find((c) => c.id === 'release-tag-match');
+    assert.equal(prefixedCheck?.status, 'fail');
+    assert.match(prefixedCheck?.message ?? '', /v/i);
+
+    const mismatched = validateRelease({files, tag: '0.5.0'});
+    assert.equal(mismatched.ok, false);
+    assert.equal(mismatched.checks.find((c) => c.id === 'release-tag-match')?.status, 'fail');
+
+    const accepted = validateRelease({files, tag: '0.4.0'});
+    assert.equal(accepted.ok, true);
+    assert.equal(accepted.checks.find((c) => c.id === 'release-tag-match')?.status, 'pass');
+  });
+
+  it('rejects missing or empty required release artifacts', () => {
+    for (const fileName of REQUIRED_RELEASE_FILES) {
+      const missingFiles: Record<string, string | null> = createValidReleaseFixture();
+      missingFiles[fileName] = null;
+      const missingReport = validateRelease({files: missingFiles});
+      assert.equal(missingReport.ok, false, `expected missing ${fileName} to fail`);
+      const missingArtifactCheck = missingReport.checks.find(
+        (c) => c.id === 'required-release-artifacts',
+      );
+      assert.equal(missingArtifactCheck?.status, 'fail');
+      assert.ok(missingArtifactCheck?.message.includes(fileName));
+
+      const emptyFiles: Record<string, string | null> = createValidReleaseFixture();
+      emptyFiles[fileName] = '   \n';
+      const emptyReport = validateRelease({files: emptyFiles});
+      assert.equal(emptyReport.ok, false, `expected empty ${fileName} to fail`);
+      const emptyArtifactCheck = emptyReport.checks.find(
+        (c) => c.id === 'required-release-artifacts',
+      );
+      assert.equal(emptyArtifactCheck?.status, 'fail');
+      assert.ok(emptyArtifactCheck?.message.includes(fileName));
+    }
+  });
+
+  it('rejects ../website and _npx references in standalone config files', () => {
+    const badPkg = createValidReleaseFixture();
+    badPkg['package.json'] = JSON.stringify({
+      ...JSON.parse(badPkg['package.json']),
+      scripts: {typecheck: '../website/node_modules/.bin/tsc -p tsconfig.json --noEmit'},
+    });
+    assert.equal(validateRelease({files: badPkg}).ok, false);
+
+    const badTsconfig = createValidReleaseFixture();
+    badTsconfig['tsconfig.json'] = JSON.stringify({
+      compilerOptions: {typeRoots: ['../website/node_modules/@types']},
+    });
+    assert.equal(validateRelease({files: badTsconfig}).ok, false);
+
+    const badEsbuildWebsite = createValidReleaseFixture();
+    badEsbuildWebsite['esbuild.config.mjs'] =
+      "const p = '../website/node_modules/typescript';\nexport default p;\n";
+    assert.equal(validateRelease({files: badEsbuildWebsite}).ok, false);
+
+    const badEsbuildNpx = createValidReleaseFixture();
+    badEsbuildNpx['esbuild.config.mjs'] = "const p = '.npm/_npx';\nexport default p;\n";
+    assert.equal(validateRelease({files: badEsbuildNpx}).ok, false);
+  });
+
+  it('parses valid CLI arguments and rejects invalid flags', () => {
+    assert.deepEqual(parseCliArgs([], '/default/plugin'), {
+      ok: true,
+      dir: '/default/plugin',
+    });
+    assert.deepEqual(parseCliArgs(['--tag', '0.4.0'], '/default/plugin'), {
+      ok: true,
+      dir: '/default/plugin',
+      tag: '0.4.0',
+    });
+    assert.deepEqual(parseCliArgs(['--tag=0.4.0', '--dir=/tmp/out'], '/default/plugin'), {
+      ok: true,
+      dir: path.resolve('/tmp/out'),
+      tag: '0.4.0',
+    });
+    assert.equal(parseCliArgs(['--tag'], '/default/plugin').ok, false);
+    assert.equal(parseCliArgs(['--tag='], '/default/plugin').ok, false);
+    assert.equal(parseCliArgs(['--dir'], '/default/plugin').ok, false);
+    assert.equal(parseCliArgs(['--unknown'], '/default/plugin').ok, false);
+    assert.equal(parseCliArgs(['positional'], '/default/plugin').ok, false);
+  });
+
+  it('verifies a temp plugin directory through runReleaseCli and rejects broken directories', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aether-plugin-verify-'));
+    try {
+      const fixture = createValidReleaseFixture();
+      for (const [relPath, content] of Object.entries(fixture)) {
+        fs.writeFileSync(path.join(tmpDir, relPath), content, 'utf8');
+      }
+      const stdoutLines: string[] = [];
+      const stderrLines: string[] = [];
+      const okCode = runReleaseCli(['--dir', tmpDir, '--tag', '0.4.0'], tmpDir, {
+        stdout: (line) => stdoutLines.push(line),
+        stderr: (line) => stderrLines.push(line),
+      });
+      assert.equal(okCode, 0, stderrLines.join('\n'));
+      assert.equal(stderrLines.length, 0);
+      assert.ok(stdoutLines.join('\n').includes('PASS'));
+
+      fs.rmSync(path.join(tmpDir, 'styles.css'));
+      const failOut: string[] = [];
+      const failErr: string[] = [];
+      const failCode = runReleaseCli(['--dir', tmpDir], tmpDir, {
+        stdout: (line) => failOut.push(line),
+        stderr: (line) => failErr.push(line),
+      });
+      assert.equal(failCode, 1);
+      assert.ok(failErr.join('\n').includes('styles.css'));
+    } finally {
+      fs.rmSync(tmpDir, {recursive: true, force: true});
+    }
+  });
+
+  it('verifies tracked plugin files before build and full release directory when main.js is built', () => {
+    const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    const hasBundle = fs.existsSync(path.join(pluginRoot, 'main.js'));
+    const report = verifyReleaseDirectory(pluginRoot, {tag: '0.4.0'});
+
+    if (hasBundle) {
+      assert.equal(report.ok, true, formatVerificationReport(report));
+      assert.equal(
+        report.checks.every((check) => check.status === 'pass'),
+        true,
+        formatVerificationReport(report),
+      );
+      return;
+    }
+
+    const artifactCheck = report.checks.find((c) => c.id === 'required-release-artifacts');
+    assert.equal(artifactCheck?.status, 'fail');
+    assert.equal(
+      artifactCheck?.message,
+      'Missing or empty release artifacts: main.js (missing)',
+    );
+    assert.equal(report.checks.find((c) => c.id === 'main-bundle-sanity')?.status, 'skip');
+    for (const check of report.checks) {
+      if (check.id !== 'required-release-artifacts' && check.id !== 'main-bundle-sanity') {
+        assert.equal(check.status, 'pass', `${check.id}: ${check.message}`);
+      }
+    }
   });
 });

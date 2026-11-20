@@ -5,12 +5,15 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/plugin.test.ts",
-    "typecheck": "../website/node_modules/.bin/tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "npm run typecheck && node esbuild.config.mjs production",
-    "dev": "node esbuild.config.mjs"
+    "dev": "node esbuild.config.mjs",
+    "verify:release": "node scripts/verify-release.mjs"
   },
   "devDependencies": {
+    "@types/node": "^24.0.0",
     "esbuild": "^0.25.0",
-    "obsidian": "^1.5.0"
+    "obsidian": "^1.5.0",
+    "typescript": "~6.0.2"
   }
 }
