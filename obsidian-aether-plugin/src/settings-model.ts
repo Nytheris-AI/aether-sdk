@@ -68,3 +68,43 @@ export function normalizePluginSettings(raw: unknown): AetherPluginSettings {
     kvModel: typeof raw.kvModel === 'string' ? raw.kvModel.trim() : DEFAULT_SETTINGS.kvModel,
   };
 }
+
+export const AETHER_MCP_INSTALL_COMMAND =
+  'curl -fsSL https://raw.githubusercontent.com/Nytheris-AI/aether-sdk/main/scripts/install.sh | sh';
+
+export const AETHER_MCP_WINDOWS_INSTALL_COMMAND =
+  'irm https://raw.githubusercontent.com/Nytheris-AI/aether-sdk/main/scripts/install.ps1 | iex';
+
+function resolveLocalHttpAddr(endpointUrl: string): string {
+  try {
+    const parsed = new URL(endpointUrl);
+    if (
+      parsed.protocol === 'http:' &&
+      (parsed.hostname === '127.0.0.1' ||
+        parsed.hostname === 'localhost' ||
+        parsed.hostname === '::1')
+    ) {
+      const host = parsed.hostname === 'localhost' ? '127.0.0.1' : parsed.hostname;
+      const port = parsed.port || '14771';
+      return host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`;
+    }
+  } catch {
+    // Fall back to default loopback socket address.
+  }
+  return '127.0.0.1:14771';
+}
+
+function formatQuotedVaultPath(vaultPath: string): string {
+  const trimmed = vaultPath.trim() || '/path/to/your/vault';
+  return `"${trimmed.replace(/"/g, '\\"')}"`;
+}
+
+export function buildLocalStartCommand(vaultPath: string, endpointUrl: string): string {
+  const addr = resolveLocalHttpAddr(endpointUrl);
+  return `aether-mcp --vault ${formatQuotedVaultPath(vaultPath)} --http-addr ${addr} --http-only`;
+}
+
+export function buildServiceInstallCommand(vaultPath: string, endpointUrl: string): string {
+  const addr = resolveLocalHttpAddr(endpointUrl);
+  return `aether-mcp service install --vault ${formatQuotedVaultPath(vaultPath)} --http-addr ${addr}`;
+}

@@ -1,0 +1,11 @@
+target/
+.git/
+.github/
+.audit/
+obsidian-aether-plugin/
+website/
+docs/
+launch-ad/
+examples/
+*.md
+!README.md

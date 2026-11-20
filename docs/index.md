@@ -2,11 +2,19 @@
 
 **Aether SDK** (`nytheris-aether-*`) is a model-free Rust memory SDK and Obsidian vault compiler. It unifies record durability, vector search, temporal knowledge graphs, and prefix-cache-friendly MCP serving without hiding control flow inside a framework.
 
+## Start here
+
+Pick the track that matches what you want to do:
+
+- **Use Aether with Obsidian and an AI agent.** Follow the [Obsidian Setup Guide](guides/obsidian-setup.md) to install `aether-mcp`, register the background service, add **Aether Memory Companion** in Obsidian, and connect Claude Desktop, Cursor, or Antigravity.
+- **Embed Aether in a Rust application.** Start with [Part 1: Quickstart & Your First Memory](series/01-quickstart-first-memory.md) to store and query records and vectors with `InMemoryBackend`.
+
 ## Choose your path
 
 ```mermaid
 flowchart LR
-    START["New to Aether"] --> S1["Learning Series (Parts 1 to 5)"]
+    OBS["Obsidian + AI Agent"] --> SETUP["Obsidian Setup Guide"]
+    START["Rust SDK Quickstart"] --> S1["Learning Series (Parts 1 to 5)"]
     BUILD["Building an integration"] --> REF["Developer Reference"]
     DESIGN["How internals work"] --> CON["Concepts"]
     TASK["Goal-oriented recipes"] --> GUIDES["How-To Guides"]
@@ -35,6 +43,7 @@ Read deep explanations of Aether's guarantees, scoring math, and cache layout.
 
 ## How-To Guides
 
+- **[Obsidian Setup Guide](guides/obsidian-setup.md).** Install `aether-mcp`, register the background service, enable `aether-memory` in Obsidian, and connect an AI agent.
 - **[Usage Guide](guides/usage.md).** Condensed snippets across all five SDK levels and `nytheris-aether-vault`.
 - **[Memory Model & Consistency](guides/memory.md).** Quick overview of SDK scopes, durability modes, and vault memory units.
 - **[Observability & OpenTelemetry](guides/observability.md).** Tracing span hierarchy and the one-line `otel` OTLP gRPC setup.

@@ -4,59 +4,81 @@ Connect an Obsidian Desktop vault to `aether-mcp` and an MCP-compatible AI agent
 
 ## Prerequisites
 
-Install these tools before you start:
+- **Obsidian Desktop 1.5.0 or later** (mobile is not supported because `aether-memory` sets `isDesktopOnly` to `true`)
 
-- **Rust toolchain** (`cargo` and `rustc`) to build `aether-mcp`
-- **Node.js 20 or later** (`node` and `npm`) to build `obsidian-aether-plugin`
-- **Obsidian Desktop 1.5.0 or later** (mobile is not supported because `obsidian-aether-plugin` sets `isDesktopOnly` to `true`)
+For local use, you do **not** need Rust or Node.js installed — prebuilt `aether-mcp` binaries and the Obsidian plugin bundle are published on GitHub Releases.
 
-## Step 1: Build and start `aether-mcp`
+## Step 1: Install and start `aether-mcp`
 
-Build the `aether-mcp` binary from the repository root:
+### Option A: One-line installer + background service (recommended for desktop)
+
+Install the latest `aether-mcp` release binary:
 
 ```bash
-cargo build --release -p nytheris-aether-vault --bin aether-mcp
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/Nytheris-AI/aether-sdk/main/scripts/install.sh | sh
 ```
 
-Start the standalone HTTP daemon in local loopback mode against your Obsidian vault directory:
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/Nytheris-AI/aether-sdk/main/scripts/install.ps1 | iex
+```
+
+Register `aether-mcp` as an auto-starting background service for your Obsidian vault (`launchd` on macOS, `systemd --user` on Linux, or Task Scheduler on Windows):
 
 ```bash
-./target/release/aether-mcp \
-  --vault /path/to/vault \
-  --watch-ms 2000 \
-  --http-addr 127.0.0.1:14771 \
-  --http-only
+aether-mcp service install --vault /path/to/vault
+```
+
+Check or remove the background service at any time:
+
+```bash
+aether-mcp service status
+aether-mcp service uninstall
+```
+
+Or run `aether-mcp` in the foreground instead of a background service:
+
+```bash
+aether-mcp --vault /path/to/vault --watch-ms 2000 --http-addr 127.0.0.1:14771 --http-only
 ```
 
 `--http-only` keeps `ControlPlaneServer` alive until `Ctrl-C` or `SIGTERM` without keeping `stdin` open. `aether-mcp` creates its SQLite WAL index at `<vault>/.aether/aether.sqlite` and polls for disk changes every `2000` milliseconds. Without `--require-auth`, `ControlPlaneServer::bind` accepts only `127.0.0.1` or `::1`.
 
-If you want to bind to a non-loopback address or require bearer tokens for a team setup, generate a bootstrap admin key and pass `--require-auth` with `--bootstrap-admin-key`:
+### Option B: Docker (recommended for team or remote gateways)
+
+Run the multi-arch container image from GitHub Container Registry with a mounted vault directory and bearer authentication:
 
 ```bash
 export AETHER_BOOTSTRAP_ADMIN_KEY="aek_$(openssl rand -hex 32)"
 
-./target/release/aether-mcp \
-  --vault /path/to/vault \
+docker run -d \
+  --name aether-mcp \
+  -p 4771:4771 \
+  -v /path/to/vault:/vault \
+  ghcr.io/nytheris-ai/aether-mcp:latest \
+  --vault /vault \
   --watch-ms 2000 \
   --http-addr 0.0.0.0:4771 \
   --require-auth \
   --bootstrap-admin-key "$AETHER_BOOTSTRAP_ADMIN_KEY"
 ```
 
-## Step 2: Build and install `obsidian-aether-plugin`
+### Option C: Build from source (contributors)
 
-Build the plugin bundle from `obsidian-aether-plugin`:
-
-```bash
-cd obsidian-aether-plugin
-npm run build
-```
-
-Create the plugin directory inside your vault and copy `main.js` and `manifest.json` into it (or run `aether-mcp --init` from the repository root to copy the plugin, write `data.json`, and print your `mcp.json` snippet in one step):
+If you are developing in the `aether-sdk` repository, build `aether-mcp` with Cargo and `obsidian-aether-plugin` with Node.js 20+:
 
 ```bash
-./target/release/aether-mcp --init --vault /path/to/vault --http-addr 127.0.0.1:14771
+cargo build --release -p nytheris-aether-vault --bin aether-mcp
 ```
+
+## Step 2: Install the Obsidian plugin (`aether-memory`)
+
+Install **Aether Memory Companion** in Obsidian Desktop using any of these methods:
+
+- **Community plugins**: Open **Settings → Community plugins → Browse**, search for **Aether Memory Companion**, select **Install**, and enable it.
+- **BRAT (beta)**: Install **Obsidian42 BRAT**, select **Add beta plugin**, and enter `https://github.com/Nytheris-AI/aether-memory`.
+- **CLI (`--init`)**: If you built the plugin locally from `obsidian-aether-plugin/`, run `aether-mcp --init --vault /path/to/vault --http-addr 127.0.0.1:14771` to copy `main.js`, `manifest.json`, and `styles.css`, write `data.json`, and print your `mcp.json` snippet.
 
 Enable the plugin in Obsidian Desktop:
 
@@ -67,7 +89,7 @@ Enable the plugin in Obsidian Desktop:
 
 ## Step 3: Configure plugin settings and run initial sync
 
-Open **Settings** and select **Aether Memory Companion**. Configure these fields:
+Open **Settings** and select **Aether Memory Companion**. You can use the **Local server quickstart** buttons (**Copy Install**, **Copy Service Install**, and **Copy Start**) to copy pre-filled commands for your vault, then configure these fields:
 
 1. Set **Aether control-plane URL** to `http://127.0.0.1:14771` for local loopback mode, or to your `https://` gateway URL for a remote server.
 2. Leave **API key** empty for loopback mode without authentication. For an authenticated server, paste your `aek_...` bearer token.
@@ -130,7 +152,7 @@ Add `aether-mcp` to your MCP client `mcpServers` configuration (for example in C
 {
   "mcpServers": {
     "aether-vault": {
-      "command": "/path/to/target/release/aether-mcp",
+      "command": "aether-mcp",
       "args": ["--vault", "/path/to/vault", "--watch-ms", "0"]
     }
   }
