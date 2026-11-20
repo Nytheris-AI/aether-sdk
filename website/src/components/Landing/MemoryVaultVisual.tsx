@@ -1,5 +1,5 @@
 import {useState, type ReactNode} from 'react';
-import useBaseUrl from '@docusaurus/useBaseUrl';
+import useBaseUrl, {useBaseUrlUtils} from '@docusaurus/useBaseUrl';
 import {
   HERO_DIAGRAM_STATS,
   HERO_MEMORY_MODES,
@@ -11,7 +11,7 @@ export function MemoryVaultVisual(): ReactNode {
   const [activeMode, setActiveMode] = useState<HeroMemoryModeId>('hot');
   const [isFlowPaused, setIsFlowPaused] = useState(false);
 
-  const baseUrl = useBaseUrl;
+  const {withBaseUrl} = useBaseUrlUtils();
   const obsidianLogoUrl = useBaseUrl('/img/obsidian-logo.svg');
   const aetherLogoUrl = useBaseUrl('/img/aether-logo.svg');
   const mode = HERO_MEMORY_MODES[activeMode];
@@ -117,7 +117,7 @@ export function MemoryVaultVisual(): ReactNode {
             {mode.clientTargets.map((target) => (
               <span key={target.label} className="vault-client-chip">
                 {target.logo && (
-                  <img src={baseUrl(target.logo)} alt="" width={14} height={14} />
+                  <img src={withBaseUrl(target.logo)} alt="" width={14} height={14} />
                 )}
                 {target.label}
               </span>
