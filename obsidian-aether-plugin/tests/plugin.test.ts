@@ -658,7 +658,7 @@ describe('Aether Obsidian Companion Plugin', () => {
         notes?: unknown[];
       };
       assert.deepEqual(lastPush.private_paths, ['Arch/DB.md']);
-      assert.deepEqual(lastPush.deleted_paths, ['Arch/DB.md']);
+      assert.deepEqual(lastPush.deleted_paths ?? [], []);
       assert.equal(lastPush.notes?.length ?? 0, 0);
       assert.equal(
         pushedPayloads.some((p) => p.raw.includes('NOW_PRIVATE_BODY')),

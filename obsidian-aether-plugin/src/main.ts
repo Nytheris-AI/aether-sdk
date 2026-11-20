@@ -465,10 +465,7 @@ export class AetherCompanionPlugin {
     }
 
     if (isPrivateMarkdownNote(content)) {
-      return this.pushAndApplyMirrors({
-        private_paths: [relPath],
-        deleted_paths: [relPath],
-      });
+      return this.pushAndApplyMirrors({private_paths: [relPath]});
     }
     return this.pushAndApplyMirrors({notes: [{path: relPath, content}]});
   }
