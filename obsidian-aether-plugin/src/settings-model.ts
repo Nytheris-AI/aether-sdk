@@ -7,6 +7,7 @@ export interface AetherPluginSettings {
   syncDebounceMs: number;
   autoPullIntervalSec: number;
   runDreamOnPush: boolean;
+  kvWarmingEnabled: boolean;
   kvEndpoint: string;
   kvModel: string;
 }
@@ -18,6 +19,7 @@ export const DEFAULT_SETTINGS: AetherPluginSettings = {
   syncDebounceMs: 1500,
   autoPullIntervalSec: 0,
   runDreamOnPush: false,
+  kvWarmingEnabled: false,
   kvEndpoint: '',
   kvModel: '',
 };
@@ -66,6 +68,11 @@ export function normalizePluginSettings(raw: unknown): AetherPluginSettings {
       typeof raw.runDreamOnPush === 'boolean'
         ? raw.runDreamOnPush
         : DEFAULT_SETTINGS.runDreamOnPush,
+    // Existing KV configuration keeps the feature on after upgrading; new installs start with it off.
+    kvWarmingEnabled:
+      typeof raw.kvWarmingEnabled === 'boolean'
+        ? raw.kvWarmingEnabled
+        : kvEndpoint.length > 0 || kvModel.length > 0,
     kvEndpoint,
     kvModel,
   };

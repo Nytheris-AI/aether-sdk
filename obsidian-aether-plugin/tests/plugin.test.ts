@@ -1191,3 +1191,27 @@ describe('friendly connection errors', () => {
     assert.equal(describeConnectionError('plain string', url), 'plain string');
   });
 });
+
+describe('advanced KV warming opt-in', () => {
+  it('is off by default and migrates existing KV configuration to on', () => {
+    assert.equal(DEFAULT_SETTINGS.kvWarmingEnabled, false);
+    assert.equal(normalizePluginSettings(null).kvWarmingEnabled, false);
+    assert.equal(normalizePluginSettings({kvModel: 'llama-3.1-8b'}).kvWarmingEnabled, true);
+    assert.equal(normalizePluginSettings({kvEndpoint: 'http://127.0.0.1:8000'}).kvWarmingEnabled, true);
+    assert.equal(normalizePluginSettings({kvModel: 'x', kvWarmingEnabled: false}).kvWarmingEnabled, false);
+  });
+
+  it('only offers the Warm GPU KV Cache command when enabled', async () => {
+    for (const enabled of [false, true]) {
+      const mock = createMockHost();
+      const plugin = new AetherCompanionPlugin(mock.host, 'http://127.0.0.1:14771', {
+        fetchImpl: async () => new Response('{}'),
+        kvWarmingEnabled: enabled,
+      });
+      await plugin.onload().catch(() => undefined);
+      const cmd = mock.commands.get('aether-warm-kv-cache');
+      assert.ok(cmd);
+      assert.equal(cmd.available?.(), enabled);
+    }
+  });
+});
