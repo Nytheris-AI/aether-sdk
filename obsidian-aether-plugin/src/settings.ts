@@ -42,11 +42,11 @@ export class AetherSettingTab extends PluginSettingTab {
     const {containerEl} = this;
     containerEl.replaceChildren();
 
-    new Setting(containerEl).setName('Connection & Auth').setHeading();
+    new Setting(containerEl).setName('Connection and authentication').setHeading();
 
     containerEl.createEl('p', {
       cls: 'setting-item-description',
-      text: 'This plugin needs the aether-mcp server running on your machine or on a team gateway. Use Local server quickstart below to install and start it, then run Test Connection.',
+      text: 'This plugin needs the aether-mcp server running on your machine or on a team gateway. Use Local server quickstart below to install and start it, then run Test connection.',
     });
 
     new Setting(containerEl)
@@ -81,7 +81,7 @@ export class AetherSettingTab extends PluginSettingTab {
       .setDesc('Verify server reachability and token permission via GET /v1/vault/pull.')
       .addButton((btn) =>
         btn
-          .setButtonText('Test Connection')
+          .setButtonText('Test connection')
           .setCta()
           .onClick(async () => {
             btn.setDisabled(true);
@@ -104,7 +104,7 @@ export class AetherSettingTab extends PluginSettingTab {
         'Copy commands to install aether-mcp, register it as a background service, or run it in a terminal.',
       )
       .addButton((btn) =>
-        btn.setButtonText('Copy Install').onClick(async () => {
+        btn.setButtonText('Copy install').onClick(async () => {
           const isWindows =
             typeof navigator !== 'undefined' && navigator.platform.toLowerCase().includes('win');
           const cmd = isWindows ? AETHER_MCP_WINDOWS_INSTALL_COMMAND : AETHER_MCP_INSTALL_COMMAND;
@@ -112,7 +112,7 @@ export class AetherSettingTab extends PluginSettingTab {
         }),
       )
       .addButton((btn) =>
-        btn.setButtonText('Copy Service Install').onClick(async () => {
+        btn.setButtonText('Copy service install').onClick(async () => {
           const cmd = buildServiceInstallCommand(
             this.resolveVaultBasePath(),
             this.plugin.settings.endpointUrl,
@@ -121,7 +121,7 @@ export class AetherSettingTab extends PluginSettingTab {
         }),
       )
       .addButton((btn) =>
-        btn.setButtonText('Copy Start').onClick(async () => {
+        btn.setButtonText('Copy start').onClick(async () => {
           const cmd = buildLocalStartCommand(
             this.resolveVaultBasePath(),
             this.plugin.settings.endpointUrl,
@@ -130,7 +130,7 @@ export class AetherSettingTab extends PluginSettingTab {
         }),
       );
 
-    new Setting(containerEl).setName('Live Sync & Lattice').setHeading();
+    new Setting(containerEl).setName('Live sync and lattice').setHeading();
 
     new Setting(containerEl)
       .setName('Live vault sync')
@@ -185,7 +185,7 @@ export class AetherSettingTab extends PluginSettingTab {
     new Setting(containerEl)
       .setName('Enable GPU KV-cache warming')
       .setDesc(
-        'For self-hosted vLLM or SGLang setups only. Adds the "Warm GPU KV Cache" command. Most users can leave this off.',
+        'For self-hosted vLLM or SGLang setups only. Adds the "Warm GPU KV cache" command. Most users can leave this off.',
       )
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.kvWarmingEnabled).onChange(async (value) => {
@@ -211,7 +211,7 @@ export class AetherSettingTab extends PluginSettingTab {
 
       new Setting(containerEl)
         .setName('Default KV model')
-        .setDesc('Target model_id passed by the Warm GPU KV Cache command.')
+        .setDesc('Target model_id passed by the Warm GPU KV cache command.')
         .addText((text) =>
           text
             .setPlaceholder('llama-3.1-8b')
