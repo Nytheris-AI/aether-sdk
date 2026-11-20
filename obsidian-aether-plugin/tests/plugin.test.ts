@@ -1201,7 +1201,7 @@ describe('advanced KV warming opt-in', () => {
     assert.equal(normalizePluginSettings({kvModel: 'x', kvWarmingEnabled: false}).kvWarmingEnabled, false);
   });
 
-  it('only offers the Warm GPU KV Cache command when enabled', async () => {
+  it('only offers the Warm GPU KV cache command when enabled', async () => {
     for (const enabled of [false, true]) {
       const mock = createMockHost();
       const plugin = new AetherCompanionPlugin(mock.host, 'http://127.0.0.1:14771', {
@@ -1213,5 +1213,26 @@ describe('advanced KV warming opt-in', () => {
       assert.ok(cmd);
       assert.equal(cmd.available?.(), enabled);
     }
+  });
+});
+
+describe('Obsidian UI text guidelines', () => {
+  // Obsidian's plugin guidelines ask for sentence case: only the first word and proper nouns are capitalized.
+  const PROPER = new Set(['Aether', 'Git', 'GPU', 'KV']);
+  const isSentenceCase = (text: string): boolean =>
+    text
+      .split(/\s+/)
+      .slice(1)
+      .every((word) => !/^[A-Z][a-z]/.test(word) || PROPER.has(word));
+
+  it('uses sentence case for every command name', () => {
+    const mock = createMockHost();
+    const plugin = new AetherCompanionPlugin(mock.host);
+    return plugin.onload().catch(() => undefined).then(() => {
+      assert.ok(mock.commands.size >= 5);
+      for (const cmd of mock.commands.values()) {
+        assert.ok(isSentenceCase(cmd.name), `command name not in sentence case: "${cmd.name}"`);
+      }
+    });
   });
 });

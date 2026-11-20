@@ -334,7 +334,7 @@ export class AetherCompanionPlugin {
     this.statusBar = this.host.addStatusBarItem();
     this.host.addCommand({
       id: 'aether-open-inbox-review',
-      name: 'Open Aether Inbox Review',
+      name: 'Open Aether inbox review',
       callback: async () => {
         await this.inboxController.refresh();
         this.host.openInboxPane(this.inboxController);
@@ -342,22 +342,22 @@ export class AetherCompanionPlugin {
     });
     this.host.addCommand({
       id: 'aether-trigger-dream-pass',
-      name: 'Trigger Dream Pass',
+      name: 'Trigger dream pass',
       callback: async () => this.triggerDreamPass(),
     });
     this.host.addCommand({
       id: 'aether-sync-vault',
-      name: 'Sync Vault with Aether',
+      name: 'Sync vault with Aether',
       callback: async () => this.syncVaultWithAether(),
     });
     this.host.addCommand({
       id: 'aether-git-sync',
-      name: 'Git Sync Team Vault',
+      name: 'Git sync team vault',
       callback: async () => this.gitSync(),
     });
     this.host.addCommand({
       id: 'aether-warm-kv-cache',
-      name: 'Warm GPU KV Cache',
+      name: 'Warm GPU KV cache',
       callback: async () => this.warmKvCache(),
       available: () => this.kvWarmingEnabled,
     });
