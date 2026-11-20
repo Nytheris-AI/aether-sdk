@@ -135,10 +135,10 @@ Place a `.aetherhot` file at the vault root using the same path/glob syntax to p
 
 | Command ID | Command name | Action |
 | --- | --- | --- |
-| `aether-open-inbox-review` | `Open Aether Inbox Review` | Refreshes `GET /v1/inbox` and opens the 1-click approval pane |
-| `aether-trigger-dream-pass` | `Trigger Dream Pass` | Calls `POST /v1/dream`, refreshes Inbox/mirrors and status bar, shows notice |
-| `aether-sync-vault` | `Sync Vault with Aether` | Calls `GET /v1/vault/pull` + `POST /v1/vault/push` with changed public notes, client-filtered `private_paths`, and deletions; writes updated `Inbox.md` and `Approved.md` back into Obsidian |
-| `aether-git-sync` | `Git Sync Team Vault` | Calls `POST /v1/git/sync`, refreshes Inbox/mirrors and status bar, shows notice |
-| `aether-warm-kv-cache` | `Warm GPU KV Cache` | Calls `POST /v1/kv/warm` for `defaultKvModel`, shows TTFT reduction notice |
+| `aether-open-inbox-review` | `Open Aether inbox review` | Refreshes `GET /v1/inbox` and opens the 1-click approval pane |
+| `aether-trigger-dream-pass` | `Trigger dream pass` | Calls `POST /v1/dream`, refreshes Inbox/mirrors and status bar, shows notice |
+| `aether-sync-vault` | `Sync vault with Aether` | Calls `GET /v1/vault/pull` + `POST /v1/vault/push` with changed public notes, client-filtered `private_paths`, and deletions; writes updated `Inbox.md` and `Approved.md` back into Obsidian |
+| `aether-git-sync` | `Git sync team vault` | Calls `POST /v1/git/sync`, refreshes Inbox/mirrors and status bar, shows notice |
+| `aether-warm-kv-cache` | `Warm GPU KV cache` | Calls `POST /v1/kv/warm` for `defaultKvModel`, shows TTFT reduction notice |
 
 `ObsidianHostAdapter` also accepts optional vault data hooks (`listMarkdownFiles`, `readFile`, `writeFile`, `onVaultEvent`) so `AetherCompanionPlugin` can stream note `create`, `modify`, `delete`, and `rename` events and synchronize `Aether/Inbox.md` and `Aether/Compiled/Approved.md` back into the user's Obsidian vault while filtering `aether_tier: private` notes locally.

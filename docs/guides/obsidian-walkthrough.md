@@ -40,16 +40,16 @@ Choose **Trust author and enable plugins**.
 ## 2. Connect to aether-mcp
 
 Open **Settings**, then **Aether Memory Companion**.
-Leave the URL at `http://127.0.0.1:14771` for a local server and select **Test Connection**.
+Leave the URL at `http://127.0.0.1:14771` for a local server and select **Test connection**.
 A notice reports how many notes the server can see.
 
-![Settings with a successful Test Connection notice](../assets/obsidian-guide/02-test-connection.png)
+![Settings with a successful Test connection notice](../assets/obsidian-guide/02-test-connection.png)
 
 If the notice is an error, start the server first with the **Local server quickstart** buttons.
 
 ## 3. Sync your vault
 
-Run **Sync Vault with Aether** from the Command Palette.
+Run **Sync vault with Aether** from the Command Palette.
 The status bar changes from `Aether: Idle` to `Aether: Synced (HH:mm)`, and a notice reports updated, indexed, removed, and private-skipped counts.
 
 <video controls muted loop playsinline width="100%" src={require('../assets/obsidian-guide/03-sync.webm').default}></video>
@@ -75,7 +75,7 @@ Public notes are recalled normally.
 ## 5. Review what your agent wants to remember
 
 When an agent calls `aether_stage_memory`, the fact waits in your Inbox until you approve it.
-Run **Open Aether Inbox Review** and select **Approve** or **Reject**.
+Run **Open Aether inbox review** and select **Approve** or **Reject**.
 
 <video controls muted loop playsinline width="100%" src={require('../assets/obsidian-guide/08-inbox-approve.webm').default}></video>
 
