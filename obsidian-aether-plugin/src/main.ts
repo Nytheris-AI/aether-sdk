@@ -1,3 +1,4 @@
+import {classifyConnectionError, plural} from './settings-model.ts';
 import {
   AetherControlClient,
   DEFAULT_CONTROL_PLANE_URL,
@@ -181,24 +182,34 @@ export function formatStatusBarText(status: VaultStatusReport | null): string {
   if (!status) {
     return 'Aether: Offline';
   }
-  return `Aether: ${status.active_amus} AMUs | ${status.pending_inbox_count} Inbox | HOT ${status.hot_tokens_used}/${status.hot_token_budget}`;
+  return status.pending_inbox_count > 0 ? `Aether: ${status.pending_inbox_count} to review` : 'Aether: Idle';
 }
 
 export function formatDreamNotice(report: DreamReport): string {
-  return `Aether Dream pass: scanned ${report.daily_notes_scanned} note(s), staged ${report.candidates_staged} candidate(s), flagged ${report.contradictions_flagged} contradiction(s).`;
+  return `Dream pass finished: ${plural(report.daily_notes_scanned, 'daily note')} scanned, ${plural(report.candidates_staged, 'memory', 'memories')} proposed, ${plural(report.contradictions_flagged, 'contradiction')} flagged.`;
 }
 
 export function formatGitSyncNotice(report: GitSyncReport): string {
-  const statusLabel = report.merged_cleanly ? 'clean' : `${report.conflicted_files.length} conflict(s)`;
-  return `Aether Git sync (${report.branch}, ${statusLabel}): indexed ${report.sync_report.amus_indexed} AMU(s), resolved ${report.aether_conflicts_resolved} Aether conflict(s).`;
+  const conflicts = report.merged_cleanly ? 'no conflicts' : plural(report.conflicted_files.length, 'conflict');
+  return `Git sync finished on ${report.branch} (${conflicts}): ${plural(report.aether_conflicts_resolved, 'Aether conflict')} resolved.`;
 }
 
 export function formatKvWarmNotice(report: KvWarmReport): string {
-  return `Aether KV warm (${report.model_id}): warmed ${report.blocks_warmed} block(s) across ${report.tokens_warmed} token(s), ${report.ttft_reduction_pct.toFixed(1)}% TTFT reduction.`;
+  return `KV cache warmed for ${report.model_id}: ${plural(report.tokens_warmed, 'token')}, about ${report.ttft_reduction_pct.toFixed(1)}% faster first token.`;
 }
 
 export function formatVaultSyncNotice(report: SyncReport): string {
-  return `Aether vault sync: updated ${report.files_updated} file(s), indexed ${report.amus_indexed} AMU(s), removed ${report.files_removed} file(s), skipped ${report.private_skipped} private.`;
+  const parts: string[] = [];
+  if (report.files_updated > 0) {
+    parts.push(`${plural(report.files_updated, 'note')} updated`);
+  }
+  if (report.files_removed > 0) {
+    parts.push(`${plural(report.files_removed, 'note')} removed`);
+  }
+  if (report.private_skipped > 0) {
+    parts.push(`${plural(report.private_skipped, 'private note')} kept on this device`);
+  }
+  return parts.length > 0 ? `Synced: ${parts.join(', ')}.` : 'Vault is up to date.';
 }
 
 /**
@@ -241,50 +252,89 @@ export function renderInboxPane(
   controller: InboxReviewController,
   onUpdated?: () => void,
 ): void {
+  const doc = container.ownerDocument;
+  const el = (tag: string, className?: string, text?: string): HTMLElement => {
+    const node = doc.createElement(tag);
+    if (className) {
+      node.className = className;
+    }
+    if (text !== undefined) {
+      node.textContent = text;
+    }
+    return node;
+  };
+
   container.replaceChildren();
-  const heading = container.ownerDocument.createElement('h3');
-  heading.textContent = `Aether Inbox (${controller.pending.length} pending)`;
-  container.appendChild(heading);
+  const header = el('div', 'aether-inbox-header');
+  header.appendChild(el('h3', undefined, 'Aether inbox'));
+  if (controller.pending.length > 0) {
+    header.appendChild(el('span', 'aether-inbox-count', `${controller.pending.length} to review`));
+  }
+  container.appendChild(header);
 
   if (controller.pending.length === 0) {
-    const empty = container.ownerDocument.createElement('p');
-    empty.textContent = 'No pending memory candidates.';
+    const empty = el('div', 'aether-inbox-empty');
+    empty.appendChild(el('p', 'aether-inbox-empty-title', 'Nothing to review.'));
+    empty.appendChild(
+      el(
+        'p',
+        undefined,
+        'When an AI agent proposes a memory through aether-mcp, it appears here. Nothing becomes memory until you approve it.',
+      ),
+    );
     container.appendChild(empty);
     return;
   }
 
   for (const entry of controller.pending) {
-    const card = container.ownerDocument.createElement('div');
-    card.className = 'aether-inbox-card';
+    const card = el('div', 'aether-inbox-card');
+    card.setAttribute('data-candidate-id', entry.candidate_id);
+    card.appendChild(el('p', 'aether-inbox-fact', entry.proposed_fact));
+    card.appendChild(
+      el(
+        'div',
+        'aether-inbox-meta',
+        `Proposed by ${entry.proposed_by} on ${entry.proposed_date}. ${capitalize(entry.tier)} memory in scope ${entry.scope}.`,
+      ),
+    );
+    const error = el('div', 'aether-inbox-error');
+    error.setAttribute('role', 'alert');
+    card.appendChild(error);
 
-    const meta = container.ownerDocument.createElement('div');
-    meta.textContent = `[${entry.tier.toUpperCase()} | ${entry.scope}] (${entry.candidate_id})`;
-    card.appendChild(meta);
-
-    const fact = container.ownerDocument.createElement('p');
-    fact.textContent = entry.proposed_fact;
-    card.appendChild(fact);
-
-    const actions = container.ownerDocument.createElement('div');
-    const approveBtn = container.ownerDocument.createElement('button');
-    approveBtn.textContent = 'Approve';
-    approveBtn.onclick = async () => {
-      await controller.decide(entry.candidate_id, 'approve');
+    const actions = el('div', 'aether-inbox-actions');
+    const approveBtn = el('button', 'mod-cta', 'Approve') as HTMLButtonElement;
+    const rejectBtn = el('button', undefined, 'Reject') as HTMLButtonElement;
+    const decide = async (decision: InboxDecision): Promise<void> => {
+      approveBtn.disabled = true;
+      rejectBtn.disabled = true;
+      card.setAttribute('aria-busy', 'true');
+      error.textContent = '';
+      try {
+        await controller.decide(entry.candidate_id, decision);
+      } catch (err) {
+        const verb = decision === 'approve' ? 'approve' : 'reject';
+        const kind = classifyConnectionError(err);
+        const detail = kind.kind === 'offline' ? "aether-mcp isn't reachable." : err instanceof Error ? err.message : String(err);
+        error.textContent = `Couldn't ${verb} this memory. ${detail} Try again.`;
+        approveBtn.disabled = false;
+        rejectBtn.disabled = false;
+        card.setAttribute('aria-busy', 'false');
+        return;
+      }
       renderInboxPane(container, controller, onUpdated);
       onUpdated?.();
     };
-    const rejectBtn = container.ownerDocument.createElement('button');
-    rejectBtn.textContent = 'Reject';
-    rejectBtn.onclick = async () => {
-      await controller.decide(entry.candidate_id, 'reject');
-      renderInboxPane(container, controller, onUpdated);
-      onUpdated?.();
-    };
+    approveBtn.onclick = () => decide('approve');
+    rejectBtn.onclick = () => decide('reject');
     actions.appendChild(approveBtn);
     actions.appendChild(rejectBtn);
     card.appendChild(actions);
     container.appendChild(card);
   }
+}
+
+function capitalize(text: string): string {
+  return text.length === 0 ? text : `${text[0].toUpperCase()}${text.slice(1)}`;
 }
 
 /**
