@@ -58,7 +58,7 @@ export function TechStackSection(): ReactNode {
         <div className="section-head-grid">
           <div className="section-index-cell">
             <span className="mono-tag">
-              <span className="dot" /> 03 // TECH STACK
+              <span className="dot" /> 04 // TECH STACK
             </span>
           </div>
           <div className="section-title-cell">

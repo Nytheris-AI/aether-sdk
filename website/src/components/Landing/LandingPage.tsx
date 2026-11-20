@@ -1,5 +1,6 @@
 import {useCallback, useEffect, useRef, useState, type ReactNode} from 'react';
 import {NAV_SECTIONS, type SectionId} from '../../data/landing';
+import {AgentIntegrationSection} from './AgentIntegrationSection';
 import {BackgroundMatrix} from './BackgroundMatrix';
 import {ConvergenceSection} from './ConvergenceSection';
 import {HeroSection} from './HeroSection';
@@ -18,7 +19,7 @@ const TRACKED_IDS: readonly SectionId[] = NAV_SECTIONS.map((item) => item.id);
 
 export function LandingPage(): ReactNode {
   const rootRef = useRef<HTMLDivElement>(null);
-  const [activeSection, setActiveSection] = useState<SectionId>('architecture');
+  const [activeSection, setActiveSection] = useState<SectionId>('agents');
   const clickedSectionRef = useRef<SectionId | null>(null);
 
   const clearClickLock = useCallback(() => {
@@ -29,7 +30,7 @@ export function LandingPage(): ReactNode {
     const targetEl = document.getElementById(target);
     if (!targetEl) return;
 
-    const resolvedSection: SectionId = target === 'top' ? 'architecture' : target;
+    const resolvedSection: SectionId = target === 'top' ? 'agents' : target;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     setActiveSection(resolvedSection);
 
@@ -96,7 +97,7 @@ export function LandingPage(): ReactNode {
         }
       }
 
-      let currentId: SectionId = 'architecture';
+      let currentId: SectionId = 'agents';
       for (let i = 0; i < TRACKED_IDS.length; i++) {
         if (document.getElementById(TRACKED_IDS[i]) && scrollY >= thresholds[i]) {
           currentId = TRACKED_IDS[i];
@@ -144,8 +145,9 @@ export function LandingPage(): ReactNode {
           onNavigateSection={handleNavigateSection}
         />
         <main id="top">
-          <HeroSection onScrollToSection={handleNavigateSection} />
+          <HeroSection />
           <TickerBand />
+          <AgentIntegrationSection />
           <ConvergenceSection />
           <MemoryPlanesSection />
           <TechStackSection />

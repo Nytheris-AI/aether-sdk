@@ -56,7 +56,7 @@ export function ConvergenceSection(): ReactNode {
         <div className="section-head-grid">
           <div className="section-index-cell">
             <span className="mono-tag">
-              <span className="dot" /> 01 // CONVERGENCE
+              <span className="dot" /> 02 // CONVERGENCE
             </span>
           </div>
           <div className="section-title-cell">

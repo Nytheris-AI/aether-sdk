@@ -85,7 +85,7 @@ export function MemoryPlanesSection(): ReactNode {
         <div className="section-head-grid">
           <div className="section-index-cell">
             <span className="mono-tag">
-              <span className="dot" /> 02 // MEMORY PLANES
+              <span className="dot" /> 03 // MEMORY PLANES
             </span>
           </div>
           <div className="section-title-cell">
