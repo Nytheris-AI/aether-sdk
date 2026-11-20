@@ -56,15 +56,21 @@ export AETHER_BOOTSTRAP_ADMIN_KEY="aek_$(openssl rand -hex 32)"
 
 docker run -d \
   --name aether-mcp \
+  --user "$(id -u):$(id -g)" \
   -p 4771:4771 \
   -v /path/to/vault:/vault \
   ghcr.io/nytheris-ai/aether-mcp:latest \
   --vault /vault \
   --watch-ms 2000 \
   --http-addr 0.0.0.0:4771 \
+  --http-only \
   --require-auth \
   --bootstrap-admin-key "$AETHER_BOOTSTRAP_ADMIN_KEY"
 ```
+
+Keep `--http-only` when you pass your own arguments.
+Without it `aether-mcp` also starts its stdio MCP loop, which ends immediately in a detached container and stops the server.
+`--user` makes the container write to your vault as you, so the files keep your ownership and permissions.
 
 ### Option C: Build from source (contributors)
 
