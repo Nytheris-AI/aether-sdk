@@ -12,12 +12,12 @@ In this tutorial, you run and inspect all five adoption levels of Aether SDK, fr
 
 ## Level 1: Direct connectors
 
-At Level 1, you depend only on `nytheris-aether-core` and `nytheris-aether-adapters`. You call `RecordStore`, `VectorStore`, or `GraphStore` directly.
+At Level 1, you depend only on `muninn-aether-core` and `muninn-aether-adapters`. You call `RecordStore`, `VectorStore`, or `GraphStore` directly.
 
-Run [`level_1_connector.rs`](https://github.com/Nytheris-AI/aether-sdk/blob/main/crates/aether-sdk/examples/level_1_connector.rs):
+Run [`level_1_connector.rs`](https://github.com/muninn-hq/aether-sdk/blob/main/crates/aether-sdk/examples/level_1_connector.rs):
 
 ```bash
-cargo run -p nytheris-aether-sdk --example level_1_connector
+cargo run -p muninn-aether-sdk --example level_1_connector
 ```
 
 You see output similar to:
@@ -32,10 +32,10 @@ Choose Level 1 when you only need a portable `VectorStore`, `RecordStore`, or `G
 
 At Level 2, you wrap any connector in `Batcher`, `Timeout`, `Resilient`, and `Traced`. Because each decorator implements the same storage traits (`OutboundConnector`, `RecordStore`, `VectorStore`, `GraphStore`), callers do not change.
 
-Run [`level_2_middleware.rs`](https://github.com/Nytheris-AI/aether-sdk/blob/main/crates/aether-sdk/examples/level_2_middleware.rs):
+Run [`level_2_middleware.rs`](https://github.com/muninn-hq/aether-sdk/blob/main/crates/aether-sdk/examples/level_2_middleware.rs):
 
 ```bash
-cargo run -p nytheris-aether-sdk --example level_2_middleware
+cargo run -p muninn-aether-sdk --example level_2_middleware
 ```
 
 Inside `level_2_middleware.rs`, the stack wraps `InMemoryBackend` and injects a simulated transient fault:
@@ -62,12 +62,12 @@ level 2 hits after retry: 1
 
 ## Level 3: Composable hybrid recall
 
-At Level 3, you add `nytheris-aether-cortex` and assemble retrieval steps in your own code. You can insert a custom reranker, filter, or prompt formatter between any two steps.
+At Level 3, you add `muninn-aether-cortex` and assemble retrieval steps in your own code. You can insert a custom reranker, filter, or prompt formatter between any two steps.
 
-Run [`level_3_hybrid_recall.rs`](https://github.com/Nytheris-AI/aether-sdk/blob/main/crates/aether-sdk/examples/level_3_hybrid_recall.rs):
+Run [`level_3_hybrid_recall.rs`](https://github.com/muninn-hq/aether-sdk/blob/main/crates/aether-sdk/examples/level_3_hybrid_recall.rs):
 
 ```bash
-cargo run -p nytheris-aether-sdk --example level_3_hybrid_recall
+cargo run -p muninn-aether-sdk --example level_3_hybrid_recall
 ```
 
 The example stores two records, indexes entities and a `MENTORS` relation, and fuses vector and graph results:
@@ -101,10 +101,10 @@ level 3 fused hits: 2, subgraph edges: 1
 
 At Level 4, your code writes only to `RecordStore`. `Indexer` reads pending records and tombstones from `RecordStore`, updates the optional `VectorStore` and `GraphStore` indexes, and calls `RecordStore::mark_indexed` when the version matches.
 
-Run [`level_4_sync_engine.rs`](https://github.com/Nytheris-AI/aether-sdk/blob/main/crates/aether-sdk/examples/level_4_sync_engine.rs):
+Run [`level_4_sync_engine.rs`](https://github.com/muninn-hq/aether-sdk/blob/main/crates/aether-sdk/examples/level_4_sync_engine.rs):
 
 ```bash
-cargo run -p nytheris-aether-sdk --example level_4_sync_engine
+cargo run -p muninn-aether-sdk --example level_4_sync_engine
 ```
 
 Build `Indexer` with only the derived stores you run:
@@ -126,12 +126,12 @@ You control when indexing runs. Call `indexer.apply(&pending)` for immediate sin
 
 ## Level 5: `MemoryManager` facade
 
-At Level 5, `nytheris-aether-sdk::MemoryManager` combines all lower levels behind `remember`, `recall`, `update`, `forget`, `flush`, and `shutdown`. It uses only the public functions from `nytheris-aether-cortex` and `nytheris-aether-adapters`.
+At Level 5, `muninn-aether-sdk::MemoryManager` combines all lower levels behind `remember`, `recall`, `update`, `forget`, `flush`, and `shutdown`. It uses only the public functions from `muninn-aether-cortex` and `muninn-aether-adapters`.
 
-Run [`level_5_facade.rs`](https://github.com/Nytheris-AI/aether-sdk/blob/main/crates/aether-sdk/examples/level_5_facade.rs):
+Run [`level_5_facade.rs`](https://github.com/muninn-hq/aether-sdk/blob/main/crates/aether-sdk/examples/level_5_facade.rs):
 
 ```bash
-cargo run -p nytheris-aether-sdk --example level_5_facade
+cargo run -p muninn-aether-sdk --example level_5_facade
 ```
 
 The builder wraps attached stores in `Batcher` (vector only), `Timeout` (10 seconds), `Resilient` (3 retries), and `Traced` by default:

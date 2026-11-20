@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use nytheris_aether_adapters::InMemoryBackend;
-use nytheris_aether_core::{
+use muninn_aether_adapters::InMemoryBackend;
+use muninn_aether_core::{
     DistanceMetric, Entity, EntityId, MemoryInput, MemoryUpdate, ProjectId, RecallMode,
     RecallQuery, Relation, VectorStore, WriteDurability,
 };
-use nytheris_aether_sdk::telemetry::{init_otel, LogFormat, OtelConfig};
-use nytheris_aether_sdk::MemoryManager;
+use muninn_aether_sdk::telemetry::{init_otel, LogFormat, OtelConfig};
+use muninn_aether_sdk::MemoryManager;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

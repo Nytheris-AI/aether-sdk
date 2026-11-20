@@ -126,7 +126,7 @@ export interface ConvergenceState {
   readonly outRatio: number;
 }
 
-export const GITHUB_REPO_URL = 'https://github.com/Nytheris-AI/aether-sdk';
+export const GITHUB_REPO_URL = 'https://github.com/muninn-hq/aether-sdk';
 
 const CURSOR: ClientTarget = {label: 'Cursor', logo: '/img/brands/cursor.svg'};
 const CLAUDE: ClientTarget = {label: 'Claude', logo: '/img/brands/claude-ai.svg'};
@@ -426,7 +426,7 @@ export const SANDBOX_PROBES: Record<ProbeId, SandboxProbe> = {
     sdkSegments: [
       {kind: 'cm', text: '// Illustrative Rust SDK call — hybrid vector + graph recall\n'},
       {kind: 'kw', text: 'use'},
-      {kind: 'plain', text: ' nytheris_aether_sdk::{AetherClient, Plane, RecallRequest};\n\n'},
+      {kind: 'plain', text: ' muninn_aether_sdk::{AetherClient, Plane, RecallRequest};\n\n'},
       {kind: 'kw', text: 'let'},
       {kind: 'plain', text: ' slice = client.recall(RecallRequest {\n'},
       {kind: 'plain', text: '    namespace: "org_core_platform".into(),\n'},
@@ -551,12 +551,12 @@ export const QUICKSTART_SNIPPETS: Record<QuickstartTab, QuickstartOption> = {
   clone: {
     id: 'clone',
     label: 'OBSIDIAN + MCP',
-    command: `cargo build --release -p nytheris-aether-vault --bin aether-mcp\n./target/release/aether-mcp --init --vault /path/to/vault\n./target/release/aether-mcp --vault /path/to/vault --http-addr 127.0.0.1:14771 --http-only`,
+    command: `cargo build --release -p muninn-aether-vault --bin aether-mcp\n./target/release/aether-mcp --init --vault /path/to/vault\n./target/release/aether-mcp --vault /path/to/vault --http-addr 127.0.0.1:14771 --http-only`,
   },
   cargo: {
     id: 'cargo',
     label: 'CARGO.TOML',
-    command: `[dependencies]\nnytheris-aether-sdk = { git = "https://github.com/Nytheris-AI/aether-sdk.git" }`,
+    command: `[dependencies]\nmuninn-aether-sdk = { git = "https://github.com/muninn-hq/aether-sdk.git" }`,
   },
 };
 

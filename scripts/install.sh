@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-REPO="Nytheris-AI/aether-sdk"
+REPO="muninn-hq/aether-sdk"
 BIN_NAME="aether-mcp"
 INSTALL_DIR="${AETHER_INSTALL_DIR:-${HOME}/.local/bin}"
 

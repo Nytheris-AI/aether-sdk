@@ -1,6 +1,6 @@
 # Usage Guide
 
-Aether SDK can be entered at any of five levels depending on how much of the pipeline you want to own. Every example below is runnable verbatim with `cargo run -p nytheris-aether-sdk --example <name>`.
+Aether SDK can be entered at any of five levels depending on how much of the pipeline you want to own. Every example below is runnable verbatim with `cargo run -p muninn-aether-sdk --example <name>`.
 
 ---
 
@@ -9,12 +9,12 @@ Aether SDK can be entered at any of five levels depending on how much of the pip
 Use a single `RecordStore`, `VectorStore`, or `GraphStore` directly without middleware, indexers, or `MemoryManager`:
 
 ```rust
-use nytheris_aether_adapters::InMemoryBackend;
-use nytheris_aether_core::{DistanceMetric, MemoryId, ProjectId, VectorRecord, VectorStore};
+use muninn_aether_adapters::InMemoryBackend;
+use muninn_aether_core::{DistanceMetric, MemoryId, ProjectId, VectorRecord, VectorStore};
 use serde_json::json;
 
 #[tokio::main]
-async fn main() -> nytheris_aether_core::Result<()> {
+async fn main() -> muninn_aether_core::Result<()> {
     let store = InMemoryBackend::new();
     let ns = ProjectId::new("level1-demo")?;
     store.initialize(&ns, 3, DistanceMetric::Cosine).await?;
@@ -46,12 +46,12 @@ Wrap any connector in `Batcher`, `Timeout`, `Resilient`, and `Traced`:
 ```rust
 use std::sync::Arc;
 use std::time::Duration;
-use nytheris_aether_adapters::{Batcher, FaultPoint, InMemoryBackend, Resilient, RetryPolicy, Timeout};
-use nytheris_aether_core::{DistanceMetric, MemoryId, ProjectId, VectorRecord, VectorStore};
+use muninn_aether_adapters::{Batcher, FaultPoint, InMemoryBackend, Resilient, RetryPolicy, Timeout};
+use muninn_aether_core::{DistanceMetric, MemoryId, ProjectId, VectorRecord, VectorStore};
 use serde_json::json;
 
 #[tokio::main]
-async fn main() -> nytheris_aether_core::Result<()> {
+async fn main() -> muninn_aether_core::Result<()> {
     let raw = Arc::new(InMemoryBackend::new());
     let ns = ProjectId::new("level2-demo")?;
     raw.initialize(&ns, 2, DistanceMetric::Cosine).await?;
@@ -86,7 +86,7 @@ async fn main() -> nytheris_aether_core::Result<()> {
 
 ## Level 3: Composable Hybrid Recall (`level_3_hybrid_recall.rs`)
 
-Call `nytheris_aether_cortex::recall::{vector_search, graph_search, rrf, RRF_K}` and `PersonalizedPageRank` directly to fuse dense vector search with graph traversal:
+Call `muninn_aether_cortex::recall::{vector_search, graph_search, rrf, RRF_K}` and `PersonalizedPageRank` directly to fuse dense vector search with graph traversal:
 
 ```rust
 let vec_cands =
@@ -127,16 +127,16 @@ Assemble an authoritative `RecordStore` with optional vector and graph indexes u
 
 ```rust
 use std::sync::Arc;
-use nytheris_aether_adapters::InMemoryBackend;
-use nytheris_aether_core::{
+use muninn_aether_adapters::InMemoryBackend;
+use muninn_aether_core::{
     DistanceMetric, Entity, EntityId, MemoryInput, MemoryUpdate, ProjectId, RecallMode,
     RecallQuery, Relation, VectorStore, WriteDurability,
 };
-use nytheris_aether_sdk::MemoryManager;
+use muninn_aether_sdk::MemoryManager;
 use chrono::Utc;
 
 #[tokio::main]
-async fn main() -> nytheris_aether_core::Result<()> {
+async fn main() -> muninn_aether_core::Result<()> {
     let backend = Arc::new(InMemoryBackend::new());
     let ns = ProjectId::new("level5-demo")?;
     backend.initialize(&ns, 2, DistanceMetric::Cosine).await?;
@@ -196,19 +196,19 @@ async fn main() -> nytheris_aether_core::Result<()> {
 
 ---
 
-## Obsidian Vault & MCP Server (`nytheris-aether-vault`)
+## Obsidian Vault & MCP Server (`muninn-aether-vault`)
 
-Use `nytheris-aether-vault` when you want an Obsidian-native local memory daemon backed by a single SQLite WAL database and a 3-tool `stdio` MCP server.
+Use `muninn-aether-vault` when you want an Obsidian-native local memory daemon backed by a single SQLite WAL database and a 3-tool `stdio` MCP server.
 
 ### Run the `aether-mcp` Stdio & Control-Plane Server
 
 ```bash
 # 1. Install the Obsidian companion plugin and print an mcp.json snippet
-cargo run -p nytheris-aether-vault --bin aether-mcp -- \
+cargo run -p muninn-aether-vault --bin aether-mcp -- \
   --init --vault /path/to/obsidian-vault --http-addr 127.0.0.1:14771
 
 # 2. Loopback Obsidian HTTP daemon (stays alive until Ctrl-C / SIGTERM without open stdin)
-cargo run -p nytheris-aether-vault --bin aether-mcp -- \
+cargo run -p muninn-aether-vault --bin aether-mcp -- \
   --vault /path/to/obsidian-vault \
   --db /path/to/aether.sqlite \
   --watch-ms 2000 \
@@ -216,7 +216,7 @@ cargo run -p nytheris-aether-vault --bin aether-mcp -- \
   --http-only
 
 # 3. Team HTTP gateway + KV-cache warming + scoped stdio MCP mode
-cargo run -p nytheris-aether-vault --bin aether-mcp -- \
+cargo run -p muninn-aether-vault --bin aether-mcp -- \
   --vault /path/to/team-vault \
   --http-addr 0.0.0.0:4771 \
   --require-auth \
@@ -246,14 +246,14 @@ The TypeScript plugin in [`obsidian-aether-plugin`](../../obsidian-aether-plugin
 
 ```rust
 use std::sync::Arc;
-use nytheris_aether_vault::{
+use muninn_aether_vault::{
     AgentId, AgentRole, DenseSubwordEmbedder, GitSyncOptions, IssueApiKeyRequest,
     McpServer, ModelId, RecallRequest, ScopeTag, StageMemoryRequest, TokenBudget,
     VaultConfig, VaultEngine, VaultTier, WarmKvRequest,
 };
 
 #[tokio::main]
-async fn main() -> nytheris_aether_core::Result<()> {
+async fn main() -> muninn_aether_core::Result<()> {
     let config = VaultConfig::new("/path/to/obsidian-vault")
         .with_embedder(Arc::new(DenseSubwordEmbedder::default()))
         .with_default_kv_model(ModelId::new("llama-3.1-8b")?);

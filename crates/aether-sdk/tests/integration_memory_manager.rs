@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use nytheris_aether_adapters::InMemoryBackend;
-use nytheris_aether_core::{
+use muninn_aether_adapters::InMemoryBackend;
+use muninn_aether_core::{
     AetherError, DistanceMetric, Entity, EntityId, GraphStore, MemoryInput, MemoryUpdate,
     ProjectId, RecallMode, RecallQuery, ReceiptState, Relation, TemporalFilter, VectorStore,
     WriteDurability,
 };
-use nytheris_aether_sdk::MemoryManager;
+use muninn_aether_sdk::MemoryManager;
 
 #[tokio::test]
 async fn remember_recall_update_cas_and_forget_lifecycle() {

@@ -69,7 +69,7 @@ Built-in rules already skip `.obsidian`, `.git`, `.trash`, `.aether`, `Aether/In
 Compile the release binary and start the standalone HTTP daemon on `127.0.0.1:14771`:
 
 ```bash
-cargo build --release -p nytheris-aether-vault --bin aether-mcp
+cargo build --release -p muninn-aether-vault --bin aether-mcp
 
 ./target/release/aether-mcp \
   --vault /tmp/demo-vault \

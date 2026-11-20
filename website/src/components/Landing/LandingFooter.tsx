@@ -23,7 +23,7 @@ export function LandingFooter(): ReactNode {
             target="_blank"
             rel="noopener noreferrer"
             className="footer-repo-link">
-            github.com/Nytheris-AI/aether-sdk ↗
+            github.com/muninn-hq/aether-sdk ↗
           </a>
           <Link to="/docs" className="footer-repo-link">
             Documentation Portal ↗

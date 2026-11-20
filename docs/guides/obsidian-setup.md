@@ -18,12 +18,12 @@ Install the latest `aether-mcp` release binary:
 
 ```bash
 # macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/Nytheris-AI/aether-sdk/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/muninn-hq/aether-sdk/main/scripts/install.sh | sh
 ```
 
 ```powershell
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/Nytheris-AI/aether-sdk/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/muninn-hq/aether-sdk/main/scripts/install.ps1 | iex
 ```
 
 Register `aether-mcp` as an auto-starting background service for your Obsidian vault (`launchd` on macOS, `systemd --user` on Linux, or Task Scheduler on Windows):
@@ -59,7 +59,7 @@ docker run -d \
   --user "$(id -u):$(id -g)" \
   -p 4771:4771 \
   -v /path/to/vault:/vault \
-  ghcr.io/nytheris-ai/aether-mcp:latest \
+  ghcr.io/muninn-hq/aether-mcp:latest \
   --vault /vault \
   --watch-ms 2000 \
   --http-addr 0.0.0.0:4771 \
@@ -77,15 +77,15 @@ Without it `aether-mcp` also starts its stdio MCP loop, which ends immediately i
 If you are developing in the `aether-sdk` repository, build `aether-mcp` with Cargo and `obsidian-aether-plugin` with Node.js 20+:
 
 ```bash
-cargo build --release -p nytheris-aether-vault --bin aether-mcp
+cargo build --release -p muninn-aether-vault --bin aether-mcp
 ```
 
 ## Step 2: Install the Obsidian plugin (`aether-memory`)
 
 Install **AMC** (Aether Memory Companion) in Obsidian Desktop using either of these methods (the Obsidian Community plugins directory listing is pending review):
 
-- **BRAT (beta)**: Install **Obsidian42 BRAT**, select **Add beta plugin**, and enter `https://github.com/Nytheris-AI/aether-memory`.
-- **CLI (`--init`)**: If you built the plugin locally from `obsidian-aether-plugin/`, run `aether-mcp --init --vault /path/to/vault --http-addr 127.0.0.1:14771` to copy `main.js`, `manifest.json`, and `styles.css`, write `data.json`, and print your `mcp.json` snippet.
+- **BRAT (beta)**: Install **Obsidian42 BRAT**, select **Add beta plugin**, and enter `https://github.com/muninn-hq/aether-memory`.
+- **CLI (`--init`)**: If you built the plugin locally from `obsidian-aether-plugin/`, run `aether-mcp --init --install-clients --vault /path/to/vault --http-addr 127.0.0.1:14771` to copy `main.js`, `manifest.json`, and `styles.css`, write `data.json`, auto-configure detected MCP clients (Cursor, Claude Desktop, Claude Code, Antigravity), and print your `mcp.json` snippet. Run `aether-mcp doctor --vault /path/to/vault` to verify the vault and client setup.
 
 Enable the plugin in Obsidian Desktop:
 

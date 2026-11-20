@@ -1,6 +1,6 @@
 # Obsidian AMUs, Prefix Caching & KV-Tensor Warming
 
-LLM inference becomes slow and expensive when agent prompts change ordering between turns or re-send stale notes. This page explains how `nytheris-aether-vault` compiles Markdown sections into deterministic Aether Memory Units (AMUs), isolates private notes at the parse boundary, packs byte-stable prompt prefixes, and warms tiered GPU KV caches without letting deleted notes persist in GPU memory.
+LLM inference becomes slow and expensive when agent prompts change ordering between turns or re-send stale notes. This page explains how `muninn-aether-vault` compiles Markdown sections into deterministic Aether Memory Units (AMUs), isolates private notes at the parse boundary, packs byte-stable prompt prefixes, and warms tiered GPU KV caches without letting deleted notes persist in GPU memory.
 
 ## Deterministic `SourcePointer` to `AmuId` and `MemoryId`
 

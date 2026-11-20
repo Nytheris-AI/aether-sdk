@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use nytheris_aether_core::{EntityId, MemoryId, Subgraph};
+use muninn_aether_core::{EntityId, MemoryId, Subgraph};
 use petgraph::graph::{DiGraph, NodeIndex};
 use petgraph::visit::EdgeRef;
 

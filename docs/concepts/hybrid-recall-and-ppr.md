@@ -1,10 +1,10 @@
 # Hybrid Recall, Personalized PageRank & RRF
 
-Pure vector similarity misses relational hops across entities, while pure graph traversal misses lexical and semantic paraphrase. This page explains how `nytheris-aether-core`, `nytheris-aether-cortex`, and `nytheris-aether-vault` score vectors, evaluate portable filters, traverse subgraphs with `PersonalizedPageRank`, and fuse rankings deterministically with Reciprocal Rank Fusion.
+Pure vector similarity misses relational hops across entities, while pure graph traversal misses lexical and semantic paraphrase. This page explains how `muninn-aether-core`, `muninn-aether-cortex`, and `muninn-aether-vault` score vectors, evaluate portable filters, traverse subgraphs with `PersonalizedPageRank`, and fuse rankings deterministically with Reciprocal Rank Fusion.
 
 ## Vector scoring (`DistanceMetric::score`)
 
-Every vector backend and in-process scorer shares one scoring contract in `nytheris_aether_core::DistanceMetric::score`:
+Every vector backend and in-process scorer shares one scoring contract in `muninn_aether_core::DistanceMetric::score`:
 
 | Metric | Formula | Zero-norm or sign rule |
 | --- | --- | --- |
@@ -54,7 +54,7 @@ When two lists contain different versions of the same `MemoryId`, `rrf` keeps th
 
 ## Vault extensions (`authority_weight` and `CrossEncoderReranker`)
 
-`nytheris-aether-vault` adapts the same `PersonalizedPageRank`, `graph_scores`, and `recall::rrf` primitives over local Obsidian notes and adds three vault-specific signals:
+`muninn-aether-vault` adapts the same `PersonalizedPageRank`, `graph_scores`, and `recall::rrf` primitives over local Obsidian notes and adds three vault-specific signals:
 
 1. **Three-way RRF.** `VaultStore::recall_bundle` gathers up to `32` FTS5 BM25 hits (`amus_fts` with `porter unicode61` tokenizer), up to `32` cosine vector hits (from `HashedNgramEmbedder`, `DenseSubwordEmbedder`, or `LocalGpuEmbedder`), and graph neighbors over `[[wikilinks]]` and `#tags`, then fuses all three lists via `recall::rrf`.
 2. **Authority weighting.** Each RRF score is multiplied by the AMU's `authority_weight` (`1.0` for `Profile`, `Rule`, `Decision`, and `Spec`, `0.6` for `Fleeting`, and `0.3` for sections where unchecked `- [ ]` task lines outnumber checked tasks plus prose lines).

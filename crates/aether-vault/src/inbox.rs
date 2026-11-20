@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::Path;
 
-use nytheris_aether_core::{AetherError, Result};
+use muninn_aether_core::{AetherError, Result};
 use uuid::Uuid;
 
 use crate::types::{

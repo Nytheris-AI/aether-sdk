@@ -2,12 +2,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use nytheris_aether_adapters::{FaultPoint, InMemoryBackend};
-use nytheris_aether_core::{
+use muninn_aether_adapters::{FaultPoint, InMemoryBackend};
+use muninn_aether_core::{
     DistanceMetric, Entity, EntityId, GraphStore, MemoryInput, MemoryItem, MemoryScope, MemoryTier,
     PendingRecord, ProjectId, RecordStore, Relation, SessionId, TemporalFilter, VectorStore,
 };
-use nytheris_aether_cortex::indexer::{index_metadata, Indexer};
+use muninn_aether_cortex::indexer::{index_metadata, Indexer};
 use serde_json::json;
 
 fn test_ns() -> ProjectId {

@@ -6,11 +6,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
-use nytheris_aether_adapters::{InMemoryBackend, RetryPolicy};
-use nytheris_aether_core::{
+use muninn_aether_adapters::{InMemoryBackend, RetryPolicy};
+use muninn_aether_core::{
     Entity, EntityId, MemoryInput, MemoryScope, MemoryTier, ProjectId, Relation, WriteDurability,
 };
-use nytheris_aether_sdk::MemoryManager;
+use muninn_aether_sdk::MemoryManager;
 use serde::Deserialize;
 use serde_json::{json, Value};
 

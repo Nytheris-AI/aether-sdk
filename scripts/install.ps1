@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$Repo = 'Nytheris-AI/aether-sdk'
+$Repo = 'muninn-hq/aether-sdk'
 $BinName = 'aether-mcp.exe'
 $Target = 'x86_64-pc-windows-msvc'
 $InstallDir = if ($env:AETHER_INSTALL_DIR) {

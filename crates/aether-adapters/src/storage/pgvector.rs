@@ -5,7 +5,7 @@ use std::fmt;
 use std::sync::RwLock;
 
 use async_trait::async_trait;
-use nytheris_aether_core::{
+use muninn_aether_core::{
     redact_url_userinfo, AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric,
     FilterExpr, FilterValue, IndexSpec, MemoryId, OutboundConnector, ProjectId, Result,
     SecretString, VectorMatch, VectorRecord, VectorStore,

@@ -6,7 +6,7 @@ use common::{
     build_resilient_manager, embed_text, fixture_path, transform_locomo_sample, LocomoSample,
     EMBED_DIM,
 };
-use nytheris_aether_core::{
+use muninn_aether_core::{
     ConsistencyMode, DistanceMetric, FilterExpr, FilterValue, MemoryId, ProjectId, RecallMode,
     RecallQuery, VectorStore,
 };

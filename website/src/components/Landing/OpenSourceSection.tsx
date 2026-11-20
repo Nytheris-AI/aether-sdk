@@ -109,7 +109,7 @@ export function OpenSourceSection(): ReactNode {
               <Link to="/docs/guides/usage" className="btn-action btn-ghost">
                 Usage Guide ↗
               </Link>
-              <span className="mono-tag">NYTHERIS-AI / AETHER-SDK</span>
+              <span className="mono-tag">MUNINN-HQ / AETHER-SDK</span>
             </div>
           </div>
 

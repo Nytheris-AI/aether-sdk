@@ -38,9 +38,9 @@ Aether treats the **`RecordStore`** as the durable source of truth and keeps **`
 
 ---
 
-## Vault Memory Model (`nytheris-aether-vault`)
+## Vault Memory Model (`muninn-aether-vault`)
 
-`nytheris-aether-vault` compiles Obsidian Markdown notes into tracked Aether Memory Units (`Amu`) inside a single SQLite WAL file while reading live source sections directly from disk.
+`muninn-aether-vault` compiles Obsidian Markdown notes into tracked Aether Memory Units (`Amu`) inside a single SQLite WAL file while reading live source sections directly from disk.
 
 ### Vault Tiers (`VaultTier`) & Privacy Boundary
 
@@ -52,7 +52,7 @@ Aether treats the **`RecordStore`** as the durable source of truth and keeps **`
 
 - **`ScopeTag`**: Lowercase scope tags from `aether_scope` frontmatter (defaults to `global`).
 - **`AmuKind` & `AmuStatus`**: Notes carry `AmuKind` (`Profile`, `Rule`, `Decision`, `Spec` *(default)*, or `Fleeting` *(default under `Daily/` or `Journal/`)*) and `AmuStatus` (`Active` *(default)*, `Superseded`, `Archived`).
-- **`SourcePointer` & `AmuId`**: Normalized vault-relative POSIX paths (`Arch/DB.md#Schema`, or `#_preamble` for text before the first ATX heading) map deterministically via SHA-256 to `AmuId` (`amu_<32-hex>`), which converts bijectively to `nytheris_aether_core::MemoryId`.
+- **`SourcePointer` & `AmuId`**: Normalized vault-relative POSIX paths (`Arch/DB.md#Schema`, or `#_preamble` for text before the first ATX heading) map deterministically via SHA-256 to `AmuId` (`amu_<32-hex>`), which converts bijectively to `muninn_aether_core::MemoryId`.
 
 ### Human-in-the-Loop Inbox (`Aether/Inbox.md`) & Compiled Mirror (`Aether/Compiled/Approved.md`)
 

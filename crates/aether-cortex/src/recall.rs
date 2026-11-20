@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use nytheris_aether_core::{
+use muninn_aether_core::{
     DistanceMetric, EntityId, FilterExpr, FilterValue, GraphStore, MemoryId, MemoryItem,
     MemoryScope, ProjectId, RecordStore, Result, SessionId, Subgraph, TemporalFilter, VectorStore,
 };

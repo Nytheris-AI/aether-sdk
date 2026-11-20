@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use nytheris_aether_vault::{
+use muninn_aether_vault::{
     AgentId, AgentRole, IssueApiKeyRequest, McpServer, ModelId, ScopeTag, VaultConfig, VaultEngine,
     WarmKvRequest,
 };

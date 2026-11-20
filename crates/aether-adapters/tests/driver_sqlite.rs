@@ -2,10 +2,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use nytheris_aether_adapters::contract;
-use nytheris_aether_adapters::kv::sqlite::{SqliteConfig, SqliteRecordStore};
-use nytheris_aether_adapters::middleware::{Resilient, RetryPolicy, Timeout, Traced};
-use nytheris_aether_core::{
+use muninn_aether_adapters::contract;
+use muninn_aether_adapters::kv::sqlite::{SqliteConfig, SqliteRecordStore};
+use muninn_aether_adapters::middleware::{Resilient, RetryPolicy, Timeout, Traced};
+use muninn_aether_core::{
     AetherError, ConnectorHealth, CreateOutcome, MemoryId, MemoryInput, MemoryItem, MemoryReceipt,
     MemoryScope, OutboundConnector, ProjectId, ReceiptState, RecordStore, SessionId,
 };

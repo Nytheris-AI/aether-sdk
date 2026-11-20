@@ -1,11 +1,11 @@
 //! Level 1: Call a single storage connector directly without middleware, indexers, or managers.
 
-use nytheris_aether_adapters::InMemoryBackend;
-use nytheris_aether_core::{DistanceMetric, MemoryId, ProjectId, VectorRecord, VectorStore};
+use muninn_aether_adapters::InMemoryBackend;
+use muninn_aether_core::{DistanceMetric, MemoryId, ProjectId, VectorRecord, VectorStore};
 use serde_json::json;
 
 #[tokio::main]
-async fn main() -> nytheris_aether_core::Result<()> {
+async fn main() -> muninn_aether_core::Result<()> {
     let store = InMemoryBackend::new();
     let ns = ProjectId::new("level1-demo")?;
 

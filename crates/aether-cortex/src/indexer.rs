@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::Utc;
-use nytheris_aether_core::{
+use muninn_aether_core::{
     GraphStore, MemoryId, MemoryItem, MemoryScope, PendingRecord, RecordStore, Result,
     VectorRecord, VectorStore,
 };

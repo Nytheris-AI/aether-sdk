@@ -17,7 +17,7 @@ Generate a 64-hex bootstrap admin key (`aek_<64-hex>`) and start `aether-mcp` wi
 ```bash
 export AETHER_BOOTSTRAP_ADMIN_KEY="aek_$(openssl rand -hex 32)"
 
-cargo run -p nytheris-aether-vault --bin aether-mcp -- \
+cargo run -p muninn-aether-vault --bin aether-mcp -- \
   --vault /path/to/team-vault \
   --http-addr 0.0.0.0:4771 \
   --require-auth \
@@ -48,7 +48,7 @@ The JSON response returns `key` (`key_id` formatted as `key_<16-hex>`, `agent_id
 To bind a `stdio` MCP client to that scoped agent, pass `--api-key "$AETHER_API_KEY"`:
 
 ```bash
-cargo run -p nytheris-aether-vault --bin aether-mcp -- \
+cargo run -p muninn-aether-vault --bin aether-mcp -- \
   --vault /path/to/team-vault \
   --api-key "$AETHER_API_KEY"
 ```

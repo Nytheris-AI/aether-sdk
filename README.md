@@ -11,12 +11,12 @@
 **Model-free, pieces-first Rust memory SDK for AI agents and applications.**  
 Unify authoritative record storage, derived vector indexes, and temporal knowledge graphs without lock-in.
 
-[![CI](https://github.com/Nytheris-AI/aether-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/Nytheris-AI/aether-sdk/actions/workflows/ci.yml)
-[![Deploy Docs](https://github.com/Nytheris-AI/aether-sdk/actions/workflows/docs.yml/badge.svg)](https://github.com/Nytheris-AI/aether-sdk/actions/workflows/docs.yml)
+[![CI](https://github.com/muninn-hq/aether-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/muninn-hq/aether-sdk/actions/workflows/ci.yml)
+[![Deploy Docs](https://github.com/muninn-hq/aether-sdk/actions/workflows/docs.yml/badge.svg)](https://github.com/muninn-hq/aether-sdk/actions/workflows/docs.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-38BDF8.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.89%2B-F97316.svg?logo=rust)](Cargo.toml)
 
-[Website](https://nytheris-ai.github.io/aether-sdk/) · [Documentation](https://nytheris-ai.github.io/aether-sdk/docs) · [Architecture](docs/architecture/index.md) · [Usage Guide](docs/guides/usage.md) · [Storage Providers](#storage-providers) · [Quickstart](#quickstart)
+[Website](https://muninn-hq.github.io/aether-sdk/) · [Documentation](https://muninn-hq.github.io/aether-sdk/docs) · [Architecture](docs/architecture/index.md) · [Usage Guide](docs/guides/usage.md) · [Storage Providers](#storage-providers) · [Quickstart](#quickstart)
 
 </div>
 
@@ -51,11 +51,11 @@ Start with a raw connector or adopt the full facade. Every higher level is built
 
 | Level | Component | Role | Example |
 | :--- | :--- | :--- | :--- |
-| **Level 1** | Storage Connectors (`nytheris-aether-core`, `nytheris-aether-adapters`) | Call `RecordStore`, `VectorStore`, or `GraphStore` directly | [`level_1_connector.rs`](crates/aether-sdk/examples/level_1_connector.rs) |
-| **Level 2** | Middleware Stack (`nytheris-aether-adapters`) | Wrap any driver with `Batcher`, `Timeout`, `Resilient`, `Traced` | [`level_2_middleware.rs`](crates/aether-sdk/examples/level_2_middleware.rs) |
-| **Level 3** | Recall Primitives (`nytheris-aether-cortex::recall`, `ppr`) | Compose `vector_search`, `graph_search`, `rrf`, `PersonalizedPageRank` | [`level_3_hybrid_recall.rs`](crates/aether-sdk/examples/level_3_hybrid_recall.rs) |
-| **Level 4** | Sync Engine (`nytheris-aether-cortex::Indexer`) | Derive vector and graph indexes from durable `RecordStore` cursors | [`level_4_sync_engine.rs`](crates/aether-sdk/examples/level_4_sync_engine.rs) |
-| **Level 5** | Orchestration Facade (`nytheris-aether-sdk::MemoryManager`) | One builder (`remember`, `recall`, `update`, `forget`, `flush`, `shutdown`) | [`level_5_facade.rs`](crates/aether-sdk/examples/level_5_facade.rs) |
+| **Level 1** | Storage Connectors (`muninn-aether-core`, `muninn-aether-adapters`) | Call `RecordStore`, `VectorStore`, or `GraphStore` directly | [`level_1_connector.rs`](crates/aether-sdk/examples/level_1_connector.rs) |
+| **Level 2** | Middleware Stack (`muninn-aether-adapters`) | Wrap any driver with `Batcher`, `Timeout`, `Resilient`, `Traced` | [`level_2_middleware.rs`](crates/aether-sdk/examples/level_2_middleware.rs) |
+| **Level 3** | Recall Primitives (`muninn-aether-cortex::recall`, `ppr`) | Compose `vector_search`, `graph_search`, `rrf`, `PersonalizedPageRank` | [`level_3_hybrid_recall.rs`](crates/aether-sdk/examples/level_3_hybrid_recall.rs) |
+| **Level 4** | Sync Engine (`muninn-aether-cortex::Indexer`) | Derive vector and graph indexes from durable `RecordStore` cursors | [`level_4_sync_engine.rs`](crates/aether-sdk/examples/level_4_sync_engine.rs) |
+| **Level 5** | Orchestration Facade (`muninn-aether-sdk::MemoryManager`) | One builder (`remember`, `recall`, `update`, `forget`, `flush`, `shutdown`) | [`level_5_facade.rs`](crates/aether-sdk/examples/level_5_facade.rs) |
 
 ---
 
@@ -63,17 +63,17 @@ Start with a raw connector or adopt the full facade. Every higher level is built
 
 | Crate | Purpose |
 | :--- | :--- |
-| **`nytheris-aether-core`** | Pure domain DTOs, validated newtypes (`ProjectId`, `MemoryId`, `EntityId`, `UserId`, `SessionId`), `IndexSpec`, `DistanceMetric::score`, `FilterExpr::matches`, `AetherError`, and storage traits. |
-| **`nytheris-aether-cortex`** | Composable [`Indexer`](crates/aether-cortex/src/indexer.rs) sync engine, [`PersonalizedPageRank`](crates/aether-cortex/src/ppr.rs) + `graph_scores`, and [`recall`](crates/aether-cortex/src/recall.rs) retrieval & RRF primitives. |
-| **`nytheris-aether-adapters`** | `InMemoryBackend` (`in_memory` with `FaultPoint` injection), middleware decorators, reusable [`contract`](crates/aether-adapters/src/contract.rs) test suite (`contract-suite`), and 7 backend drivers. |
-| **`nytheris-aether-sdk`** | Public `MemoryManager` / `MemoryManagerBuilder` composition root, runnable examples, and optional OpenTelemetry OTLP preset (`otel`). |
-| **`nytheris-aether-vault`** | Obsidian-native vault daemon (`VaultEngine`), SQLite WAL (schema `v3`) + FTS5 + `PersonalizedPageRank` + `CrossEncoderReranker` recall, `DenseSubwordEmbedder` / `LocalGpuEmbedder`, `.aetherhot` / `.aetherignore` path rules, `dream_watermarks` consolidation, `Aether/Inbox.md` -> `Aether/Compiled/Approved.md` mirror, per-agent scoped API keys, Git team sync with monotonic lattice reconciliation, vLLM/SGLang + LMCache KV-tensor warming, authenticated `ControlPlaneServer` (with `GET /v1/openapi.json`), and `aether-mcp` (`--init`, `--http-only`, scoped `stdio` MCP). |
+| **`muninn-aether-core`** | Pure domain DTOs, validated newtypes (`ProjectId`, `MemoryId`, `EntityId`, `UserId`, `SessionId`), `IndexSpec`, `DistanceMetric::score`, `FilterExpr::matches`, `AetherError`, and storage traits. |
+| **`muninn-aether-cortex`** | Composable [`Indexer`](crates/aether-cortex/src/indexer.rs) sync engine, [`PersonalizedPageRank`](crates/aether-cortex/src/ppr.rs) + `graph_scores`, and [`recall`](crates/aether-cortex/src/recall.rs) retrieval & RRF primitives. |
+| **`muninn-aether-adapters`** | `InMemoryBackend` (`in_memory` with `FaultPoint` injection), middleware decorators, reusable [`contract`](crates/aether-adapters/src/contract.rs) test suite (`contract-suite`), and 7 backend drivers. |
+| **`muninn-aether-sdk`** | Public `MemoryManager` / `MemoryManagerBuilder` composition root, runnable examples, and optional OpenTelemetry OTLP preset (`otel`). |
+| **`muninn-aether-vault`** | Obsidian-native vault daemon (`VaultEngine`), SQLite WAL (schema `v3`) + FTS5 + `PersonalizedPageRank` + `CrossEncoderReranker` recall, `DenseSubwordEmbedder` / `LocalGpuEmbedder`, `.aetherhot` / `.aetherignore` path rules, `dream_watermarks` consolidation, `Aether/Inbox.md` -> `Aether/Compiled/Approved.md` mirror, per-agent scoped API keys, Git team sync with monotonic lattice reconciliation, vLLM/SGLang + LMCache KV-tensor warming, authenticated `ControlPlaneServer` (with `GET /v1/openapi.json`), and `aether-mcp` (`--init`, `--http-only`, scoped `stdio` MCP). |
 
 ---
 
 ## Storage Providers
 
-All drivers implement `OutboundConnector` + the same [`contract`](crates/aether-adapters/src/contract.rs) suite and are enabled individually via Cargo feature flags on `nytheris-aether-adapters`.
+All drivers implement `OutboundConnector` + the same [`contract`](crates/aether-adapters/src/contract.rs) suite and are enabled individually via Cargo feature flags on `muninn-aether-adapters`.
 
 | Role | Provider | Feature Flag | Highlights |
 | :--- | :--- | :--- | :--- |
@@ -97,28 +97,28 @@ All drivers implement `OutboundConnector` + the same [`contract`](crates/aether-
 cargo test --workspace --all-features
 
 # Run each SDK level example
-cargo run -p nytheris-aether-sdk --example level_1_connector
-cargo run -p nytheris-aether-sdk --example level_2_middleware
-cargo run -p nytheris-aether-sdk --example level_3_hybrid_recall
-cargo run -p nytheris-aether-sdk --example level_4_sync_engine
-cargo run -p nytheris-aether-sdk --example level_5_facade
-cargo run -p nytheris-aether-sdk --example otel_demo --features otel
+cargo run -p muninn-aether-sdk --example level_1_connector
+cargo run -p muninn-aether-sdk --example level_2_middleware
+cargo run -p muninn-aether-sdk --example level_3_hybrid_recall
+cargo run -p muninn-aether-sdk --example level_4_sync_engine
+cargo run -p muninn-aether-sdk --example level_5_facade
+cargo run -p muninn-aether-sdk --example otel_demo --features otel
 ```
 
 ### 2. Use `MemoryManager` in Rust
 
 ```rust
 use std::sync::Arc;
-use nytheris_aether_adapters::InMemoryBackend;
-use nytheris_aether_core::{
+use muninn_aether_adapters::InMemoryBackend;
+use muninn_aether_core::{
     DistanceMetric, Entity, EntityId, MemoryInput, ProjectId, RecallMode, RecallQuery, Relation,
     VectorStore, WriteDurability,
 };
-use nytheris_aether_sdk::MemoryManager;
+use muninn_aether_sdk::MemoryManager;
 use chrono::Utc;
 
 #[tokio::main]
-async fn main() -> nytheris_aether_core::Result<()> {
+async fn main() -> muninn_aether_core::Result<()> {
     let backend = Arc::new(InMemoryBackend::new());
     let project_id = ProjectId::new("my-project")?;
     backend.initialize(&project_id, 3, DistanceMetric::Cosine).await?;
@@ -165,15 +165,15 @@ Point `aether-mcp` at a local or shared Git-backed Obsidian vault to serve newli
 
 ```bash
 # 1. Install the Obsidian companion plugin and print a ready-to-paste mcp.json snippet
-cargo run -p nytheris-aether-vault --bin aether-mcp -- \
+cargo run -p muninn-aether-vault --bin aether-mcp -- \
   --init --vault /path/to/obsidian-vault --http-addr 127.0.0.1:14771
 
 # 2. Standalone HTTP daemon for Obsidian (stays running until Ctrl-C / SIGTERM)
-cargo run -p nytheris-aether-vault --bin aether-mcp -- \
+cargo run -p muninn-aether-vault --bin aether-mcp -- \
   --vault /path/to/obsidian-vault --http-addr 127.0.0.1:14771 --http-only
 
 # 3. Team gateway mode with bearer authentication, scoped stdio MCP, and vLLM/LMCache KV warming
-cargo run -p nytheris-aether-vault --bin aether-mcp -- \
+cargo run -p muninn-aether-vault --bin aether-mcp -- \
   --vault /path/to/team-obsidian-vault \
   --db /path/to/aether.sqlite \
   --watch-ms 2000 \
@@ -196,8 +196,8 @@ cp .env.example .env
 ./scripts/dev-infra.sh up
 
 # Run live provider contract tests and multi-backend MemoryManager E2E tests
-cargo test -p nytheris-aether-adapters --all-features -- --ignored --test-threads=1
-cargo test -p nytheris-aether-sdk --all-features --test live_docker -- --ignored --test-threads=1
+cargo test -p muninn-aether-adapters --all-features -- --ignored --test-threads=1
+cargo test -p muninn-aether-sdk --all-features --test live_docker -- --ignored --test-threads=1
 ```
 
 ---
@@ -217,7 +217,7 @@ cd website && npm run build
 
 ## Documentation & License
 
-- **Documentation Portal**: [`docs/index.md`](docs/index.md) · [`website/`](https://nytheris-ai.github.io/aether-sdk/)
+- **Documentation Portal**: [`docs/index.md`](docs/index.md) · [`website/`](https://muninn-hq.github.io/aether-sdk/)
 - **Observability & OpenTelemetry**: [`docs/guides/observability.md`](docs/guides/observability.md)
 - **Engineering Rules & Guidelines**: [`AGENTS.md`](AGENTS.md) · [`docs/development/guidelines.md`](docs/development/guidelines.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - **License**: Apache 2.0 ([`LICENSE`](LICENSE))

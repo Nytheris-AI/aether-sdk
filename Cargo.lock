@@ -1234,6 +1234,98 @@ dependencies = [
 ]
 
 [[package]]
+name = "muninn-aether-adapters"
+version = "0.1.1"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "muninn-aether-adapters",
+ "muninn-aether-core",
+ "petgraph",
+ "pgvector",
+ "redis",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "muninn-aether-core"
+version = "0.1.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "muninn-aether-cortex"
+version = "0.1.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "muninn-aether-adapters",
+ "muninn-aether-core",
+ "petgraph",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "muninn-aether-sdk"
+version = "0.1.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "muninn-aether-adapters",
+ "muninn-aether-core",
+ "muninn-aether-cortex",
+ "opentelemetry",
+ "opentelemetry-appender-tracing",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "muninn-aether-vault"
+version = "0.1.1"
+dependencies = [
+ "chrono",
+ "hex",
+ "muninn-aether-core",
+ "muninn-aether-cortex",
+ "petgraph",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1268,98 +1360,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
-]
-
-[[package]]
-name = "nytheris-aether-adapters"
-version = "0.1.1"
-dependencies = [
- "async-trait",
- "axum",
- "chrono",
- "nytheris-aether-adapters",
- "nytheris-aether-core",
- "petgraph",
- "pgvector",
- "redis",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "sqlx",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "nytheris-aether-core"
-version = "0.1.1"
-dependencies = [
- "async-trait",
- "chrono",
- "serde",
- "serde_json",
- "thiserror",
- "uuid",
-]
-
-[[package]]
-name = "nytheris-aether-cortex"
-version = "0.1.1"
-dependencies = [
- "async-trait",
- "chrono",
- "nytheris-aether-adapters",
- "nytheris-aether-core",
- "petgraph",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "nytheris-aether-sdk"
-version = "0.1.1"
-dependencies = [
- "async-trait",
- "chrono",
- "nytheris-aether-adapters",
- "nytheris-aether-core",
- "nytheris-aether-cortex",
- "opentelemetry",
- "opentelemetry-appender-tracing",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "nytheris-aether-vault"
-version = "0.1.1"
-dependencies = [
- "chrono",
- "hex",
- "nytheris-aether-core",
- "nytheris-aether-cortex",
- "petgraph",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "tokio",
- "tracing",
- "uuid",
- "walkdir",
 ]
 
 [[package]]

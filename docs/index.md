@@ -1,6 +1,6 @@
 # Aether SDK Documentation
 
-**Aether SDK** (`nytheris-aether-*`) is a model-free Rust memory SDK and Obsidian vault compiler. It unifies record durability, vector search, temporal knowledge graphs, and prefix-cache-friendly MCP serving without hiding control flow inside a framework.
+**Aether SDK** (`muninn-aether-*`) is a model-free Rust memory SDK and Obsidian vault compiler. It unifies record durability, vector search, temporal knowledge graphs, and prefix-cache-friendly MCP serving without hiding control flow inside a framework.
 
 ## Start here
 
@@ -44,7 +44,7 @@ Read deep explanations of Aether's guarantees, scoring math, and cache layout.
 ## How-To Guides
 
 - **[Obsidian Setup Guide](guides/obsidian-setup.md).** Install `aether-mcp`, register the background service, enable `aether-memory` in Obsidian, and connect an AI agent.
-- **[Usage Guide](guides/usage.md).** Condensed snippets across all five SDK levels and `nytheris-aether-vault`.
+- **[Usage Guide](guides/usage.md).** Condensed snippets across all five SDK levels and `muninn-aether-vault`.
 - **[Memory Model & Consistency](guides/memory.md).** Quick overview of SDK scopes, durability modes, and vault memory units.
 - **[Observability & OpenTelemetry](guides/observability.md).** Tracing span hierarchy and the one-line `otel` OTLP gRPC setup.
 
@@ -60,7 +60,7 @@ Read deep explanations of Aether's guarantees, scoring math, and cache layout.
 - **[Connectors Architecture](architecture/connectors.md).** Outbound driver traits, middleware composition, and the shared contract test suite.
 - **[Pieces-First SDK Design](architecture/sdk-design.md).** Design record for building from small public pieces up to `MemoryManager`.
 - **[Phase 5 Hardening Design](architecture/hardening-design.md).** Hardening rationale for durable `RecordStore` state and derived indexes.
-- **[M1 Vault & MCP Architecture](architecture/m1-vault-mcp-rationale.md).** Architectural decision record for `nytheris-aether-vault` and Milestones 1 to 3.
+- **[M1 Vault & MCP Architecture](architecture/m1-vault-mcp-rationale.md).** Architectural decision record for `muninn-aether-vault` and Milestones 1 to 3.
 - **[Change Overview](architecture/change-overview.md).** Record of the pieces-first and hardening transition.
 
 ## Development & Roadmap

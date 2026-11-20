@@ -1,16 +1,16 @@
 # Project Aether Milestone 1 vault and MCP architecture
 
-Status: **implemented** (M1, M2 & M3, 2026-11-18). `crates/aether-vault` (`nytheris-aether-vault` and `aether-mcp`) and `obsidian-aether-plugin` are implemented in the workspace.
+Status: **implemented** (M1, M2 & M3, 2026-11-18). `crates/aether-vault` (`muninn-aether-vault` and `aether-mcp`) and `obsidian-aether-plugin` are implemented in the workspace.
 
 ## Problem
 
-Milestone 1 builds a local Obsidian vault daemon and a three-tool `stdio` MCP server inside a new workspace crate at `crates/aether-vault`, named `nytheris-aether-vault`. Existing crates in Aether SDK separate storage contracts from graph and fusion ranking. `nytheris-aether-adapters` provides `SqliteRecordStore` for opaque JSON payloads without FTS5 full-text search, wikilink edge queries, or a self-write hash ledger.
+Milestone 1 builds a local Obsidian vault daemon and a three-tool `stdio` MCP server inside a new workspace crate at `crates/aether-vault`, named `muninn-aether-vault`. Existing crates in Aether SDK separate storage contracts from graph and fusion ranking. `muninn-aether-adapters` provides `SqliteRecordStore` for opaque JSON payloads without FTS5 full-text search, wikilink edge queries, or a self-write hash ledger.
 
 Offline `Cargo.lock` constraints also shape the build boundary. The lockfile includes `rusqlite` `0.41` with bundled SQLite and FTS5, `sha2` `0.11`, `hex` `0.4`, `walkdir` `2.5`, `tokio`, `serde_json`, `chrono`, `petgraph`, `thiserror`, `tracing`, and `uuid` without the `v5` feature. Neither `notify`, `rmcp`, nor `serde_yaml` is present in `Cargo.lock`. The crate must parse Obsidian notes, exclude `private` notes at the boundary, fuse FTS5, local vectors, and `PersonalizedPageRank` scores into deterministic `HOT` prompt prefixes, reconcile `Aether/Inbox.md` approvals without watcher loops, and expose the three MCP tools without leaking internal database or JSON-RPC types.
 
 ## Usage
 
-Consumers depend on `nytheris-aether-vault` and interact with `VaultEngine`, `McpServer`, and validated domain types.
+Consumers depend on `muninn-aether-vault` and interact with `VaultEngine`, `McpServer`, and validated domain types.
 
 ### Quickstart daemon and MCP server
 
@@ -19,8 +19,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use nytheris_aether_core::Result;
-use nytheris_aether_vault::{McpServer, VaultConfig, VaultEngine};
+use muninn_aether_core::Result;
+use muninn_aether_vault::{McpServer, VaultConfig, VaultEngine};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -39,9 +39,9 @@ async fn main() -> Result<()> {
 ### Call site 1. Hybrid recall with deterministic prefix caching
 
 ```rust
-use nytheris_aether_vault::{RecallRequest, ScopeTag, TokenBudget, VaultConfig, VaultEngine};
+use muninn_aether_vault::{RecallRequest, ScopeTag, TokenBudget, VaultConfig, VaultEngine};
 
-async fn build_context(vault_root: &std::path::Path) -> nytheris_aether_core::Result<String> {
+async fn build_context(vault_root: &std::path::Path) -> muninn_aether_core::Result<String> {
 	let engine = VaultEngine::open(VaultConfig::in_memory(vault_root)).await?;
 	engine.sync_vault().await?;
 
@@ -60,9 +60,9 @@ async fn build_context(vault_root: &std::path::Path) -> nytheris_aether_core::Re
 ### Call site 2. Non-destructive staging into the Inbox
 
 ```rust
-use nytheris_aether_vault::{StageMemoryRequest, VaultConfig, VaultEngine, VaultTier};
+use muninn_aether_vault::{StageMemoryRequest, VaultConfig, VaultEngine, VaultTier};
 
-async fn propose_fact(engine: &VaultEngine) -> nytheris_aether_core::Result<()> {
+async fn propose_fact(engine: &VaultEngine) -> muninn_aether_core::Result<()> {
 	let candidate_id = engine
 		.stage_memory(
 			StageMemoryRequest::new(
@@ -82,10 +82,10 @@ async fn propose_fact(engine: &VaultEngine) -> nytheris_aether_core::Result<()> 
 ### Call site 3. Human approval and verbatim source inspection
 
 ```rust
-use nytheris_aether_core::AetherError;
-use nytheris_aether_vault::{SourcePointer, VaultEngine};
+use muninn_aether_core::AetherError;
+use muninn_aether_vault::{SourcePointer, VaultEngine};
 
-async fn approve_and_verify(engine: &VaultEngine) -> nytheris_aether_core::Result<String> {
+async fn approve_and_verify(engine: &VaultEngine) -> muninn_aether_core::Result<String> {
 	let report = engine.sync_vault().await?;
 	assert!(report.inbox_approved <= report.files_scanned + report.inbox_approved);
 
@@ -125,7 +125,7 @@ crates/aether-vault/
 ### Core data structures and boundary invariants
 
 - **`SourcePointer` and `VaultPath` (`types.rs`).** Both normalize backslashes to forward slashes, strip leading `./` segments, and reject empty paths, leading slashes, NUL bytes, `..` traversal segments, and hidden system directories such as `.obsidian/`, `.git/`, and `.trash/` (`per principle-boundary-discipline`).
-- **`AmuId` (`types.rs`).** Derives a 128-bit UUID from the SHA-256 digest of the canonical `SourcePointer` stamped with RFC 4122 version and variant bits, mapping one-to-one to `nytheris_aether_core::MemoryId` without requiring the `uuid` `v5` feature (`per principle-type-system-discipline`).
+- **`AmuId` (`types.rs`).** Derives a 128-bit UUID from the SHA-256 digest of the canonical `SourcePointer` stamped with RFC 4122 version and variant bits, mapping one-to-one to `muninn_aether_core::MemoryId` without requiring the `uuid` `v5` feature (`per principle-type-system-discipline`).
 - **`CandidateId`, `ContentHash`, `ScopeTag`, and `TokenBudget` (`types.rs`).** Each validates its format (`cand_` with 12 lowercase hex characters, 64 lowercase hex characters, non-empty lowercase scope label, and positive token ceiling) at construction time.
 - **`VaultTier` and `RawFrontmatterTier` (`types.rs`, `parser.rs`).** Public `VaultTier` contains only `Hot`, `Warm`, and `Cold`. `Private` exists only on the crate-private `RawFrontmatterTier` inside `parser.rs`, so private notes cannot enter `StageMemoryRequest`, SQLite storage, or recall results (`per principle-type-system-discipline`).
 - **`Amu` and `AmuStatus` (`types.rs`).** Captures `amu_id`, `tier`, `kind`, `status`, `distilled_fact`, `source_pointer`, `graph_edges`, `valid_from`, `superseded_by`, `scopes`, `authority_weight`, and `content_hash`.
@@ -134,7 +134,7 @@ crates/aether-vault/
 
 1. **Parsing and exclusion (`parser.rs`).** `IgnoreRules` loads `.aetherignore` once and enforces one shared list of built-in exclusions across directory scans and `inspect_source` checks. `parse_note` extracts YAML frontmatter, returns `ParsedNote::Private` immediately when `aether_tier` is `private`, splits body lines at ATX headings outside fenced code blocks, emits `#_preamble` when text precedes the first heading, extracts `[[wikilinks]]` and `#tags`, and scores `authority_weight` with evergreen notes above `Daily` or `Journal` notes and unchecked task lists.
 2. **Storage and loop prevention (`store.rs`, `engine.rs`).** `VaultStore` opens one SQLite WAL connection wrapped in `Arc<Mutex<Option<Connection>>>` and runs queries through `tokio::task::spawn_blocking` with `TransactionBehavior::Immediate` for writes (`per principle-separate-before-serializing-shared-state`). `sync_vault`, `handle_fs_event`, `stage_memory`, and `reconcile_inbox` serialize vault file mutations under `write_gate` while leaving `recall` and `inspect_source` lock-free under WAL snapshots. Every atomic write computes its `ContentHash`, inserts `(rel_path, hash)` into `self_write_ledger` before `rename`, and skips matching self-originated hashes on later scans while pruning stale ledger entries (`per principle-make-operations-idempotent`).
-3. **Hybrid retrieval and prefix packing (`engine.rs`, `prefix.rs`).** `VaultEngine::recall` supports empty queries when `include_hot_profile` is `true` by returning only the static `HOT` prefix. For non-empty queries, `VaultEngine` queries SQLite FTS5 BM25, scores active rows with local 256-dim vectors from `HashedNgramEmbedder` via `DistanceMetric::Cosine`, builds a deduplicated `Subgraph` for `PersonalizedPageRank` and `graph_scores`, and fuses all three ranked lists with `nytheris_aether_cortex::recall::rrf` scaled by `authority_weight`. `prefix.rs` sorts `HOT` items strictly by `amu_id` ascending inside a 2,000-token ceiling with zero volatile timestamps, computes `prefix_hash`, and appends dynamic `WARM` and `COLD` items within `max_tokens`.
+3. **Hybrid retrieval and prefix packing (`engine.rs`, `prefix.rs`).** `VaultEngine::recall` supports empty queries when `include_hot_profile` is `true` by returning only the static `HOT` prefix. For non-empty queries, `VaultEngine` queries SQLite FTS5 BM25, scores active rows with local 256-dim vectors from `HashedNgramEmbedder` via `DistanceMetric::Cosine`, builds a deduplicated `Subgraph` for `PersonalizedPageRank` and `graph_scores`, and fuses all three ranked lists with `muninn_aether_cortex::recall::rrf` scaled by `authority_weight`. `prefix.rs` sorts `HOT` items strictly by `amu_id` ascending inside a 2,000-token ceiling with zero volatile timestamps, computes `prefix_hash`, and appends dynamic `WARM` and `COLD` items within `max_tokens`.
 4. **Inbox staging and MCP server (`inbox.rs`, `mcp.rs`).** `stage_memory` formats proposals in the PRD Section 7.3 Markdown checkbox shape and replaces `Aether/Inbox.md` via temp-file write, `sync_all`, and `rename`. `reconcile_inbox` compiles checked `[x]` items into active SQLite AMUs, marks any `supersedes_amu_id` target as `Superseded`, drops `[-]` items, and rewrites the remaining pending items atomically. `McpServer` dispatches `initialize`, `ping`, and `tools/list` plus `tools/call` for `aether_recall`, `aether_stage_memory`, and `aether_inspect_source`.
 
 ### Interface depth verdict
@@ -155,7 +155,7 @@ Synthesis cleanup also branded `ContentHash` as a 64-hex newtype, standardized `
 
 ## Tradeoffs accepted
 
-- **We accept a crate-local SQLite WAL schema inside `nytheris-aether-vault` in exchange for single-transaction ACID consistency** across AMUs, FTS5 indexes, wikilink edges, `self_write_ledger`, and `staged_candidates`.
+- **We accept a crate-local SQLite WAL schema inside `muninn-aether-vault` in exchange for single-transaction ACID consistency** across AMUs, FTS5 indexes, wikilink edges, `self_write_ledger`, and `staged_candidates`.
 - **We accept 256-dimensional signed trigram feature hashing as the default Milestone 1 `Embedder` in exchange for zero network or model dependencies**, preserving an internal trait boundary for Milestone 2 dense embeddings.
 - **We accept `walkdir` plus SHA-256 polling instead of OS kernel watchers in exchange for strict offline compatibility with `Cargo.lock`**, because `notify` is not cached in `Cargo.lock`.
 - **We accept re-reading the target Markdown file on disk during `aether_inspect_source` in exchange for immediate live accuracy and zero storage of `private` note bodies**, keeping `amus` rows lightweight.

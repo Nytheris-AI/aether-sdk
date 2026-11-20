@@ -33,20 +33,20 @@ Nothing is released and no production driver exists, so there is no migration an
 
 | Remove | Crate | Why | Replaced by |
 |--------|-------|-----|-------------|
-| `MemoryInbound` trait | `nytheris-aether-core` | Existed for server transports that are no longer planned; one implementation | Inherent methods on `MemoryManager` |
-| `PolicyRouter`, `PolicyDecision` | `nytheris-aether-cortex` | Unbounded in-memory key map; records a key before the item is stored | `RecordStore::create` (atomic idempotency) and `MemoryInput::validate` |
-| `HotContextCache` | `nytheris-aether-cortex` | Third copy of recent writes; serves expired session items | `RecordStore::pending_for` and `session_items` |
-| `IngestionBuffer` | `nytheris-aether-cortex` | Drains before writing, so a failed flush or a crash loses data | `Indexer` over pending records |
-| `QueryPlanner` | `nytheris-aether-cortex` | Sealed pipeline with no place for the developer's own step | `recall::*` steps |
-| `enrich_metadata` | `nytheris-aether-cortex` | Copies `content` and `version` into vector metadata | `index_metadata` (no content; adds `_aether_scope`, `_aether_tier`) |
-| Constant read-your-writes scores `0.75` / `0.5` | `nytheris-aether-cortex` | Not comparable with real similarity scores | `DistanceMetric::score` |
-| Entity-name substring seed lookup | `nytheris-aether-cortex` | Only sees local unflushed items; does nothing on a fresh process | Seeds from caller plus entities of vector hits |
-| `cosine`, `eval_filter`, `value_matches` | `nytheris-aether-cortex` | Duplicates of the same logic in the in-memory backend | `DistanceMetric::score`, `FilterExpr::matches` in `nytheris-aether-core` |
-| `similarity`, `eval_filter`, `value_matches` | `nytheris-aether-adapters` | Same duplication, other side | Same |
-| `RecordStore::put`, `put_if_absent`, `recent`, `delete` | `nytheris-aether-core` and every implementor | Non-atomic idempotency, no pending state, hard delete that can orphan indexes | `create`, `pending_for`, `tombstone` |
-| `MemoryScope::Global` | `nytheris-aether-core` | Documented as "shared within a project", which is `Project` | `MemoryScope::Project` |
-| `MemoryManager::new(kv, vector, graph)` | `nytheris-aether-sdk` | Forces all three stores | `MemoryManager::builder(records)` with `.vector(..)` and `.graph(..)` |
-| Empty feature flags `turbopuffer`, `qdrant`, `neo4j`, `chroma`, `pgvector` | `nytheris-aether-adapters` | Advertise drivers that do not exist | Each flag returns with its driver in Phase 6 |
+| `MemoryInbound` trait | `muninn-aether-core` | Existed for server transports that are no longer planned; one implementation | Inherent methods on `MemoryManager` |
+| `PolicyRouter`, `PolicyDecision` | `muninn-aether-cortex` | Unbounded in-memory key map; records a key before the item is stored | `RecordStore::create` (atomic idempotency) and `MemoryInput::validate` |
+| `HotContextCache` | `muninn-aether-cortex` | Third copy of recent writes; serves expired session items | `RecordStore::pending_for` and `session_items` |
+| `IngestionBuffer` | `muninn-aether-cortex` | Drains before writing, so a failed flush or a crash loses data | `Indexer` over pending records |
+| `QueryPlanner` | `muninn-aether-cortex` | Sealed pipeline with no place for the developer's own step | `recall::*` steps |
+| `enrich_metadata` | `muninn-aether-cortex` | Copies `content` and `version` into vector metadata | `index_metadata` (no content; adds `_aether_scope`, `_aether_tier`) |
+| Constant read-your-writes scores `0.75` / `0.5` | `muninn-aether-cortex` | Not comparable with real similarity scores | `DistanceMetric::score` |
+| Entity-name substring seed lookup | `muninn-aether-cortex` | Only sees local unflushed items; does nothing on a fresh process | Seeds from caller plus entities of vector hits |
+| `cosine`, `eval_filter`, `value_matches` | `muninn-aether-cortex` | Duplicates of the same logic in the in-memory backend | `DistanceMetric::score`, `FilterExpr::matches` in `muninn-aether-core` |
+| `similarity`, `eval_filter`, `value_matches` | `muninn-aether-adapters` | Same duplication, other side | Same |
+| `RecordStore::put`, `put_if_absent`, `recent`, `delete` | `muninn-aether-core` and every implementor | Non-atomic idempotency, no pending state, hard delete that can orphan indexes | `create`, `pending_for`, `tombstone` |
+| `MemoryScope::Global` | `muninn-aether-core` | Documented as "shared within a project", which is `Project` | `MemoryScope::Project` |
+| `MemoryManager::new(kv, vector, graph)` | `muninn-aether-sdk` | Forces all three stores | `MemoryManager::builder(records)` with `.vector(..)` and `.graph(..)` |
+| Empty feature flags `turbopuffer`, `qdrant`, `neo4j`, `chroma`, `pgvector` | `muninn-aether-adapters` | Advertise drivers that do not exist | Each flag returns with its driver in Phase 6 |
 | The word "gateway" in crate docs and comments | all crates | No longer what Aether is | "SDK", "piece", or the specific component name |
 
 ### 3.2 Things planned in the docs that will not be built
@@ -70,7 +70,7 @@ These are removed in the last step of the work and **need explicit owner sign-of
 
 | Remove | Why |
 |--------|-----|
-| `src/nytheris_aether_sdk/` (Python package) | Retired implementation; the product is the Rust workspace |
+| `src/muninn_aether_sdk/` (Python package) | Retired implementation; the product is the Rust workspace |
 | `tests/` (Python tests) | Tests for the retired package |
 | `pyproject.toml` | Packaging for the retired package |
 | `examples/quickstart.py` | Python example for the retired API |
@@ -107,30 +107,30 @@ These are removed in the last step of the work and **need explicit owner sign-of
 | Retry backoff | Exponential, no jitter | Exponential with full jitter |
 | `Traced` span op names | `kv_*` | `record_*` |
 | Cortex spans | `aether.cortex.enqueue`, `aether.cortex.flush` | `aether.cortex.index_pass`, `aether.cortex.index_record` |
-| Module `nytheris_aether_adapters::memory_test` | Named and described as test-only | `nytheris_aether_adapters::in_memory`, the zero-infrastructure backend |
-| Contract tests | One test file tied to `InMemoryBackend` | Public `nytheris_aether_adapters::contract` module any driver runs |
-| `nytheris-aether-cortex/src/lib.rs` | One 570-line file | Wiring only; `indexer.rs`, `recall.rs`, `ppr.rs` |
+| Module `muninn_aether_adapters::memory_test` | Named and described as test-only | `muninn_aether_adapters::in_memory`, the zero-infrastructure backend |
+| Contract tests | One test file tied to `InMemoryBackend` | Public `muninn_aether_adapters::contract` module any driver runs |
+| `muninn-aether-cortex/src/lib.rs` | One 570-line file | Wiring only; `indexer.rs`, `recall.rs`, `ppr.rs` |
 | CI | Python only | Rust `fmt`, `clippy`, `test` |
 
 ## 5. What Gets Added
 
 | Add | Crate | Purpose |
 |-----|-------|---------|
-| `RecordStore::create`, `get_many`, `tombstone`, `pending`, `pending_for`, `session_items`, `mark_indexed` | `nytheris-aether-core` | Versioned records with indexing state |
-| `CreateOutcome`, `PendingRecord` | `nytheris-aether-core` | Results of the above |
-| `IndexSpec`, `VectorStore::describe`, `IndexSpec::check` | `nytheris-aether-core` | Dimension and metric known at the boundary |
-| `UserId`, `SessionId` | `nytheris-aether-core` | Identity for scopes |
-| `DistanceMetric::score`, `FilterExpr::matches` | `nytheris-aether-core` | One implementation of scoring and filtering |
-| `RecallQuery::validate` | `nytheris-aether-core` | Reject unusable queries early |
-| `Indexer` (`apply`, `run_pass`, `spawn`) | `nytheris-aether-cortex` | The sync engine |
-| `index_metadata`, `scope_filter` | `nytheris-aether-cortex` | What goes into the index and how scope is filtered there |
-| `Candidate`, `recall::vector_search`, `unindexed`, `session`, `graph_search`, `merge`, `rrf`, `in_scopes` | `nytheris-aether-cortex` | Recall as composable steps |
-| `graph_scores` | `nytheris-aether-cortex` | Turn PageRank over entities into scores for memories |
-| `jittered` | `nytheris-aether-adapters` | Retry jitter |
-| `FaultPoint`, `InMemoryBackend::fail_next`, `has_vector` | `nytheris-aether-adapters` | Failure-path tests without a real database |
-| `contract` module behind feature `contract-suite` | `nytheris-aether-adapters` | Same guarantees tested on every backend |
-| Builder options `.vector`, `.graph`, `.background_indexing`, `.with_timeout`, `.with_retry` | `nytheris-aether-sdk` | Optional stores, opt-in background work, switchable middleware |
-| One runnable example per level | `nytheris-aether-sdk/examples` | Show each level of use on its own |
+| `RecordStore::create`, `get_many`, `tombstone`, `pending`, `pending_for`, `session_items`, `mark_indexed` | `muninn-aether-core` | Versioned records with indexing state |
+| `CreateOutcome`, `PendingRecord` | `muninn-aether-core` | Results of the above |
+| `IndexSpec`, `VectorStore::describe`, `IndexSpec::check` | `muninn-aether-core` | Dimension and metric known at the boundary |
+| `UserId`, `SessionId` | `muninn-aether-core` | Identity for scopes |
+| `DistanceMetric::score`, `FilterExpr::matches` | `muninn-aether-core` | One implementation of scoring and filtering |
+| `RecallQuery::validate` | `muninn-aether-core` | Reject unusable queries early |
+| `Indexer` (`apply`, `run_pass`, `spawn`) | `muninn-aether-cortex` | The sync engine |
+| `index_metadata`, `scope_filter` | `muninn-aether-cortex` | What goes into the index and how scope is filtered there |
+| `Candidate`, `recall::vector_search`, `unindexed`, `session`, `graph_search`, `merge`, `rrf`, `in_scopes` | `muninn-aether-cortex` | Recall as composable steps |
+| `graph_scores` | `muninn-aether-cortex` | Turn PageRank over entities into scores for memories |
+| `jittered` | `muninn-aether-adapters` | Retry jitter |
+| `FaultPoint`, `InMemoryBackend::fail_next`, `has_vector` | `muninn-aether-adapters` | Failure-path tests without a real database |
+| `contract` module behind feature `contract-suite` | `muninn-aether-adapters` | Same guarantees tested on every backend |
+| Builder options `.vector`, `.graph`, `.background_indexing`, `.with_timeout`, `.with_retry` | `muninn-aether-sdk` | Optional stores, opt-in background work, switchable middleware |
+| One runnable example per level | `muninn-aether-sdk/examples` | Show each level of use on its own |
 
 ## 6. What Stays
 
@@ -149,10 +149,10 @@ These are removed in the last step of the work and **need explicit owner sign-of
 
 | Crate | Removed | Changed | Added |
 |-------|---------|---------|-------|
-| `nytheris-aether-core` | `MemoryInbound`, four `RecordStore` methods, `MemoryScope::Global` | `KvStore` to `RecordStore`, `MemoryScope`, `MemoryUpdate`, `RecallQuery` | Versioned record methods, `IndexSpec`, scope ids, `score`, `matches`, validators |
-| `nytheris-aether-cortex` | `PolicyRouter`, `HotContextCache`, `IngestionBuffer`, `QueryPlanner`, duplicated helpers | Split into modules | `Indexer`, recall steps, `graph_scores`, `index_metadata`, `scope_filter` |
-| `nytheris-aether-adapters` | Duplicated helpers, empty feature flags | `memory_test` to `in_memory`, idempotent relation upserts, middleware follows new trait | Fault injection, `contract` module, `jittered` |
-| `nytheris-aether-sdk` | `MemoryManager::new`, `impl MemoryInbound` | Facade rebuilt from public pieces, middleware defaults | Builder options, per-level examples |
+| `muninn-aether-core` | `MemoryInbound`, four `RecordStore` methods, `MemoryScope::Global` | `KvStore` to `RecordStore`, `MemoryScope`, `MemoryUpdate`, `RecallQuery` | Versioned record methods, `IndexSpec`, scope ids, `score`, `matches`, validators |
+| `muninn-aether-cortex` | `PolicyRouter`, `HotContextCache`, `IngestionBuffer`, `QueryPlanner`, duplicated helpers | Split into modules | `Indexer`, recall steps, `graph_scores`, `index_metadata`, `scope_filter` |
+| `muninn-aether-adapters` | Duplicated helpers, empty feature flags | `memory_test` to `in_memory`, idempotent relation upserts, middleware follows new trait | Fault injection, `contract` module, `jittered` |
+| `muninn-aether-sdk` | `MemoryManager::new`, `impl MemoryInbound` | Facade rebuilt from public pieces, middleware defaults | Builder options, per-level examples |
 
 ## 8. Documentation After the Change
 
@@ -175,7 +175,7 @@ These are removed in the last step of the work and **need explicit owner sign-of
 ## 9. Order of Work
 
 1. Rust CI and a clean lint baseline.
-2. Shared scoring and filter functions in `nytheris-aether-core`.
+2. Shared scoring and filter functions in `muninn-aether-core`.
 3. Rename `KvStore` to `RecordStore`.
 4. Reusable contract suite and fault injection.
 5. Versioned record operations.

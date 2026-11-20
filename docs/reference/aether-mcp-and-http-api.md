@@ -27,7 +27,7 @@ CLI flags override environment variables when both are set.
 | `aether-mcp service install [--vault <path>] [--http-addr <addr>] [--watch-ms <ms>]` | Registers and starts an auto-starting user service (`launchd` on macOS, `systemd --user` on Linux, Task Scheduler on Windows; defaults `--http-addr` to `127.0.0.1:14771`) |
 | `aether-mcp service status` | Prints the status of the installed user service |
 | `aether-mcp service uninstall` | Stops and removes the user service definition |
-| `ghcr.io/nytheris-ai/aether-mcp` | Multi-arch (`linux/amd64`, `linux/arm64`) container image with `ENTRYPOINT ["aether-mcp"]` and `/vault` volume |
+| `ghcr.io/muninn-hq/aether-mcp` | Multi-arch (`linux/amd64`, `linux/arm64`) container image with `ENTRYPOINT ["aether-mcp"]` and `/vault` volume |
 
 ## MCP JSON-RPC 2.0 protocol and tools
 

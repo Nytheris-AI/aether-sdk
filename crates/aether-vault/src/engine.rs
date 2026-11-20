@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
-use nytheris_aether_core::{redact_url_userinfo, AetherError, Result};
-use nytheris_aether_cortex::{
+use muninn_aether_core::{redact_url_userinfo, AetherError, Result};
+use muninn_aether_cortex::{
     graph_scores,
     recall::{self, Candidate, RRF_K},
     PersonalizedPageRank,
@@ -1471,7 +1471,7 @@ async fn sync_vault_inner(
     store: &VaultStore,
     embedder: &dyn Embedder,
     kv_adapter: &dyn KvCacheAdapter,
-    _project_id: &nytheris_aether_core::ProjectId,
+    _project_id: &muninn_aether_core::ProjectId,
 ) -> Result<SyncReport> {
     let mut report = SyncReport::default();
     let manifest = store.file_manifest().await?;

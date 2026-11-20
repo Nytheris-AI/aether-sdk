@@ -4,7 +4,7 @@ FROM rust:1.89-bookworm AS builder
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-RUN cargo build --release --locked -p nytheris-aether-vault --bin aether-mcp
+RUN cargo build --release --locked -p muninn-aether-vault --bin aether-mcp
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \

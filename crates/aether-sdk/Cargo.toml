@@ -1,5 +1,5 @@
 [package]
-name = "nytheris-aether-sdk"
+name = "muninn-aether-sdk"
 description = "Model-free, pieces-first Rust memory SDK unifying record, vector, and graph stores"
 version.workspace = true
 edition.workspace = true
@@ -7,7 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-documentation = "https://docs.rs/nytheris-aether-sdk"
+documentation = "https://docs.rs/muninn-aether-sdk"
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -23,18 +23,18 @@ otel = [
     "dep:tracing-subscriber",
 ]
 live-docker = [
-    "nytheris-aether-adapters/sqlite",
-    "nytheris-aether-adapters/redis",
-    "nytheris-aether-adapters/qdrant",
-    "nytheris-aether-adapters/chroma",
-    "nytheris-aether-adapters/pgvector",
-    "nytheris-aether-adapters/neo4j",
+    "muninn-aether-adapters/sqlite",
+    "muninn-aether-adapters/redis",
+    "muninn-aether-adapters/qdrant",
+    "muninn-aether-adapters/chroma",
+    "muninn-aether-adapters/pgvector",
+    "muninn-aether-adapters/neo4j",
 ]
 
 [dependencies]
-nytheris-aether-core = { path = "../aether-core", version = "0.1.0" }
-nytheris-aether-cortex = { path = "../aether-cortex", version = "0.1.0" }
-nytheris-aether-adapters = { path = "../aether-adapters", version = "0.1.0" }
+muninn-aether-core = { path = "../aether-core", version = "0.1.0" }
+muninn-aether-cortex = { path = "../aether-cortex", version = "0.1.0" }
+muninn-aether-adapters = { path = "../aether-adapters", version = "0.1.0" }
 async-trait.workspace = true
 chrono.workspace = true
 serde_json.workspace = true

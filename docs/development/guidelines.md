@@ -1,6 +1,6 @@
 # Development Guidelines
 
-Engineering conventions for working on the **Aether SDK** Rust workspace. See [`AGENTS.md`](https://github.com/Nytheris-AI/aether-sdk/blob/main/AGENTS.md) for repository-wide micro-commit and TDD rules.
+Engineering conventions for working on the **Aether SDK** Rust workspace. See [`AGENTS.md`](https://github.com/muninn-hq/aether-sdk/blob/main/AGENTS.md) for repository-wide micro-commit and TDD rules.
 
 ## Workspace Layout
 
@@ -15,7 +15,7 @@ Engineering conventions for working on the **Aether SDK** Rust workspace. See [`
 1. **Model-free boundary** - Aether does not call LLMs, embedders, chunkers, or extractors. Callers supply text, optional vectors, entities, and relations.
 2. **Pieces-first isolation** - Write orchestration against `RecordStore`, `VectorStore`, and `GraphStore` traits. Offline tests run deterministically against `InMemoryBackend` without external services; live database tests are `#[ignore]`d and opt-in.
 3. **Explicit error classification** - Classify retryable transport/rate-limit faults as `AetherError::Transient` and invalid input/auth/schema/version conflicts as permanent variants (`Permanent`, `InvalidInput`, `NotFound`, `Conflict`) so `Resilient` only retries transient faults.
-4. **Shared backend contract** - Every `RecordStore`, `VectorStore`, and `GraphStore` driver must pass `nytheris_aether_adapters::contract::{record_store, vector_store, graph_store}` enabled via the `contract-suite` feature.
+4. **Shared backend contract** - Every `RecordStore`, `VectorStore`, and `GraphStore` driver must pass `muninn_aether_adapters::contract::{record_store, vector_store, graph_store}` enabled via the `contract-suite` feature.
 
 ## Verification Gate
 

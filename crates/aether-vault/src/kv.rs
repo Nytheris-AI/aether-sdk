@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use nytheris_aether_core::{AetherError, Result};
+use muninn_aether_core::{AetherError, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

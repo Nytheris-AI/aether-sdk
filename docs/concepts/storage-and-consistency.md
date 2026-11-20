@@ -42,7 +42,7 @@ This version guard also prevents resurrection when `forget` races with an in-fli
 
 ## Crash-safe `Indexer` derivation
 
-`nytheris_aether_cortex::Indexer` reconciles `RecordStore` into optional `VectorStore` and `GraphStore` connectors.
+`muninn_aether_cortex::Indexer` reconciles `RecordStore` into optional `VectorStore` and `GraphStore` connectors.
 
 - **Single-record application (`Indexer::apply`).** For a live non-session record, `apply` upserts the vector (or deletes any old vector if `embedding` is `None`), retracts previous graph facts for `item.id`, upserts current `entities` and `relations`, and calls `mark_indexed`. For a tombstone, it deletes the vector, retracts graph facts, and calls `mark_indexed`.
 - **Batched sweeps (`Indexer::run_pass`).** `run_pass` pulls batches of up to `256` records from `RecordStore::pending`. If applying one record returns an error, `Indexer` records the failure in `PassReport::failed`, tracks that `MemoryId` for the rest of the pass so it does not spin in a tight loop, and continues processing other records. Any unindexed or failed records remain pending in `RecordStore` across process restarts.

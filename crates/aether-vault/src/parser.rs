@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
-use nytheris_aether_core::{AetherError, Result};
+use muninn_aether_core::{AetherError, Result};
 
 use crate::embedder::{embed_amu_text, Embedder};
 use crate::types::{

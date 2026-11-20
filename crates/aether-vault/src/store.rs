@@ -2,11 +2,11 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
-use nytheris_aether_core::{
+use muninn_aether_core::{
     AetherError, DistanceMetric, Entity, EntityId, GraphEdge, MemoryId, MemoryItem, MemoryScope,
     MemoryTier, ProjectId, Result, Subgraph,
 };
-use nytheris_aether_cortex::recall::Candidate;
+use muninn_aether_cortex::recall::Candidate;
 use rusqlite::{
     params, Connection, ErrorCode, OptionalExtension, Transaction, TransactionBehavior,
 };

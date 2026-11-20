@@ -1,7 +1,7 @@
 //! Core domain contracts, DTOs, errors, and storage traits for Aether SDK.
 //!
 //! ```
-//! use nytheris_aether_core::{DistanceMetric, FilterExpr, FilterValue, ProjectId};
+//! use muninn_aether_core::{DistanceMetric, FilterExpr, FilterValue, ProjectId};
 //! use serde_json::json;
 //!
 //! let project = ProjectId::new("demo-project")?;
@@ -15,7 +15,7 @@
 //!     value: FilterValue::String("rust".into()),
 //! };
 //! assert!(filter.matches(&json!({"topic": "rust"})));
-//! # Ok::<(), nytheris_aether_core::AetherError>(())
+//! # Ok::<(), muninn_aether_core::AetherError>(())
 //! ```
 
 use std::fmt;

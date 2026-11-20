@@ -7,7 +7,7 @@ Thank you for considering contributing to **Aether SDK**! Please also read [AGEN
 Install a stable Rust toolchain with `rustfmt` and `clippy`:
 
 ```bash
-git clone https://github.com/Nytheris-AI/aether-sdk.git
+git clone https://github.com/muninn-hq/aether-sdk.git
 cd aether-sdk
 cargo test --workspace --all-features
 ```

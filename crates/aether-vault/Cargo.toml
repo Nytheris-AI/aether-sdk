@@ -1,5 +1,5 @@
 [package]
-name = "nytheris-aether-vault"
+name = "muninn-aether-vault"
 description = "Obsidian-native vault daemon, SQLite FTS5+PPR hybrid recall, and stdio MCP server for Project Aether"
 version.workspace = true
 edition.workspace = true
@@ -12,8 +12,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-nytheris-aether-core = { path = "../aether-core", version = "0.1.0" }
-nytheris-aether-cortex = { path = "../aether-cortex", version = "0.1.0" }
+muninn-aether-core = { path = "../aether-core", version = "0.1.0" }
+muninn-aether-cortex = { path = "../aether-cortex", version = "0.1.0" }
 chrono.workspace = true
 petgraph.workspace = true
 serde.workspace = true
