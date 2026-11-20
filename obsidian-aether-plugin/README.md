@@ -6,14 +6,7 @@ The plugin requires a running `aether-mcp` control-plane server. You can run `ae
 
 ## Installation
 
-You can install the plugin from Obsidian Community Plugins, through BRAT, manually from a GitHub release, or with the `aether-mcp` CLI.
-
-### Community plugins
-
-1. Open **Settings** in Obsidian and select **Community plugins**.
-2. Turn off **Restricted mode** if prompted.
-3. Select **Browse** and search for **Aether Memory Companion**.
-4. Select **Install**, then turn on **Aether Memory Companion**.
+You can install the plugin through BRAT, manually from a GitHub release, or with the `aether-mcp` CLI.
 
 ### BRAT
 
@@ -60,7 +53,7 @@ Open **Settings** and select **Aether Memory Companion** to configure the connec
 - **Auto-pull interval (seconds).** Sets `autoPullIntervalSec` (default `0`). Polls the server in the background to refresh `Aether/Inbox.md` and `Aether/Compiled/Approved.md`, or disables polling when set to `0`.
 - **Run Dream consolidation on push.** Sets `runDreamOnPush` (default `false`). Requests Dream consolidation during manual vault sync. Requires an Admin-scoped API key when `aether-mcp` enforces authentication.
 
-### Inference and KV warming
+### Advanced: GPU KV-cache warming
 
 - **KV endpoint (optional).** Sets `kvEndpoint` (default empty). Records the inference endpoint associated with KV-cache warming telemetry.
 - **Default KV model.** Sets `kvModel` (default empty in settings, falling back to `llama-3.1-8b` in `AetherCompanionPlugin`). Sets the `model_id` parameter sent by the **Warm GPU KV Cache** command.
