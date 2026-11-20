@@ -74,9 +74,8 @@ cargo build --release -p nytheris-aether-vault --bin aether-mcp
 
 ## Step 2: Install the Obsidian plugin (`aether-memory`)
 
-Install **Aether Memory Companion** in Obsidian Desktop using any of these methods:
+Install **Aether Memory Companion** in Obsidian Desktop using either of these methods (the Obsidian Community plugins directory listing is pending review):
 
-- **Community plugins**: Open **Settings → Community plugins → Browse**, search for **Aether Memory Companion**, select **Install**, and enable it.
 - **BRAT (beta)**: Install **Obsidian42 BRAT**, select **Add beta plugin**, and enter `https://github.com/Nytheris-AI/aether-memory`.
 - **CLI (`--init`)**: If you built the plugin locally from `obsidian-aether-plugin/`, run `aether-mcp --init --vault /path/to/vault --http-addr 127.0.0.1:14771` to copy `main.js`, `manifest.json`, and `styles.css`, write `data.json`, and print your `mcp.json` snippet.
 
