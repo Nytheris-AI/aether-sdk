@@ -18,10 +18,18 @@ const OBSIDIAN_PLUGIN_ID: &str = "aether-memory";
 const SOURCE_PLUGIN_DIR_NAME: &str = "obsidian-aether-plugin";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ServiceAction {
+    Install,
+    Uninstall,
+    Status,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RunMode {
     StdioMcp,
     HttpOnly,
     Init,
+    Service(ServiceAction),
 }
 
 struct CliArgs {
@@ -55,10 +63,11 @@ struct InitReport {
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let parsed = parse_cli_args(&args)?;
-    if parsed.mode == RunMode::Init {
-        return run_init(&parsed);
+    match parsed.mode {
+        RunMode::Init => run_init(&parsed),
+        RunMode::Service(action) => run_service(action, &parsed),
+        RunMode::StdioMcp | RunMode::HttpOnly => run_server(parsed).await,
     }
-    run_server(parsed).await
 }
 
 fn run_init(parsed: &CliArgs) -> Result<()> {
@@ -488,7 +497,23 @@ where
     let mut kv_model_raw = env("AETHER_KV_MODEL");
     let plugin_dir = env("AETHER_PLUGIN_DIR").map(PathBuf::from);
 
+    let mut service_action: Option<ServiceAction> = None;
     let mut idx = 1usize;
+    if args.get(1).map(String::as_str) == Some("service") {
+        service_action = Some(match args.get(2).map(String::as_str) {
+            Some("install") => ServiceAction::Install,
+            Some("uninstall") => ServiceAction::Uninstall,
+            Some("status") => ServiceAction::Status,
+            _ => {
+                return Err(AetherError::InvalidInput(
+                    "usage: aether-mcp service <install|uninstall|status> [--vault <dir>] [--http-addr <addr>] [--watch-ms <ms>]"
+                        .into(),
+                ));
+            }
+        });
+        idx = 3;
+    }
+
     while idx < args.len() {
         match args[idx].as_str() {
             "--vault" if idx + 1 < args.len() => {
@@ -548,16 +573,27 @@ where
         Some(raw) => Some(raw.parse::<SocketAddr>().map_err(|err| {
             AetherError::InvalidInput(format!("invalid --http-addr `{raw}`: {err}"))
         })?),
+        None if service_action == Some(ServiceAction::Install) => Some(
+            "127.0.0.1:14771"
+                .parse::<SocketAddr>()
+                .expect("default loopback addr"),
+        ),
         None => None,
     };
-    let mode = match (init, http_only) {
-        (true, true) => {
+    let mode = match (service_action, init, http_only) {
+        (Some(_), true, _) | (Some(_), _, true) => {
+            return Err(AetherError::InvalidInput(
+                "`service` cannot be combined with `--init` or `--http-only`".into(),
+            ));
+        }
+        (Some(action), false, false) => RunMode::Service(action),
+        (None, true, true) => {
             return Err(AetherError::InvalidInput(
                 "`--init` and `--http-only` cannot be used together".into(),
             ));
         }
-        (true, false) => RunMode::Init,
-        (false, true) => {
+        (None, true, false) => RunMode::Init,
+        (None, false, true) => {
             if http_addr.is_none() {
                 return Err(AetherError::InvalidInput(
                     "`--http-only` requires `--http-addr <addr>`".into(),
@@ -565,7 +601,7 @@ where
             }
             RunMode::HttpOnly
         }
-        (false, false) => RunMode::StdioMcp,
+        (None, false, false) => RunMode::StdioMcp,
     };
     let bootstrap_admin_key = bootstrap_raw
         .as_deref()
@@ -600,6 +636,355 @@ where
 
 fn env_non_empty(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|s| !s.trim().is_empty())
+}
+
+#[derive(Debug, Clone)]
+struct ServiceSpec {
+    exe: PathBuf,
+    vault_root: PathBuf,
+    http_addr: SocketAddr,
+    watch_ms: u64,
+}
+
+fn escape_systemd_arg(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn escape_xml(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn render_systemd_unit(spec: &ServiceSpec) -> String {
+    let exe = escape_systemd_arg(&spec.exe.display().to_string());
+    let vault = escape_systemd_arg(&spec.vault_root.display().to_string());
+    format!(
+        "[Unit]\n\
+Description=Aether MCP Obsidian Vault Control Plane\n\
+After=network-online.target\n\
+\n\
+[Service]\n\
+Type=simple\n\
+ExecStart=\"{exe}\" --vault \"{vault}\" --watch-ms {} --http-addr {} --http-only\n\
+Restart=on-failure\n\
+RestartSec=3\n\
+\n\
+[Install]\n\
+WantedBy=default.target\n",
+        spec.watch_ms, spec.http_addr
+    )
+}
+
+fn render_launchd_plist(spec: &ServiceSpec, log_dir: &Path) -> String {
+    let exe = escape_xml(&spec.exe.display().to_string());
+    let vault = escape_xml(&spec.vault_root.display().to_string());
+    let stdout_log = escape_xml(&log_dir.join("aether-mcp.out.log").display().to_string());
+    let stderr_log = escape_xml(&log_dir.join("aether-mcp.err.log").display().to_string());
+    format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
+<plist version=\"1.0\">\n\
+<dict>\n\
+  <key>Label</key>\n\
+  <string>ai.nytheris.aether-mcp</string>\n\
+  <key>ProgramArguments</key>\n\
+  <array>\n\
+    <string>{exe}</string>\n\
+    <string>--vault</string>\n\
+    <string>{vault}</string>\n\
+    <string>--watch-ms</string>\n\
+    <string>{}</string>\n\
+    <string>--http-addr</string>\n\
+    <string>{}</string>\n\
+    <string>--http-only</string>\n\
+  </array>\n\
+  <key>RunAtLoad</key>\n\
+  <true/>\n\
+  <key>KeepAlive</key>\n\
+  <true/>\n\
+  <key>StandardOutPath</key>\n\
+  <string>{stdout_log}</string>\n\
+  <key>StandardErrorPath</key>\n\
+  <string>{stderr_log}</string>\n\
+</dict>\n\
+</plist>\n",
+        spec.watch_ms, spec.http_addr
+    )
+}
+
+fn windows_task_args(spec: &ServiceSpec) -> Vec<String> {
+    let command = format!(
+        "\"{}\" --vault \"{}\" --watch-ms {} --http-addr {} --http-only",
+        spec.exe.display(),
+        spec.vault_root.display(),
+        spec.watch_ms,
+        spec.http_addr
+    );
+    vec![
+        "/Create".into(),
+        "/F".into(),
+        "/TN".into(),
+        "AetherMcpService".into(),
+        "/SC".into(),
+        "ONLOGON".into(),
+        "/TR".into(),
+        command,
+    ]
+}
+
+fn resolve_home_dir() -> Result<PathBuf> {
+    env_non_empty("HOME")
+        .or_else(|| env_non_empty("USERPROFILE"))
+        .map(PathBuf::from)
+        .ok_or_else(|| AetherError::Permanent {
+            connector: "aether-service",
+            message: "could not determine user home directory (HOME/USERPROFILE unset)".into(),
+        })
+}
+
+fn run_command_checked(program: &str, args: &[&str]) -> Result<std::process::Output> {
+    let output = std::process::Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|err| AetherError::Permanent {
+            connector: "aether-service",
+            message: format!("failed to run `{program}`: {err}"),
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AetherError::Permanent {
+            connector: "aether-service",
+            message: format!("`{program} {}` failed: {}", args.join(" "), stderr.trim()),
+        });
+    }
+    Ok(output)
+}
+
+fn run_service(action: ServiceAction, parsed: &CliArgs) -> Result<()> {
+    let home = resolve_home_dir()?;
+    if cfg!(target_os = "linux") {
+        let unit_path = home.join(".config/systemd/user/aether-mcp.service");
+        match action {
+            ServiceAction::Install => {
+                let vault = fs::canonicalize(&parsed.vault_root).map_err(|err| {
+                    AetherError::InvalidInput(format!(
+                        "invalid --vault `{}`: {err}",
+                        parsed.vault_root.display()
+                    ))
+                })?;
+                let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("aether-mcp"));
+                let spec = ServiceSpec {
+                    exe,
+                    vault_root: vault,
+                    http_addr: parsed
+                        .http_addr
+                        .unwrap_or_else(|| "127.0.0.1:14771".parse().expect("default addr")),
+                    watch_ms: parsed.watch_ms_explicit.unwrap_or(2000),
+                };
+                if let Some(parent) = unit_path.parent() {
+                    fs::create_dir_all(parent).map_err(|err| AetherError::Permanent {
+                        connector: "aether-service",
+                        message: format!("failed to create {}: {err}", parent.display()),
+                    })?;
+                }
+                fs::write(&unit_path, render_systemd_unit(&spec)).map_err(|err| {
+                    AetherError::Permanent {
+                        connector: "aether-service",
+                        message: format!("failed to write {}: {err}", unit_path.display()),
+                    }
+                })?;
+                run_command_checked("systemctl", &["--user", "daemon-reload"])?;
+                run_command_checked(
+                    "systemctl",
+                    &["--user", "enable", "--now", "aether-mcp.service"],
+                )?;
+                println!(
+                    "Installed and started systemd user service: {}",
+                    unit_path.display()
+                );
+                Ok(())
+            }
+            ServiceAction::Uninstall => {
+                let _ = std::process::Command::new("systemctl")
+                    .args(["--user", "disable", "--now", "aether-mcp.service"])
+                    .output();
+                if unit_path.exists() {
+                    fs::remove_file(&unit_path).map_err(|err| AetherError::Permanent {
+                        connector: "aether-service",
+                        message: format!("failed to remove {}: {err}", unit_path.display()),
+                    })?;
+                    let _ = std::process::Command::new("systemctl")
+                        .args(["--user", "daemon-reload"])
+                        .output();
+                }
+                println!("Uninstalled aether-mcp systemd user service.");
+                Ok(())
+            }
+            ServiceAction::Status => {
+                if !unit_path.exists() {
+                    println!(
+                        "aether-mcp service is not installed ({}).",
+                        unit_path.display()
+                    );
+                    return Ok(());
+                }
+                let output = std::process::Command::new("systemctl")
+                    .args(["--user", "status", "aether-mcp.service", "--no-pager"])
+                    .output()
+                    .map_err(|err| AetherError::Permanent {
+                        connector: "aether-service",
+                        message: format!("failed to run systemctl: {err}"),
+                    })?;
+                print!("{}", String::from_utf8_lossy(&output.stdout));
+                if !output.status.success() {
+                    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+                }
+                Ok(())
+            }
+        }
+    } else if cfg!(target_os = "macos") {
+        let plist_path = home.join("Library/LaunchAgents/ai.nytheris.aether-mcp.plist");
+        let log_dir = home.join("Library/Logs/aether-mcp");
+        let plist_str = plist_path.display().to_string();
+        match action {
+            ServiceAction::Install => {
+                let vault = fs::canonicalize(&parsed.vault_root).map_err(|err| {
+                    AetherError::InvalidInput(format!(
+                        "invalid --vault `{}`: {err}",
+                        parsed.vault_root.display()
+                    ))
+                })?;
+                let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("aether-mcp"));
+                let spec = ServiceSpec {
+                    exe,
+                    vault_root: vault,
+                    http_addr: parsed
+                        .http_addr
+                        .unwrap_or_else(|| "127.0.0.1:14771".parse().expect("default addr")),
+                    watch_ms: parsed.watch_ms_explicit.unwrap_or(2000),
+                };
+                if let Some(parent) = plist_path.parent() {
+                    fs::create_dir_all(parent).map_err(|err| AetherError::Permanent {
+                        connector: "aether-service",
+                        message: format!("failed to create {}: {err}", parent.display()),
+                    })?;
+                }
+                fs::create_dir_all(&log_dir).map_err(|err| AetherError::Permanent {
+                    connector: "aether-service",
+                    message: format!("failed to create {}: {err}", log_dir.display()),
+                })?;
+                fs::write(&plist_path, render_launchd_plist(&spec, &log_dir)).map_err(|err| {
+                    AetherError::Permanent {
+                        connector: "aether-service",
+                        message: format!("failed to write {}: {err}", plist_path.display()),
+                    }
+                })?;
+                let _ = std::process::Command::new("launchctl")
+                    .args(["unload", &plist_str])
+                    .output();
+                run_command_checked("launchctl", &["load", "-w", &plist_str])?;
+                println!(
+                    "Installed and loaded launchd agent: {}",
+                    plist_path.display()
+                );
+                Ok(())
+            }
+            ServiceAction::Uninstall => {
+                let _ = std::process::Command::new("launchctl")
+                    .args(["unload", "-w", &plist_str])
+                    .output();
+                if plist_path.exists() {
+                    fs::remove_file(&plist_path).map_err(|err| AetherError::Permanent {
+                        connector: "aether-service",
+                        message: format!("failed to remove {}: {err}", plist_path.display()),
+                    })?;
+                }
+                println!("Uninstalled aether-mcp launchd agent.");
+                Ok(())
+            }
+            ServiceAction::Status => {
+                if !plist_path.exists() {
+                    println!(
+                        "aether-mcp service is not installed ({}).",
+                        plist_path.display()
+                    );
+                    return Ok(());
+                }
+                let output = std::process::Command::new("launchctl")
+                    .args(["list", "ai.nytheris.aether-mcp"])
+                    .output()
+                    .map_err(|err| AetherError::Permanent {
+                        connector: "aether-service",
+                        message: format!("failed to run launchctl: {err}"),
+                    })?;
+                print!("{}", String::from_utf8_lossy(&output.stdout));
+                if !output.status.success() {
+                    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+                }
+                Ok(())
+            }
+        }
+    } else if cfg!(target_os = "windows") {
+        match action {
+            ServiceAction::Install => {
+                let vault = fs::canonicalize(&parsed.vault_root).map_err(|err| {
+                    AetherError::InvalidInput(format!(
+                        "invalid --vault `{}`: {err}",
+                        parsed.vault_root.display()
+                    ))
+                })?;
+                let exe =
+                    std::env::current_exe().unwrap_or_else(|_| PathBuf::from("aether-mcp.exe"));
+                let spec = ServiceSpec {
+                    exe,
+                    vault_root: vault,
+                    http_addr: parsed
+                        .http_addr
+                        .unwrap_or_else(|| "127.0.0.1:14771".parse().expect("default addr")),
+                    watch_ms: parsed.watch_ms_explicit.unwrap_or(2000),
+                };
+                let args = windows_task_args(&spec);
+                let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+                run_command_checked("schtasks", &arg_refs)?;
+                run_command_checked("schtasks", &["/Run", "/TN", "AetherMcpService"])?;
+                println!("Installed and started Windows scheduled task: AetherMcpService");
+                Ok(())
+            }
+            ServiceAction::Uninstall => {
+                let _ = std::process::Command::new("schtasks")
+                    .args(["/End", "/TN", "AetherMcpService"])
+                    .output();
+                let _ = std::process::Command::new("schtasks")
+                    .args(["/Delete", "/F", "/TN", "AetherMcpService"])
+                    .output();
+                println!("Uninstalled Windows scheduled task: AetherMcpService");
+                Ok(())
+            }
+            ServiceAction::Status => {
+                let output = std::process::Command::new("schtasks")
+                    .args(["/Query", "/TN", "AetherMcpService", "/FO", "LIST"])
+                    .output()
+                    .map_err(|err| AetherError::Permanent {
+                        connector: "aether-service",
+                        message: format!("failed to run schtasks: {err}"),
+                    })?;
+                print!("{}", String::from_utf8_lossy(&output.stdout));
+                if !output.status.success() {
+                    eprint!("{}", String::from_utf8_lossy(&output.stderr));
+                }
+                Ok(())
+            }
+        }
+    } else {
+        Err(AetherError::Permanent {
+            connector: "aether-service",
+            message: "unsupported OS for `service` management".into(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -1047,5 +1432,68 @@ mod tests {
         task.await
             .expect("http-only task join")
             .expect("http-only shutdown must return Ok");
+    }
+
+    #[test]
+    fn parse_cli_args_parses_service_subcommands_and_rejects_invalid() {
+        let install = parse_cli_args_with_env(
+            &[
+                "aether-mcp".into(),
+                "service".into(),
+                "install".into(),
+                "--vault".into(),
+                "/tmp/my-vault".into(),
+            ],
+            |_| None,
+        )
+        .expect("parse service install");
+        assert_eq!(install.mode, RunMode::Service(ServiceAction::Install));
+        assert_eq!(install.vault_root, PathBuf::from("/tmp/my-vault"));
+        assert_eq!(
+            install.http_addr,
+            Some("127.0.0.1:14771".parse().expect("default addr"))
+        );
+
+        let uninstall = parse_cli_args_with_env(
+            &["aether-mcp".into(), "service".into(), "uninstall".into()],
+            |_| None,
+        )
+        .expect("parse service uninstall");
+        assert_eq!(uninstall.mode, RunMode::Service(ServiceAction::Uninstall));
+
+        let status = parse_cli_args_with_env(
+            &["aether-mcp".into(), "service".into(), "status".into()],
+            |_| None,
+        )
+        .expect("parse service status");
+        assert_eq!(status.mode, RunMode::Service(ServiceAction::Status));
+
+        let missing = parse_cli_args_with_env(&["aether-mcp".into(), "service".into()], |_| None)
+            .err()
+            .expect("missing service action must fail");
+        assert!(matches!(missing, AetherError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn render_service_definitions_include_vault_addr_and_escape_xml() {
+        let spec = ServiceSpec {
+            exe: PathBuf::from("/usr/local/bin/aether-mcp"),
+            vault_root: PathBuf::from("/home/alice/My Vault & Notes"),
+            http_addr: "127.0.0.1:14771".parse().expect("valid addr"),
+            watch_ms: 2000,
+        };
+
+        let unit = render_systemd_unit(&spec);
+        assert!(unit.contains("ExecStart=\"/usr/local/bin/aether-mcp\" --vault \"/home/alice/My Vault & Notes\" --watch-ms 2000 --http-addr 127.0.0.1:14771 --http-only"));
+        assert!(unit.contains("Restart=on-failure"));
+
+        let plist = render_launchd_plist(&spec, Path::new("/home/alice/Library/Logs/aether-mcp"));
+        assert!(plist.contains("<string>ai.nytheris.aether-mcp</string>"));
+        assert!(plist.contains("<string>/home/alice/My Vault &amp; Notes</string>"));
+        assert!(plist.contains("<true/>"));
+
+        let win_args = windows_task_args(&spec);
+        assert!(win_args.contains(&"AetherMcpService".to_string()));
+        assert!(win_args.contains(&"ONLOGON".to_string()));
     }
 }
