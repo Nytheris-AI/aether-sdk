@@ -32,7 +32,7 @@ class InboxReviewView extends ItemView {
   }
 
   getDisplayText(): string {
-    return 'Aether Memory Inbox';
+    return 'Aether memory inbox';
   }
 
   async onOpen(): Promise<void> {
@@ -54,6 +54,16 @@ function formatClockHm(date: Date): string {
   return `${hh}:${mm}`;
 }
 
+function statusTooltip(text: string): string {
+  if (text === 'Aether: Offline') {
+    return 'aether-mcp is not reachable. Click to try a sync again.';
+  }
+  if (/to review$/.test(text)) {
+    return 'AI agents proposed memories. Click to review them.';
+  }
+  return 'Click to sync your vault with Aether.';
+}
+
 export default class ObsidianDesktopPlugin extends Plugin implements AetherSettingsPluginHost {
   settings: AetherPluginSettings = {...DEFAULT_SETTINGS};
 
@@ -65,14 +75,20 @@ export default class ObsidianDesktopPlugin extends Plugin implements AetherSetti
   private companion: AetherCompanionPlugin | null = null;
   private statusBarEl: HTMLElement | null = null;
   private statusTextOverride: string | null = null;
+  private reviewCount = 0;
   private autoPullIntervalId: number | null = null;
 
   async onload(): Promise<void> {
     this.settings = normalizePluginSettings(await this.loadData());
     this.statusBarEl = this.addStatusBarItem();
+    this.statusBarEl.addClass('mod-clickable');
     this.setStatusText('Aether: Idle');
     this.statusBarEl.addEventListener('click', () => {
-      void this.runSyncWithStatus();
+      if (this.reviewCount > 0) {
+        void this.openInbox();
+      } else {
+        void this.runSyncWithStatus();
+      }
     });
 
     const fetchImpl = createRequestUrlFetch(requestUrl);
@@ -217,19 +233,41 @@ export default class ObsidianDesktopPlugin extends Plugin implements AetherSetti
   }
 
   private handleCompanionStatusText(text: string): void {
+    const review = /^Aether: (\d+) to review$/.exec(text);
+    this.reviewCount = review ? Number(review[1]) : 0;
     if (text === 'Aether: Offline') {
       this.setStatusText('Aether: Offline');
       return;
     }
-    if (this.statusTextOverride === null || this.statusTextOverride === 'Aether: Offline') {
-      this.setStatusText('Aether: Idle');
+    if (review || this.statusTextOverride === null || this.statusTextOverride === 'Aether: Offline') {
+      this.setStatusText(review ? text : 'Aether: Idle');
+    } else {
+      this.setStatusText(this.statusTextOverride);
     }
   }
 
   private setStatusText(text: string): void {
     this.statusTextOverride = text;
-    if (this.statusBarEl) {
-      this.statusBarEl.textContent = text;
+    if (!this.statusBarEl) {
+      return;
+    }
+    // Waiting reviews matter more than the last sync time, unless a sync or an outage is being reported.
+    const showReview = this.reviewCount > 0 && /^Aether: (Idle|Synced)/.test(text);
+    const shown = showReview ? `Aether: ${this.reviewCount} to review` : text;
+    this.statusBarEl.textContent = shown;
+    this.statusBarEl.setAttribute('aria-label', statusTooltip(shown));
+  }
+
+  private async openInbox(): Promise<void> {
+    if (!this.companion) {
+      return;
+    }
+    try {
+      await this.companion.inboxController.refresh();
+      await this.activateInboxView(this.companion.inboxController);
+    } catch (err) {
+      this.setStatusText('Aether: Offline');
+      new Notice(this.formatError('Aether inbox failed to load', err));
     }
   }
 

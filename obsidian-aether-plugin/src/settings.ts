@@ -5,7 +5,9 @@ import {
   type AetherPluginSettings,
   buildLocalStartCommand,
   buildServiceInstallCommand,
-  describeConnectionError,
+  classifyConnectionError,
+  type ConnectionState,
+  describeConnectionState,
   DEFAULT_SETTINGS,
   normalizeNonNegativeInt,
   normalizePluginSettings,
@@ -32,6 +34,9 @@ async function copyCommandToClipboard(command: string, label: string): Promise<v
 
 export class AetherSettingTab extends PluginSettingTab {
   private readonly plugin: AetherSettingsPluginHost;
+  private cardEl: HTMLElement | null = null;
+  private recheckTimer: number | null = null;
+  private checkToken = 0;
 
   constructor(app: App, plugin: AetherSettingsPluginHost) {
     super(app, plugin);
@@ -44,10 +49,10 @@ export class AetherSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName('Connection and authentication').setHeading();
 
-    containerEl.createEl('p', {
-      cls: 'setting-item-description',
-      text: 'This plugin needs the aether-mcp server running on your machine or on a team gateway. Use Local server quickstart below to install and start it, then run Test connection.',
-    });
+    this.cardEl = containerEl.createDiv({cls: 'aether-connection'});
+    this.cardEl.setAttribute('role', 'status');
+    this.cardEl.setAttribute('aria-live', 'polite');
+    void this.checkConnection();
 
     new Setting(containerEl)
       .setName('Aether control-plane URL')
@@ -59,6 +64,7 @@ export class AetherSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.endpointUrl = value.trim() || DEFAULT_SETTINGS.endpointUrl;
             await this.applyAndPersist();
+            this.scheduleRecheck();
           }),
       );
 
@@ -73,30 +79,9 @@ export class AetherSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.apiKey = value.trim();
             await this.applyAndPersist();
+            this.scheduleRecheck();
           });
       });
-
-    new Setting(containerEl)
-      .setName('Test connection')
-      .setDesc('Verify server reachability and token permission via GET /v1/vault/pull.')
-      .addButton((btn) =>
-        btn
-          .setButtonText('Test connection')
-          .setCta()
-          .onClick(async () => {
-            btn.setDisabled(true);
-            try {
-              const pulled = await this.plugin.testConnection();
-              const count = Object.keys(pulled.manifest).length;
-              new Notice(`Aether connected: ${count} indexed note(s) visible.`);
-            } catch (err) {
-              const message = describeConnectionError(err, this.plugin.settings.endpointUrl);
-              new Notice(`Aether connection failed: ${message}`);
-            } finally {
-              btn.setDisabled(false);
-            }
-          }),
-      );
 
     new Setting(containerEl)
       .setName('Local server quickstart')
@@ -130,7 +115,7 @@ export class AetherSettingTab extends PluginSettingTab {
         }),
       );
 
-    new Setting(containerEl).setName('Live sync and lattice').setHeading();
+    new Setting(containerEl).setName('Live sync').setHeading();
 
     new Setting(containerEl)
       .setName('Live vault sync')
@@ -222,6 +207,60 @@ export class AetherSettingTab extends PluginSettingTab {
             }),
         );
     }
+  }
+
+  hide(): void {
+    if (this.recheckTimer !== null) {
+      window.clearTimeout(this.recheckTimer);
+      this.recheckTimer = null;
+    }
+    this.checkToken += 1; // drop any in-flight result
+    this.cardEl = null;
+  }
+
+  private scheduleRecheck(): void {
+    if (this.recheckTimer !== null) {
+      window.clearTimeout(this.recheckTimer);
+    }
+    this.recheckTimer = window.setTimeout(() => {
+      this.recheckTimer = null;
+      void this.checkConnection();
+    }, 700);
+  }
+
+  private async checkConnection(): Promise<void> {
+    const token = ++this.checkToken;
+    this.renderConnection({kind: 'checking'});
+    let state: ConnectionState;
+    try {
+      const pulled = await this.plugin.testConnection();
+      state = {kind: 'connected', noteCount: Object.keys(pulled.manifest).length};
+    } catch (err) {
+      state = classifyConnectionError(err);
+    }
+    if (token === this.checkToken) {
+      this.renderConnection(state);
+    }
+  }
+
+  private renderConnection(state: ConnectionState): void {
+    const card = this.cardEl;
+    if (!card) {
+      return;
+    }
+    const view = describeConnectionState(state, this.plugin.settings.endpointUrl);
+    card.replaceChildren();
+    card.setAttribute('data-tone', view.tone);
+    card.createSpan({cls: 'aether-connection-dot'}).setAttribute('aria-hidden', 'true');
+    const body = card.createDiv({cls: 'aether-connection-body'});
+    body.createDiv({cls: 'aether-connection-title', text: view.title});
+    body.createDiv({cls: 'aether-connection-detail', text: view.detail});
+    const busy = state.kind === 'checking';
+    const test = card.createEl('button', {cls: 'aether-connection-action', text: 'Test connection'});
+    test.disabled = busy;
+    test.addEventListener('click', () => {
+      void this.checkConnection();
+    });
   }
 
   private resolveVaultBasePath(): string {
