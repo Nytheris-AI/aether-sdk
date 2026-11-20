@@ -6,6 +6,30 @@ The capture is scripted, so it can be regenerated when the UI changes (`node scr
 
 For install commands and every setting, read [Set up Obsidian and an AI agent with Aether](./obsidian-setup.md).
 
+## Watch the full demo: Obsidian and Cursor together
+
+This 90 second recording shows both sides at once: Obsidian with Aether Memory Companion on the left and the Cursor Agents window on the right, working on the same vault through `aether-mcp`.
+The agent's replies are real and unedited, so the wording varies between recordings.
+
+<video controls muted playsinline width="100%" poster={require('../assets/obsidian-guide/obsidian-cursor-demo-poster.png').default}>
+  <source src={require('../assets/obsidian-guide/obsidian-cursor-demo.webm').default} type="video/webm" />
+  <source src={require('../assets/obsidian-guide/obsidian-cursor-demo.mp4').default} type="video/mp4" />
+</video>
+
+It covers the primary use cases in order:
+
+1. You write a note in Obsidian and it syncs to `aether-mcp` automatically.
+2. The Cursor agent recalls that note through the `aether_recall` MCP tool.
+3. A note marked `aether_tier: private` stays on disk and the agent cannot find it.
+4. The agent proposes a new memory with `aether_stage_memory`.
+5. You approve it in the Obsidian Inbox pane.
+6. The approved memory is now recallable by the agent.
+
+Your own notes sync automatically.
+Only facts an agent proposes wait for your approval before they become memory.
+
+The steps below show each part in more detail.
+
 ## 1. Trust the vault and enable the plugin
 
 The first time you open a vault that contains community plugins, Obsidian asks whether you trust its author.
