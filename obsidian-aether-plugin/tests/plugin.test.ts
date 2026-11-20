@@ -1178,6 +1178,9 @@ describe('community plugin manifest', () => {
     assert.ok(manifest.description.length <= 250, 'description must be at most 250 characters');
     assert.ok(manifest.description.endsWith('.'), 'description must end with a period');
     assert.match(manifest.description, /^Give your AI agents memory/);
+    // Obsidian prefixes every command with the manifest name, so keep it short; the description carries the search keywords.
+    assert.equal(manifest.name, 'AMC');
+    assert.match(manifest.description, /Aether|MCP|memory/i);
     assert.doesNotMatch(manifest.description, /obsidian/i);
   });
 });
