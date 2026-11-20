@@ -1162,3 +1162,14 @@ describe('onboarding command builders', () => {
     );
   });
 });
+
+describe('community plugin manifest', () => {
+  it('leads with the agent memory bridge and follows Obsidian description rules', () => {
+    const pluginRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, 'manifest.json'), 'utf8'));
+    assert.ok(manifest.description.length <= 250, 'description must be at most 250 characters');
+    assert.ok(manifest.description.endsWith('.'), 'description must end with a period');
+    assert.match(manifest.description, /^Give your AI agents memory/);
+    assert.doesNotMatch(manifest.description, /obsidian/i);
+  });
+});
