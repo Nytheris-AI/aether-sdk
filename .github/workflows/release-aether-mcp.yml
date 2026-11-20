@@ -145,6 +145,9 @@ jobs:
     needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
+      # Checkout first: it cleans the workspace and would delete the downloaded dist/ directory.
+      - uses: actions/checkout@v7
+
       - name: Download release artifacts
         uses: actions/download-artifact@v8
         with:
@@ -159,8 +162,6 @@ jobs:
           for checksum in *.sha256; do
             sha256sum -c "${checksum}"
           done
-
-      - uses: actions/checkout@v7
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
