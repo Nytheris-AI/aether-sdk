@@ -11,6 +11,7 @@ export function MemoryVaultVisual(): ReactNode {
   const [activeMode, setActiveMode] = useState<HeroMemoryModeId>('hot');
   const [isFlowPaused, setIsFlowPaused] = useState(false);
 
+  const baseUrl = useBaseUrl;
   const obsidianLogoUrl = useBaseUrl('/img/obsidian-logo.svg');
   const aetherLogoUrl = useBaseUrl('/img/aether-logo.svg');
   const mode = HERO_MEMORY_MODES[activeMode];
@@ -114,8 +115,11 @@ export function MemoryVaultVisual(): ReactNode {
 
           <div className={mode.blocked ? 'vault-clients is-blocked' : 'vault-clients'}>
             {mode.clientTargets.map((target) => (
-              <span key={target} className="vault-client-chip">
-                {target}
+              <span key={target.label} className="vault-client-chip">
+                {target.logo && (
+                  <img src={baseUrl(target.logo)} alt="" width={14} height={14} />
+                )}
+                {target.label}
               </span>
             ))}
           </div>

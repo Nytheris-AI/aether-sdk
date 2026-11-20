@@ -49,7 +49,7 @@ export function ProtocolSandboxSection(): ReactNode {
         <div className="section-head-grid">
           <div className="section-index-cell">
             <span className="mono-tag">
-              <span className="dot" /> 04 // PROTOCOL
+              <span className="dot" /> 05 // PROTOCOL
             </span>
           </div>
           <div className="section-title-cell">

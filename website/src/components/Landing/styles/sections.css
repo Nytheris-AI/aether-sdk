@@ -1324,3 +1324,27 @@
     border-bottom: none;
   }
 }
+
+.aether-landing .brand-logo-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.aether-landing .brand-logo-chip,
+.aether-landing .vault-client-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.aether-landing .brand-logo-chip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--c-ink);
+  background: var(--c-surface);
+  border: 1px solid var(--c-line-strong);
+  padding: 6px 10px;
+}

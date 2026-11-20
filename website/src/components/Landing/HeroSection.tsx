@@ -1,13 +1,9 @@
 import type {ReactNode} from 'react';
 import Link from '@docusaurus/Link';
-import {GITHUB_REPO_URL, HERO_META_ITEMS, type SectionId} from '../../data/landing';
+import {GITHUB_REPO_URL, HERO_META_ITEMS} from '../../data/landing';
 import {MemoryVaultVisual} from './MemoryVaultVisual';
 
-interface HeroSectionProps {
-  readonly onScrollToSection: (id: SectionId) => void;
-}
-
-export function HeroSection({onScrollToSection}: HeroSectionProps): ReactNode {
+export function HeroSection(): ReactNode {
   return (
     <section className="band in-view" id="hero">
       <div className="frame">
@@ -56,12 +52,6 @@ export function HeroSection({onScrollToSection}: HeroSectionProps): ReactNode {
               <Link to="/docs" className="btn-action btn-ghost">
                 Read Documentation ↗
               </Link>
-              <button
-                type="button"
-                className="btn-action btn-ghost"
-                onClick={() => onScrollToSection('stack')}>
-                Explore Rust &amp; DB Stack
-              </button>
             </div>
           </div>
 

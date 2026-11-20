@@ -86,7 +86,7 @@ export function OpenSourceSection(): ReactNode {
           <div className="cta-left">
             <div>
               <span className="mono-tag">
-                <span className="dot" /> 05 // OPEN SOURCE
+                <span className="dot" /> 06 // OPEN SOURCE
               </span>
               <h2 className="section-h2 cta-title reveal-up">
                 Open source from the core up. Clone and build today.

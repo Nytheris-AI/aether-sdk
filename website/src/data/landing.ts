@@ -1,4 +1,4 @@
-export type SectionId = 'architecture' | 'planes' | 'stack' | 'inspector' | 'access';
+export type SectionId = 'agents' | 'architecture' | 'planes' | 'stack' | 'inspector' | 'access';
 
 export type StackFilter = 'all' | 'vector' | 'edge-graph';
 
@@ -8,6 +8,20 @@ export type ProbeId = 'arch' | 'exec' | 'support';
 
 export type HeroMemoryModeId = 'hot' | 'warm' | 'private';
 
+export interface ClientTarget {
+  readonly label: string;
+  readonly logo?: string;
+}
+
+export interface AgentFeature {
+  readonly id: 'obsidian' | 'mcp' | 'clients';
+  readonly tag: string;
+  readonly title: string;
+  readonly body: string;
+  readonly logos: readonly ClientTarget[];
+  readonly specs: readonly MetaPair[];
+}
+
 export interface HeroMemoryMode {
   readonly id: HeroMemoryModeId;
   readonly label: string;
@@ -16,7 +30,7 @@ export interface HeroMemoryMode {
   readonly ruleHint: string;
   readonly engineStage: string;
   readonly routeSummary: string;
-  readonly clientTargets: readonly string[];
+  readonly clientTargets: readonly ClientTarget[];
   readonly blocked: boolean;
 }
 
@@ -114,6 +128,47 @@ export interface ConvergenceState {
 
 export const GITHUB_REPO_URL = 'https://github.com/Nytheris-AI/aether-sdk';
 
+const CURSOR: ClientTarget = {label: 'Cursor', logo: '/img/brands/cursor.svg'};
+const CLAUDE: ClientTarget = {label: 'Claude', logo: '/img/brands/claude-ai.svg'};
+const CHATGPT: ClientTarget = {label: 'ChatGPT', logo: '/img/brands/chatgpt.svg'};
+const OBSIDIAN: ClientTarget = {label: 'Obsidian', logo: '/img/obsidian-logo.svg'};
+
+export const AGENT_FEATURES: readonly AgentFeature[] = [
+  {
+    id: 'obsidian',
+    tag: 'INTEGRATION 01 // OBSIDIAN',
+    title: 'Your vault is the memory',
+    body: 'Point Aether at an Obsidian vault and every note becomes durable memory. Wikilinks turn into graph edges, frontmatter sets the tier, and the vault stays plain Markdown on your disk.',
+    logos: [OBSIDIAN],
+    specs: [
+      {label: 'SOURCE', value: 'LOCAL MARKDOWN VAULT'},
+      {label: 'PRIVACY', value: '.AETHERIGNORE · TIER: PRIVATE'},
+    ],
+  },
+  {
+    id: 'mcp',
+    tag: 'INTEGRATION 02 // MCP SERVER',
+    title: 'Expose memory to any AI agent',
+    body: 'aether-mcp serves your vault over the Model Context Protocol. Agents call aether_recall to read, aether_stage_memory to write back to your Inbox, and aether_inspect_source to cite the note.',
+    logos: [],
+    specs: [
+      {label: 'TOOLS', value: 'RECALL · STAGE · INSPECT'},
+      {label: 'ALSO SERVES', value: 'OPENAPI 3.1'},
+    ],
+  },
+  {
+    id: 'clients',
+    tag: 'INTEGRATION 03 // AGENTS',
+    title: 'One memory, every assistant',
+    body: 'Claude, Cursor, and ChatGPT read from the same vault. Switch tools or models mid-project without re-explaining context, and keep private notes off every client.',
+    logos: [CLAUDE, CURSOR, CHATGPT],
+    specs: [
+      {label: 'CLIENTS', value: 'MCP + OPENAPI'},
+      {label: 'SCOPE', value: 'PER-NOTE TIERS'},
+    ],
+  },
+] as const;
+
 export const HERO_MEMORY_MODE_ORDER: readonly HeroMemoryModeId[] = ['hot', 'warm', 'private'];
 
 export const HERO_MEMORY_MODES: Record<HeroMemoryModeId, HeroMemoryMode> = {
@@ -125,7 +180,7 @@ export const HERO_MEMORY_MODES: Record<HeroMemoryModeId, HeroMemoryMode> = {
     ruleHint: 'Pinned via .aetherhot or aether_tier: hot',
     engineStage: 'Deterministic amu_id sort · prefix_hash',
     routeSummary: 'Served in static_prefix on every recall for KV-cache reuse.',
-    clientTargets: ['Cursor / Claude (MCP)', 'ChatGPT (OpenAPI 3.1)', 'Obsidian Plugin'],
+    clientTargets: [CURSOR, CLAUDE, CHATGPT, OBSIDIAN],
     blocked: false,
   },
   warm: {
@@ -136,7 +191,7 @@ export const HERO_MEMORY_MODES: Record<HeroMemoryModeId, HeroMemoryMode> = {
     ruleHint: 'SQLite FTS5 + Vector + Wikilink PPR',
     engineStage: 'CrossEncoderReranker · max 2/heading',
     routeSummary: 'Token-budgeted sections retrieved by aether_recall.',
-    clientTargets: ['Cursor / Claude (MCP)', 'ChatGPT (OpenAPI 3.1)', 'Aether/Inbox.md'],
+    clientTargets: [CURSOR, CLAUDE, CHATGPT, {label: 'Aether/Inbox.md', logo: '/img/aether-logo.svg'}],
     blocked: false,
   },
   private: {
@@ -147,17 +202,18 @@ export const HERO_MEMORY_MODES: Record<HeroMemoryModeId, HeroMemoryMode> = {
     ruleHint: 'Blocked by aether_tier: private or .aetherignore',
     engineStage: 'Dropped at parse boundary · 0 SQLite rows',
     routeSummary: 'Never indexed, never cached, and rejected by aether_inspect_source.',
-    clientTargets: ['Stays on Local Disk'],
+    clientTargets: [{label: 'Stays on Local Disk'}],
     blocked: true,
   },
 };
 
 export const NAV_SECTIONS: readonly NavSectionItem[] = [
-  {id: 'architecture', label: '01 // Convergence'},
-  {id: 'planes', label: '02 // Memory Planes'},
-  {id: 'stack', label: '03 // Tech Stack'},
-  {id: 'inspector', label: '04 // Protocol Sandbox'},
-  {id: 'access', label: '05 // Open Source'},
+  {id: 'agents', label: '01 // Obsidian & MCP'},
+  {id: 'architecture', label: '02 // Convergence'},
+  {id: 'planes', label: '03 // Memory Planes'},
+  {id: 'stack', label: '04 // Tech Stack'},
+  {id: 'inspector', label: '05 // Protocol Sandbox'},
+  {id: 'access', label: '06 // Open Source'},
 ];
 
 export const HERO_META_ITEMS: readonly MetaPair[] = [
