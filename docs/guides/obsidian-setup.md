@@ -89,7 +89,7 @@ Enable the plugin in Obsidian Desktop:
 
 ## Step 3: Configure plugin settings and run initial sync
 
-Open **Settings** and select **Aether Memory Companion**. Configure these fields:
+Open **Settings** and select **Aether Memory Companion**. You can use the **Local server quickstart** buttons (**Copy Install**, **Copy Service Install**, and **Copy Start**) to copy pre-filled commands for your vault, then configure these fields:
 
 1. Set **Aether control-plane URL** to `http://127.0.0.1:14771` for local loopback mode, or to your `https://` gateway URL for a remote server.
 2. Leave **API key** empty for loopback mode without authentication. For an authenticated server, paste your `aek_...` bearer token.
@@ -152,7 +152,7 @@ Add `aether-mcp` to your MCP client `mcpServers` configuration (for example in C
 {
   "mcpServers": {
     "aether-vault": {
-      "command": "/path/to/target/release/aether-mcp",
+      "command": "aether-mcp",
       "args": ["--vault", "/path/to/vault", "--watch-ms", "0"]
     }
   }
