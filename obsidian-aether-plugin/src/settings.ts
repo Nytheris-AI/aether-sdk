@@ -43,6 +43,11 @@ export class AetherSettingTab extends PluginSettingTab {
 
     new Setting(containerEl).setName('Connection & Auth').setHeading();
 
+    containerEl.createEl('p', {
+      cls: 'setting-item-description',
+      text: 'This plugin needs the aether-mcp server running on your machine or on a team gateway. Use Local server quickstart below to install and start it, then run Test Connection.',
+    });
+
     new Setting(containerEl)
       .setName('Aether control-plane URL')
       .setDesc('Loopback http:// or remote https:// endpoint for aether-mcp --http-addr.')
@@ -174,7 +179,7 @@ export class AetherSettingTab extends PluginSettingTab {
         }),
       );
 
-    new Setting(containerEl).setName('Inference & KV-Warming').setHeading();
+    new Setting(containerEl).setName('Advanced: GPU KV-cache warming (optional)').setHeading();
 
     new Setting(containerEl)
       .setName('KV endpoint (optional)')
