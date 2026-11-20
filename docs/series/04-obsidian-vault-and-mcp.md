@@ -97,7 +97,7 @@ Now enable and connect the plugin in Obsidian:
 2. Open **Settings**, open **Community plugins**, disable Restricted Mode if prompted, and enable **Aether Memory Companion**.
 3. Open **Settings** and select **Aether Memory Companion**.
 4. Confirm **Aether control-plane URL** is `http://127.0.0.1:14771` and leave **API key** empty for loopback mode.
-5. Click **Test connection**. Obsidian shows a notice reporting the count of indexed notes.
+5. Check the connection card at the top. It shows **Connected to aether-mcp** with the count of indexed notes. Select **Test connection** to check again.
 6. Keep **Live vault sync** turned on so edits sync after Obsidian finishes loading its layout.
 7. Run **Sync vault with Aether** from the Obsidian Command Palette (or click the **Aether: Idle** status bar item).
 
