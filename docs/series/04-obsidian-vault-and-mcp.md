@@ -97,9 +97,9 @@ Now enable and connect the plugin in Obsidian:
 2. Open **Settings**, open **Community plugins**, disable Restricted Mode if prompted, and enable **Aether Memory Companion**.
 3. Open **Settings** and select **Aether Memory Companion**.
 4. Confirm **Aether control-plane URL** is `http://127.0.0.1:14771` and leave **API key** empty for loopback mode.
-5. Click **Test Connection**. Obsidian shows a notice reporting the count of indexed notes.
+5. Click **Test connection**. Obsidian shows a notice reporting the count of indexed notes.
 6. Keep **Live vault sync** turned on so edits sync after Obsidian finishes loading its layout.
-7. Run **Sync Vault with Aether** from the Obsidian Command Palette (or click the **Aether: Idle** status bar item).
+7. Run **Sync vault with Aether** from the Obsidian Command Palette (or click the **Aether: Idle** status bar item).
 
 The status bar changes to `Aether: Syncing…` and then `Aether: Synced (HH:mm)`. A notice reports updated, indexed, removed, and private-skipped counts, confirming `Private/Journal.md` stayed off the server.
 
@@ -146,7 +146,7 @@ Once connected in your IDE or chat client, ask the agent to search your vault ("
 
 ## Step 5: Approve Inbox items inside Obsidian
 
-Run **Sync Vault with Aether** in Obsidian (or wait for the optional **Auto-pull interval** timer) and open `Aether/Inbox.md`. You see the agent's staged candidate formatted as a Markdown task:
+Run **Sync vault with Aether** in Obsidian (or wait for the optional **Auto-pull interval** timer) and open `Aether/Inbox.md`. You see the agent's staged candidate formatted as a Markdown task:
 
 ```markdown
 # Aether Memory Inbox
@@ -160,7 +160,7 @@ Run **Sync Vault with Aether** in Obsidian (or wait for the optional **Auto-pull
 
 Approve or reject candidates in Obsidian using either method:
 
-- Run **Open Aether Inbox Review** from the Command Palette and click **Approve** or **Reject**.
+- Run **Open Aether inbox review** from the Command Palette and click **Approve** or **Reject**.
 - Edit `Aether/Inbox.md` directly in Obsidian by changing `[ ]` to `[x]` (approve) or `[-]` (reject).
 
 On approval, `VaultEngine` compiles the candidate into an active AMU, writes a `## cand_<12-hex>` section into `Aether/Compiled/Approved.md`, removes the approved entry from `Aether/Inbox.md`, and syncs both files back into Obsidian. Call `aether_inspect_source` with `source_pointer: "Aether/Compiled/Approved.md#cand_<12-hex>"` to verify the compiled provenance entry.
@@ -178,7 +178,7 @@ aether_scope: engineering
 - Decision: Switched local cache from Redis to SQLite WAL in [[Arch/DB]].
 ```
 
-Run **Trigger Dream Pass** from the Obsidian Command Palette (or send `curl -sS -X POST http://127.0.0.1:14771/v1/dream`). Obsidian shows a notice with scanned notes, staged candidates, and flagged contradictions, and updates `Aether/Inbox.md` with any newly proposed facts. The worker records a SHA-256 watermark in `dream_watermarks` so unchanged Daily Notes are skipped on later passes, and sets `supersedes_amu_id` when replacement cues (`switched`, `migrated`, `replaced`, `instead of`, `no longer`, `deprecated`, `superseded`) match an active AMU.
+Run **Trigger dream pass** from the Obsidian Command Palette (or send `curl -sS -X POST http://127.0.0.1:14771/v1/dream`). Obsidian shows a notice with scanned notes, staged candidates, and flagged contradictions, and updates `Aether/Inbox.md` with any newly proposed facts. The worker records a SHA-256 watermark in `dream_watermarks` so unchanged Daily Notes are skipped on later passes, and sets `supersedes_amu_id` when replacement cues (`switched`, `migrated`, `replaced`, `instead of`, `no longer`, `deprecated`, `superseded`) match an active AMU.
 
 Check overall vault health anytime with `GET http://127.0.0.1:14771/v1/status`.
 

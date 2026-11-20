@@ -96,18 +96,18 @@ Enable the plugin in Obsidian Desktop:
 
 ## Step 3: Configure plugin settings and run initial sync
 
-Open **Settings** and select **Aether Memory Companion**. You can use the **Local server quickstart** buttons (**Copy Install**, **Copy Service Install**, and **Copy Start**) to copy pre-filled commands for your vault, then configure these fields:
+Open **Settings** and select **Aether Memory Companion**. You can use the **Local server quickstart** buttons (**Copy install**, **Copy service install**, and **Copy start**) to copy pre-filled commands for your vault, then configure these fields:
 
 1. Set **Aether control-plane URL** to `http://127.0.0.1:14771` for local loopback mode, or to your `https://` gateway URL for a remote server.
 2. Leave **API key** empty for loopback mode without authentication. For an authenticated server, paste your `aek_...` bearer token.
-3. Click **Test Connection**. Obsidian calls `GET /v1/vault/pull` and shows a notice with the number of indexed notes visible to your token.
+3. Click **Test connection**. Obsidian calls `GET /v1/vault/pull` and shows a notice with the number of indexed notes visible to your token.
 4. Keep **Live vault sync** turned on so Obsidian pushes edits, renames, and deletions after startup layout finishes.
 5. Set **Sync debounce (ms)** between `500` and `10000` (default `1500`) to control how long the plugin waits after a note edit before pushing.
 6. Set **Auto-pull interval (seconds)** to a positive number if you want background polling to refresh `Aether/Inbox.md` and `Aether/Compiled/Approved.md` (`0` disables polling).
 7. Keep **Run Dream consolidation on push** turned off unless you use an `Admin` key on an authenticated server or run in local loopback mode.
-8. Optional: turn on **Enable GPU KV-cache warming** if you run your own vLLM or SGLang server, then set **Default KV model** (for example `llama-3.1-8b`) to use **Warm GPU KV Cache**.
+8. Optional: turn on **Enable GPU KV-cache warming** if you run your own vLLM or SGLang server, then set **Default KV model** (for example `llama-3.1-8b`) to use **Warm GPU KV cache**.
 
-Run **Sync Vault with Aether** from the Obsidian Command Palette, or click the **Aether: Idle** status bar item. The status bar updates to `Aether: Synced (HH:mm)` and shows a notice with updated, indexed, removed, and private-skipped counts.
+Run **Sync vault with Aether** from the Obsidian Command Palette, or click the **Aether: Idle** status bar item. The status bar updates to `Aether: Synced (HH:mm)` and shows a notice with updated, indexed, removed, and private-skipped counts.
 
 ## Step 4: Configure your vault notes and `.aetherignore`
 
@@ -145,7 +145,7 @@ Profile/*.md
 
 Notes matched by `.aetherhot` promote to `hot` unless their frontmatter sets an explicit `aether_tier` (`private`, `warm`, `cold`, or `hot`).
 
-To verify that `private` notes stay off the server, run **Sync Vault with Aether** and confirm the notice reports a non-zero `private-skipped` count. You can also query `POST /v1/inspect` or `aether_inspect_source` for the private note path and confirm the server rejects it.
+To verify that `private` notes stay off the server, run **Sync vault with Aether** and confirm the notice reports a non-zero `private-skipped` count. You can also query `POST /v1/inspect` or `aether_inspect_source` for the private note path and confirm the server rejects it.
 
 ## Step 5: Connect an AI agent
 
@@ -182,20 +182,20 @@ Once connected, your agent calls three tools:
 
 ## Step 6: Review staged facts and run Dream consolidation
 
-When an agent calls `aether_stage_memory`, run **Sync Vault with Aether** in Obsidian (or wait for **Auto-pull interval (seconds)**) to pull the updated `Aether/Inbox.md`.
+When an agent calls `aether_stage_memory`, run **Sync vault with Aether** in Obsidian (or wait for **Auto-pull interval (seconds)**) to pull the updated `Aether/Inbox.md`.
 
 Approve or reject staged facts in either of two ways:
 
-- Run **Open Aether Inbox Review** from the Command Palette and click **Approve** or **Reject**.
+- Run **Open Aether inbox review** from the Command Palette and click **Approve** or **Reject**.
 - Open `Aether/Inbox.md` in Obsidian, change `[ ]` to `[x]` to approve or `[-]` to reject, and let **Live vault sync** push the file.
 
 On approval, `VaultEngine` compiles the fact into an active AMU, appends a `## cand_<12-hex>` section to `Aether/Compiled/Approved.md`, removes the item from `Aether/Inbox.md`, and syncs both files back into Obsidian.
 
-To extract new candidate facts and flag contradictions from Daily Notes, run **Trigger Dream Pass** from the Command Palette. Obsidian calls `POST /v1/dream`, updates `Aether/Inbox.md`, and shows a notice with scanned notes, staged candidates, and flagged contradictions.
+To extract new candidate facts and flag contradictions from Daily Notes, run **Trigger dream pass** from the Command Palette. Obsidian calls `POST /v1/dream`, updates `Aether/Inbox.md`, and shows a notice with scanned notes, staged candidates, and flagged contradictions.
 
 ## Troubleshooting
 
 - **Port or non-loopback bind error on startup.** `ControlPlaneServer::bind` rejects any `--http-addr` outside `127.0.0.1` and `::1` unless you pass `--require-auth`. In Obsidian, `assertControlPlaneBaseUrl` rejects non-loopback `http://` URLs unless `allowInsecureRemoteHttp` is enabled, and rejects any remote host without an **API key**.
-- **`Test Connection` fails.** Confirm `aether-mcp` is running with `--http-addr` matching **Aether control-plane URL**. For `https://` or non-loopback endpoints, verify that **API key** is non-empty and belongs to a key with the `Reader` role or higher.
+- **`Test connection` fails.** Confirm `aether-mcp` is running with `--http-addr` matching **Aether control-plane URL**. For `https://` or non-loopback endpoints, verify that **API key** is non-empty and belongs to a key with the `Reader` role or higher.
 - **`Run Dream consolidation on push` fails with HTTP 403.** When `--require-auth` is enabled, running Dream consolidation during `POST /v1/vault/push` requires an `Admin` key. Turn off **Run Dream consolidation on push** when using a `Contributor` key, or issue an `Admin` key.
-- **Edits right after opening Obsidian do not sync.** **Live vault sync** registers file watchers inside Obsidian's `onLayoutReady` callback so initial vault loading does not flood the server. Edit the note again after Obsidian finishes loading, or run **Sync Vault with Aether** manually.
+- **Edits right after opening Obsidian do not sync.** **Live vault sync** registers file watchers inside Obsidian's `onLayoutReady` callback so initial vault loading does not flood the server. Edit the note again after Obsidian finishes loading, or run **Sync vault with Aether** manually.

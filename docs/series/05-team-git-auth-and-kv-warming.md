@@ -86,10 +86,10 @@ When targeting a remote authenticated server (`--require-auth`), configure **Set
 
 1. Set **Aether control-plane URL** to your HTTPS gateway (for example `https://vault.internal:4771`).
 2. Paste your scoped token (`aek_<64-hex>`) into **API key**. The plugin stores that token locally in `.obsidian/plugins/aether-memory/data.json`, which `git_sync` keeps out of Git.
-3. Click **Test Connection** to confirm connectivity and token permissions.
+3. Click **Test connection** to confirm connectivity and token permissions.
 4. Configure **Live vault sync**, **Sync debounce (ms)** (`500` to `10000`), optional **Auto-pull interval (seconds)** to refresh `Aether/Inbox.md` and `Aether/Compiled/Approved.md`, and **Default KV model** (for example `llama-3.1-8b`). Turn on **Run Dream consolidation on push** only when using an `Admin` key.
 
-Calling **Sync Vault with Aether** (`aether-sync-vault`) or editing notes with **Live vault sync** enabled pulls `GET /v1/vault/pull`, pushes delta public notes (`POST /v1/vault/push`) without ever transmitting `aether_tier: private` note bodies, and materializes updated `Aether/Inbox.md` and `Aether/Compiled/Approved.md` files back into Obsidian.
+Calling **Sync vault with Aether** (`aether-sync-vault`) or editing notes with **Live vault sync** enabled pulls `GET /v1/vault/pull`, pushes delta public notes (`POST /v1/vault/push`) without ever transmitting `aether_tier: private` note bodies, and materializes updated `Aether/Inbox.md` and `Aether/Compiled/Approved.md` files back into Obsidian.
 
 For headless or embedded integrations, instantiate `AetherCompanionPlugin` directly in TypeScript:
 
