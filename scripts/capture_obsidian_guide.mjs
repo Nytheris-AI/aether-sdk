@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {Page, run, sleep} from './capture_lib.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.resolve(process.argv[2] ?? 'guide-media');
@@ -17,7 +18,6 @@ const frames = path.join(work, 'frames');
 const PORT = 14771;
 const CDP = 9333;
 const BASE = `http://127.0.0.1:${PORT}`;
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const procs = [];
 
 function start(cmd, args, env = {}) {
@@ -55,75 +55,6 @@ function writeVault() {
   );
 }
 
-class Page {
-  async connect(titlePrefix) {
-    const pages = await (await fetch(`http://127.0.0.1:${CDP}/json`)).json();
-    const page = pages.find((p) => p.type === 'page' && p.title.includes('Obsidian') && p.title.startsWith(titlePrefix));
-    this.ws = new WebSocket(page.webSocketDebuggerUrl);
-    await new Promise((r) => (this.ws.onopen = r));
-    this.id = 0;
-    this.waiting = new Map();
-    this.ws.onmessage = (e) => {
-      const m = JSON.parse(e.data);
-      this.waiting.get(m.id)?.(m);
-    };
-  }
-  send(method, params = {}) {
-    const id = ++this.id;
-    return new Promise((resolve) => {
-      this.waiting.set(id, resolve);
-      this.ws.send(JSON.stringify({id, method, params}));
-    });
-  }
-  async eval(expression) {
-    const m = await this.send('Runtime.evaluate', {expression, awaitPromise: true, returnByValue: true});
-    return m.result?.result?.value;
-  }
-  async shot(name) {
-    const m = await this.send('Page.captureScreenshot', {format: 'png'});
-    fs.writeFileSync(path.join(out, name), Buffer.from(m.result.data, 'base64'));
-  }
-  async key(key, code, vk, modifiers = 0) {
-    for (const type of ['keyDown', 'keyUp']) {
-      await this.send('Input.dispatchKeyEvent', {type, key, code, windowsVirtualKeyCode: vk, modifiers});
-    }
-  }
-  async palette(command) {
-    await this.key('p', 'KeyP', 80, 2);
-    await sleep(500);
-    if (!(await this.eval('!!document.querySelector(".prompt")'))) throw new Error('command palette did not open');
-    await this.send('Input.insertText', {text: command});
-    await sleep(600);
-    await this.key('Enter', 'Enter', 13);
-  }
-  // Records the viewport as a WebM clip by polling screenshots while `scene` runs.
-  async clip(name, scene) {
-    fs.rmSync(frames, {recursive: true, force: true});
-    fs.mkdirSync(frames, {recursive: true});
-    let n = 0;
-    let running = true;
-    const t0 = Date.now();
-    const loop = (async () => {
-      while (running) {
-        const m = await this.send('Page.captureScreenshot', {format: 'jpeg', quality: 80});
-        fs.writeFileSync(path.join(frames, `${String(n++).padStart(5, '0')}.jpg`), Buffer.from(m.result.data, 'base64'));
-      }
-    })();
-    await scene();
-    running = false;
-    await loop;
-    const fps = n / ((Date.now() - t0) / 1000);
-    run('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', fps.toFixed(2), '-i', path.join(frames, '%05d.jpg'),
-      '-c:v', 'libvpx-vp9', '-crf', '40', '-b:v', '0', '-an', path.join(out, name)]);
-  }
-}
-
-function run(cmd, args) {
-  const r = spawnSync(cmd, args, {encoding: 'utf8'});
-  if (r.status !== 0) throw new Error(`${cmd} failed: ${r.stderr}`);
-  return r.stdout;
-}
-
 async function post(p, body) {
   const r = await fetch(BASE + p, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});
   return r.json();
@@ -153,7 +84,7 @@ async function main() {
     try { await fetch(`http://127.0.0.1:${CDP}/json`); break; } catch { await sleep(500); }
   }
   await sleep(8000);
-  const page = new Page();
+  const page = new Page({port: CDP, out, frames});
   await page.connect('New tab');
   await page.send('Emulation.setDeviceMetricsOverride', {width: 1280, height: 800, deviceScaleFactor: 1, mobile: false});
   await sleep(1500);
@@ -169,7 +100,7 @@ async function main() {
   // 1-2. Settings (Obsidian opens them in their own window) and Test Connection.
   await page.eval('app.setting.open()');
   await sleep(2500);
-  const settings = new Page();
+  const settings = new Page({port: CDP, out, frames});
   await settings.connect('Settings');
   await settings.send('Emulation.setDeviceMetricsOverride', {width: 1000, height: 760, deviceScaleFactor: 1, mobile: false});
   await settings.eval('[...document.querySelectorAll(".vertical-tab-nav-item")].find(e=>e.textContent.includes("Aether Memory Companion")).click()');
