@@ -168,6 +168,7 @@ export default class ObsidianDesktopPlugin extends Plugin implements AetherSetti
       apiKey: this.settings.apiKey || undefined,
       defaultKvModel: this.settings.kvModel || undefined,
       runDreamOnPush: this.settings.runDreamOnPush,
+      kvWarmingEnabled: this.settings.kvWarmingEnabled,
     };
   }
 
@@ -187,7 +188,15 @@ export default class ObsidianDesktopPlugin extends Plugin implements AetherSetti
     this.addCommand({
       id: cmd.id,
       name: cmd.name,
-      callback: run,
+      checkCallback: (checking: boolean) => {
+        if (cmd.available && !cmd.available()) {
+          return false;
+        }
+        if (!checking) {
+          void run();
+        }
+        return true;
+      },
     });
   }
 

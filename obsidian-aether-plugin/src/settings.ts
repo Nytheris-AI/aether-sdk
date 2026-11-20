@@ -183,30 +183,45 @@ export class AetherSettingTab extends PluginSettingTab {
     new Setting(containerEl).setName('Advanced: GPU KV-cache warming (optional)').setHeading();
 
     new Setting(containerEl)
-      .setName('KV endpoint (optional)')
-      .setDesc('Inference endpoint associated with KV-cache warming telemetry.')
-      .addText((text) =>
-        text
-          .setPlaceholder('http://127.0.0.1:8000')
-          .setValue(this.plugin.settings.kvEndpoint)
-          .onChange(async (value) => {
-            this.plugin.settings.kvEndpoint = value.trim();
-            await this.applyAndPersist();
-          }),
+      .setName('Enable GPU KV-cache warming')
+      .setDesc(
+        'For self-hosted vLLM or SGLang setups only. Adds the "Warm GPU KV Cache" command. Most users can leave this off.',
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.kvWarmingEnabled).onChange(async (value) => {
+          this.plugin.settings.kvWarmingEnabled = value;
+          await this.applyAndPersist();
+          this.display();
+        }),
       );
 
-    new Setting(containerEl)
-      .setName('Default KV model')
-      .setDesc('Target model_id passed by the Warm GPU KV Cache command.')
-      .addText((text) =>
-        text
-          .setPlaceholder('llama-3.1-8b')
-          .setValue(this.plugin.settings.kvModel)
-          .onChange(async (value) => {
-            this.plugin.settings.kvModel = value.trim();
-            await this.applyAndPersist();
-          }),
-      );
+    if (this.plugin.settings.kvWarmingEnabled) {
+      new Setting(containerEl)
+        .setName('KV endpoint (optional)')
+        .setDesc('Inference endpoint associated with KV-cache warming telemetry.')
+        .addText((text) =>
+          text
+            .setPlaceholder('http://127.0.0.1:8000')
+            .setValue(this.plugin.settings.kvEndpoint)
+            .onChange(async (value) => {
+              this.plugin.settings.kvEndpoint = value.trim();
+              await this.applyAndPersist();
+            }),
+        );
+
+      new Setting(containerEl)
+        .setName('Default KV model')
+        .setDesc('Target model_id passed by the Warm GPU KV Cache command.')
+        .addText((text) =>
+          text
+            .setPlaceholder('llama-3.1-8b')
+            .setValue(this.plugin.settings.kvModel)
+            .onChange(async (value) => {
+              this.plugin.settings.kvModel = value.trim();
+              await this.applyAndPersist();
+            }),
+        );
+    }
   }
 
   private resolveVaultBasePath(): string {

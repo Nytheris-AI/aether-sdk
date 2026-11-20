@@ -38,6 +38,8 @@ export interface ObsidianCommandDescriptor {
   id: string;
   name: string;
   callback: () => Promise<unknown>;
+  /** When it returns false the command is hidden from the palette. */
+  available?: () => boolean;
 }
 
 export interface ObsidianHostAdapter {
@@ -294,6 +296,7 @@ export class AetherCompanionPlugin {
   readonly inboxController: InboxReviewController;
   defaultKvModel: string;
   runDreamOnPush: boolean;
+  kvWarmingEnabled: boolean;
   private readonly host: ObsidianHostAdapter;
   private readonly lastWrittenHashes = new Map<string, string>();
   private statusBar: StatusBarHandle | null = null;
@@ -307,6 +310,7 @@ export class AetherCompanionPlugin {
     this.client = new AetherControlClient(baseUrl, fetchOrOptions);
     this.defaultKvModel = resolveDefaultKvModel(fetchOrOptions);
     this.runDreamOnPush = resolveRunDreamOnPush(fetchOrOptions);
+    this.kvWarmingEnabled = resolveKvWarmingEnabled(fetchOrOptions);
     this.inboxController = new InboxReviewController(
       () => this.client,
       async () => {
@@ -323,6 +327,7 @@ export class AetherCompanionPlugin {
     this.client = new AetherControlClient(baseUrl, fetchOrOptions);
     this.defaultKvModel = resolveDefaultKvModel(fetchOrOptions);
     this.runDreamOnPush = resolveRunDreamOnPush(fetchOrOptions);
+    this.kvWarmingEnabled = resolveKvWarmingEnabled(fetchOrOptions);
   }
 
   async onload(): Promise<void> {
@@ -354,6 +359,7 @@ export class AetherCompanionPlugin {
       id: 'aether-warm-kv-cache',
       name: 'Warm GPU KV Cache',
       callback: async () => this.warmKvCache(),
+      available: () => this.kvWarmingEnabled,
     });
     this.host.onVaultEvent?.(async (event) => {
       await this.handleVaultEvent(event);
@@ -638,6 +644,10 @@ function resolveDefaultKvModel(fetchOrOptions: FetchLike | AetherClientOptions):
   return typeof fetchOrOptions === 'object' && fetchOrOptions.defaultKvModel
     ? fetchOrOptions.defaultKvModel
     : 'llama-3.1-8b';
+}
+
+function resolveKvWarmingEnabled(fetchOrOptions: FetchLike | AetherClientOptions): boolean {
+  return typeof fetchOrOptions === 'object' && Boolean(fetchOrOptions.kvWarmingEnabled);
 }
 
 function resolveRunDreamOnPush(fetchOrOptions: FetchLike | AetherClientOptions): boolean {

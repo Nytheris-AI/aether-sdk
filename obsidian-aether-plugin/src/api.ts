@@ -82,6 +82,7 @@ export interface AetherClientOptions {
   allowInsecureRemoteHttp?: boolean;
   defaultKvModel?: string;
   runDreamOnPush?: boolean;
+  kvWarmingEnabled?: boolean;
 }
 
 /**
