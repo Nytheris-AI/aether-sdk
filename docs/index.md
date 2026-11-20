@@ -6,7 +6,7 @@
 
 Pick the track that matches what you want to do:
 
-- **Use Aether with Obsidian and an AI agent.** Follow the [Obsidian Setup Guide](guides/obsidian-setup.md) to install `aether-mcp`, register the background service, add **Aether Memory Companion** in Obsidian, and connect Claude Desktop, Cursor, or Antigravity.
+- **Use Aether with Obsidian and an AI agent.** Follow the [Obsidian Setup Guide](guides/obsidian-setup.md) to install `aether-mcp`, register the background service, add **AMC** (Aether Memory Companion) in Obsidian, and connect Claude Desktop, Cursor, or Antigravity.
 - **Embed Aether in a Rust application.** Start with [Part 1: Quickstart & Your First Memory](series/01-quickstart-first-memory.md) to store and query records and vectors with `InMemoryBackend`.
 
 ## Choose your path

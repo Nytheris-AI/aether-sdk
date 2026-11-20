@@ -252,7 +252,7 @@ async function main() {
   const recCur = record(cur, path.join(work, 'cur'));
   const tStart = Date.now();
 
-  mark('1. Write in Obsidian. Aether Memory Companion syncs the note to aether-mcp automatically.');
+  mark('1. Write in Obsidian. AMC syncs the note to aether-mcp automatically.');
   await sleep(1500);
   await obs.eval(`(async()=>{ const f = await app.vault.create("Projects/Release-plan.md", "# Release plan\\nDecision: ship 0.4.1 on Friday after the BRAT soak. Owner: Lia. Rollback: pull the tag.\\n"); await app.workspace.getLeaf().openFile(f); })()`);
   await sleep(4000);
@@ -346,7 +346,7 @@ function compose(captions, obsFrames, curFrames, t0, t1) {
     return `drawtext=fontfile=${font}:textfile=${file}:fontcolor=white:fontsize=30:x=45:y=34:enable='between(t,${a},${b})'`;
   });
   const labels = [
-    `drawtext=fontfile=${fontReg}:text='Obsidian + Aether Memory Companion':fontcolor=0xaaaaaa:fontsize=22:x=45:y=770`,
+    `drawtext=fontfile=${fontReg}:text='Obsidian + AMC':fontcolor=0xaaaaaa:fontsize=22:x=45:y=770`,
     `drawtext=fontfile=${fontReg}:text='Cursor Agent + aether-mcp (MCP)':fontcolor=0xaaaaaa:fontsize=22:x=1125:y=770`,
   ];
   // Obsidian full window; Cursor cropped to its chat column (the right half is an empty Changes panel).

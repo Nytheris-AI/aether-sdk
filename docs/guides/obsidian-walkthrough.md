@@ -1,6 +1,6 @@
 # Obsidian and AI agent walkthrough
 
-See Aether Memory Companion working in a real Obsidian Desktop vault.
+See AMC (Aether Memory Companion) working in a real Obsidian Desktop vault.
 Every screenshot and clip on this page was recorded from Obsidian 1.15.1 talking to a real `aether-mcp` server.
 The capture is scripted, so it can be regenerated when the UI changes (`node scripts/capture_obsidian_guide.mjs <out_dir>`).
 
@@ -8,7 +8,7 @@ For install commands and every setting, read [Set up Obsidian and an AI agent wi
 
 ## Watch the full demo: Obsidian and Cursor together
 
-This 90 second recording shows both sides at once: Obsidian with Aether Memory Companion on the left and the Cursor Agents window on the right, working on the same vault through `aether-mcp`.
+This 90 second recording shows both sides at once: Obsidian with AMC on the left and the Cursor Agents window on the right, working on the same vault through `aether-mcp`.
 The agent's replies are real and unedited, so the wording varies between recordings.
 
 <video controls muted playsinline width="100%" poster={require('../assets/obsidian-guide/obsidian-cursor-demo-poster.png').default}>
@@ -39,7 +39,7 @@ Choose **Trust author and enable plugins**.
 
 ## 2. Connect to aether-mcp
 
-Open **Settings**, then **Aether Memory Companion**.
+Open **Settings**, then **AMC**.
 Leave the URL at `http://127.0.0.1:14771` for a local server and select **Test connection**.
 A notice reports how many notes the server can see.
 

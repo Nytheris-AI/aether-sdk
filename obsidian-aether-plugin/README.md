@@ -1,6 +1,6 @@
-# Aether Memory Companion
+# AMC (Aether Memory Companion)
 
-Aether Memory Companion connects Obsidian Desktop to an `aether-mcp` vault server so your notes stay synchronized with your agent memory index while private notes remain on disk.
+AMC (Aether Memory Companion) connects Obsidian Desktop to an `aether-mcp` vault server so your notes stay synchronized with your agent memory index while private notes remain on disk.
 
 The plugin requires a running `aether-mcp` control-plane server. You can run `aether-mcp` locally over loopback HTTP (`http://127.0.0.1:14771`) or connect to a remote team gateway over HTTPS with a bearer API key.
 
@@ -13,14 +13,14 @@ You can install the plugin through BRAT, manually from a GitHub release, or with
 1. Install and enable the **Obsidian42 BRAT** plugin.
 2. Open the **BRAT** plugin settings and select **Add beta plugin**.
 3. Enter the dedicated plugin repository (`https://github.com/Nytheris-AI/aether-memory` or your mirrored plugin repository with `manifest.json` at its root) and add the plugin from release assets.
-4. Enable **Aether Memory Companion** under **Community plugins**.
+4. Enable **AMC** under **Community plugins**.
 
 ### Manual release installation
 
 1. Download `main.js`, `manifest.json`, and `styles.css` from a release on GitHub.
 2. Create the directory `<vault>/.obsidian/plugins/aether-memory/`.
 3. Copy `main.js`, `manifest.json`, and `styles.css` into that directory.
-4. Reload Obsidian and enable **Aether Memory Companion** under **Community plugins**.
+4. Reload Obsidian and enable **AMC** under **Community plugins**.
 
 ### CLI setup with `aether-mcp --init`
 
@@ -38,7 +38,7 @@ aether-mcp --vault /path/to/vault --http-addr 127.0.0.1:14771 --http-only
 
 ## Configuration
 
-Open **Settings** and select **Aether Memory Companion** to configure the connection, sync behavior, and optional KV-cache warming. The settings tab stores values in `AetherPluginSettings`.
+Open **Settings** and select **AMC** to configure the connection, sync behavior, and optional KV-cache warming. The settings tab stores values in `AetherPluginSettings`.
 
 ### Connection and authentication
 
