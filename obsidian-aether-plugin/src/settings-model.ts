@@ -44,6 +44,9 @@ export function normalizePluginSettings(raw: unknown): AetherPluginSettings {
   if (!isPlainObject(raw)) {
     return {...DEFAULT_SETTINGS};
   }
+  const kvEndpoint =
+    typeof raw.kvEndpoint === 'string' ? raw.kvEndpoint.trim() : DEFAULT_SETTINGS.kvEndpoint;
+  const kvModel = typeof raw.kvModel === 'string' ? raw.kvModel.trim() : DEFAULT_SETTINGS.kvModel;
   return {
     endpointUrl:
       typeof raw.endpointUrl === 'string' && raw.endpointUrl.trim().length > 0
@@ -63,9 +66,8 @@ export function normalizePluginSettings(raw: unknown): AetherPluginSettings {
       typeof raw.runDreamOnPush === 'boolean'
         ? raw.runDreamOnPush
         : DEFAULT_SETTINGS.runDreamOnPush,
-    kvEndpoint:
-      typeof raw.kvEndpoint === 'string' ? raw.kvEndpoint.trim() : DEFAULT_SETTINGS.kvEndpoint,
-    kvModel: typeof raw.kvModel === 'string' ? raw.kvModel.trim() : DEFAULT_SETTINGS.kvModel,
+    kvEndpoint,
+    kvModel,
   };
 }
 
@@ -107,4 +109,15 @@ export function buildLocalStartCommand(vaultPath: string, endpointUrl: string): 
 export function buildServiceInstallCommand(vaultPath: string, endpointUrl: string): string {
   const addr = resolveLocalHttpAddr(endpointUrl);
   return `aether-mcp service install --vault ${formatQuotedVaultPath(vaultPath)} --http-addr ${addr}`;
+}
+
+const UNREACHABLE = /ERR_CONNECTION|ECONNREFUSED|ERR_NAME_NOT_RESOLVED|ENOTFOUND|Failed to fetch/i;
+
+/** Turns a raw network failure into an actionable message; other errors pass through unchanged. */
+export function describeConnectionError(err: unknown, endpointUrl: string): string {
+  const detail = err instanceof Error ? err.message : String(err);
+  if (UNREACHABLE.test(detail)) {
+    return `Cannot reach aether-mcp at ${endpointUrl}. Is it running? Use "Local server quickstart" in the plugin settings to install and start it.`;
+  }
+  return detail;
 }
