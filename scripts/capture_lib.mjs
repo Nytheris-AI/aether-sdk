@@ -74,18 +74,32 @@ export class Page {
     }
   }
 
+  async mouseClick(x, y) {
+    for (const type of ['mousePressed', 'mouseReleased']) {
+      await this.send('Input.dispatchMouseEvent', {type, x, y, button: 'left', clickCount: 1});
+    }
+  }
+
   async type(text, {enter = false} = {}) {
     await this.send('Input.insertText', {text});
     if (enter) await this.key('Enter', 'Enter', 13);
   }
 
   async palette(command) {
-    await this.key('p', 'KeyP', 80, 2);
-    await sleep(500);
-    if (!(await this.eval('!!document.querySelector(".prompt")'))) throw new Error('command palette did not open');
-    await this.type(command);
-    await sleep(600);
-    await this.key('Enter', 'Enter', 13);
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await this.send('Page.bringToFront');
+      await this.key('p', 'KeyP', 80, 2);
+      await sleep(600);
+      if (await this.eval('!!document.querySelector(".prompt")')) {
+        await this.type(command);
+        await sleep(600);
+        await this.key('Enter', 'Enter', 13);
+        return;
+      }
+      await this.key('Escape', 'Escape', 27);
+      await sleep(800);
+    }
+    throw new Error('command palette did not open');
   }
 
   // Records the viewport as a WebM clip by polling screenshots while `scene` runs.
