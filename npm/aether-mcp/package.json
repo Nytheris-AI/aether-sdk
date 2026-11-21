@@ -1,6 +1,6 @@
 {
   "name": "@muninn-org/aether-mcp",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "description": "Run aether-mcp, the local memory server for Obsidian and AI agents, with npx. Downloads and verifies the matching release binary on first use.",
   "license": "Apache-2.0",
   "repository": {
@@ -20,7 +20,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "aetherMcpVersion": "0.1.2",
+  "aetherMcpVersion": "0.1.3",
   "scripts": {
     "test": "node --test"
   }
