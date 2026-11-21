@@ -195,8 +195,7 @@ async fn live_redis_contract_record_store() {
     assert!(!format!("{store:?}").contains("s3cr3t"));
 
     muninn_aether_adapters::contract::record_store(store.as_ref()).await;
-    muninn_aether_adapters::contract::record_store_concurrent_idempotency(Arc::clone(&store))
-        .await;
+    muninn_aether_adapters::contract::record_store_concurrent_idempotency(Arc::clone(&store)).await;
 
     // Empty and zero-limit queries return empty without error.
     let empty_ns = ProjectId::new(format!("empty-{}", Uuid::new_v4())).unwrap();
