@@ -108,7 +108,8 @@ fn run_init(parsed: &CliArgs) -> Result<()> {
             .get("mcpServers")
             .and_then(|m| m.get("aether-vault"))
         {
-            report.installed_clients = install_mcp_clients(&home, entry)?;
+            report.installed_clients =
+                install_mcp_clients(&home, entry, &detected_client_names(&home))?;
         }
     }
     print_init_report(&report, parsed, &exe)
@@ -571,9 +572,26 @@ fn merge_mcp_server_into_config(
     Ok(rendered)
 }
 
-fn install_mcp_clients(home_dir: &Path, server_entry: &Value) -> Result<Vec<PathBuf>> {
+/// Names of the MCP clients that have a config file or a folder on this machine.
+fn detected_client_names(home_dir: &Path) -> Vec<&'static str> {
+    known_mcp_client_configs(home_dir)
+        .into_iter()
+        .filter(|(_, dir, file)| dir.is_dir() || file.is_file())
+        .map(|(name, _, _)| name)
+        .collect()
+}
+
+/// Adds the server entry to the detected clients whose names are in `selected`.
+fn install_mcp_clients(
+    home_dir: &Path,
+    server_entry: &Value,
+    selected: &[&str],
+) -> Result<Vec<PathBuf>> {
     let mut updated = Vec::new();
-    for (_name, marker_dir, config_path) in known_mcp_client_configs(home_dir) {
+    for (name, marker_dir, config_path) in known_mcp_client_configs(home_dir) {
+        if !selected.contains(&name) {
+            continue;
+        }
         if !marker_dir.is_dir() && !config_path.is_file() {
             continue;
         }
@@ -1875,8 +1893,9 @@ mod tests {
             "args": ["--vault", "/tmp/v", "--watch-ms", "0"]
         });
 
-        let updated =
-            install_mcp_clients(home.path(), &entry).expect("install_mcp_clients must succeed");
+        let all = ["Cursor", "Claude Code", "Antigravity"];
+        let updated = install_mcp_clients(home.path(), &entry, &all)
+            .expect("install_mcp_clients must succeed");
         assert_eq!(updated.len(), 3);
         assert!(updated.contains(&cursor_dir.join("mcp.json")));
         assert!(updated.contains(&home.path().join(".claude.json")));
@@ -1893,9 +1912,32 @@ mod tests {
         assert_eq!(cursor_json["mcpServers"]["aether-vault"], entry);
 
         // Idempotent second run
-        let second = install_mcp_clients(home.path(), &entry)
+        let second = install_mcp_clients(home.path(), &entry, &all)
             .expect("second install_mcp_clients must succeed");
         assert_eq!(second.len(), 3);
+    }
+
+    #[test]
+    fn install_mcp_clients_writes_only_the_selected_clients() {
+        let home = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(home.path().join(".cursor")).expect("create .cursor");
+        fs::create_dir_all(home.path().join(".claude")).expect("create .claude");
+        let entry = json!({"command": "aether-mcp"});
+
+        let updated =
+            install_mcp_clients(home.path(), &entry, &["Cursor"]).expect("install must succeed");
+        assert_eq!(updated, vec![home.path().join(".cursor").join("mcp.json")]);
+        assert!(!home.path().join(".claude.json").exists());
+
+        let none = install_mcp_clients(home.path(), &entry, &[]).expect("install must succeed");
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn detected_client_names_lists_only_clients_with_a_config_or_folder() {
+        let home = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(home.path().join(".cursor")).expect("create .cursor");
+        assert_eq!(detected_client_names(home.path()), vec!["Cursor"]);
     }
 
     #[test]

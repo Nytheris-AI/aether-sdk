@@ -13,8 +13,8 @@ use serde_json::Value;
 
 use super::ui::{Level, Line, Ui};
 use super::{
-    build_mcp_json_snippet, collect_doctor_report, doctor_lines, install_mcp_clients,
-    known_mcp_client_configs, run_service, CliArgs, ServiceAction,
+    build_mcp_json_snippet, collect_doctor_report, doctor_lines, install_mcp_clients, run_service,
+    CliArgs, ServiceAction,
 };
 
 const PLUGIN_REPO_URL: &str = "https://github.com/muninn-hq/aether-memory";
@@ -131,7 +131,7 @@ pub fn apply_setup(
     cwd: &Path,
     exe: &Path,
     install_service: bool,
-    install_clients: bool,
+    clients: &[&str],
 ) -> Vec<Line> {
     let mut lines = Vec::new();
     let vault = parsed.vault_root.clone();
@@ -173,12 +173,19 @@ pub fn apply_setup(
         .as_ref()
         .map(|r| r.configured_clients.iter().filter(|c| !c.2).count())
         .unwrap_or(0);
-    if install_clients && pending > 0 {
+    if clients.is_empty() {
+        lines.push(
+            Line::new(Level::Info, "MCP clients: skipped")
+                .hint("add aether-vault to your client yourself, or run `aether-mcp setup` again"),
+        );
+    } else if pending == 0 {
+        lines.push(Line::new(Level::Ok, "MCP clients already configured"));
+    } else {
         let entry = build_mcp_json_snippet(parsed, vault, cwd, exe)
             .get("mcpServers")
             .and_then(|m| m.get("aether-vault"))
             .cloned();
-        match entry.map(|e| install_mcp_clients(home, &e)) {
+        match entry.map(|e| install_mcp_clients(home, &e, clients)) {
             Some(Ok(paths)) => {
                 for path in paths {
                     lines.push(Line::new(
@@ -190,12 +197,6 @@ pub fn apply_setup(
             Some(Err(err)) => lines.push(Line::new(Level::Fail, format!("MCP clients: {err}"))),
             None => {}
         }
-    } else if known_mcp_client_configs(home)
-        .iter()
-        .any(|(_, dir, file)| dir.is_dir() || file.is_file())
-        && pending == 0
-    {
-        lines.push(Line::new(Level::Ok, "MCP clients already configured"));
     }
 
     if let Ok(report) = collect_doctor_report(vault, Some(home)) {
@@ -208,6 +209,18 @@ fn next_steps() -> String {
     format!(
         "1. In Obsidian, install the Obsidian42 BRAT plugin, choose Add beta plugin, and enter {PLUGIN_REPO_URL}\n2. Enable AMC under Settings, Community plugins\n3. Ask your agent a question your notes answer\n\nGuide: {QUICKSTART_URL}"
     )
+}
+
+/// Lets the user check the MCP clients to configure. Nothing is checked by default, so
+/// leaving every box empty skips the step and the user can add aether-vault by hand.
+fn ask_clients<'a>(detected: &[&'a str]) -> Result<Vec<&'a str>> {
+    let mut select = cliclack::multiselect(
+        "Add aether-vault to which MCP clients? (space to check, enter to confirm)",
+    );
+    for name in detected {
+        select = select.item(*name, *name, "");
+    }
+    select.required(false).interact().map_err(prompt_err)
 }
 
 fn prompt_err(err: std::io::Error) -> AetherError {
@@ -363,25 +376,19 @@ pub fn run_setup(mut parsed: CliArgs) -> Result<()> {
     }
     parsed.vault_root = vault;
 
-    let clients = !parsed.skip_clients && {
-        let detected: Vec<_> = known_mcp_client_configs(&home)
-            .into_iter()
-            .filter(|(_, dir, file)| dir.is_dir() || file.is_file())
-            .map(|(name, _, _)| name)
-            .collect();
-        parsed.assume_yes
-            || detected.is_empty()
-            || cliclack::confirm(format!(
-                "Add aether-vault to your MCP clients ({})?",
-                detected.join(", ")
-            ))
-            .initial_value(true)
-            .interact()
-            .map_err(prompt_err)?
+    let detected = if parsed.skip_clients {
+        Vec::new()
+    } else {
+        super::detected_client_names(&home)
+    };
+    let clients = if parsed.assume_yes || detected.is_empty() {
+        detected
+    } else {
+        ask_clients(&detected)?
     };
 
     let install_service = !parsed.skip_service;
-    let lines = apply_setup(&mut parsed, &home, &cwd, &exe, install_service, clients);
+    let lines = apply_setup(&mut parsed, &home, &cwd, &exe, install_service, &clients);
     ui.print(&lines);
     ui.note("Next steps", &next_steps());
     ui.outro("Setup finished");
@@ -490,20 +497,20 @@ mod tests {
         let mut parsed = setup_args(&vault, &["--yes", "--no-service"]);
         let exe = Path::new("/bin/aether-mcp");
 
-        let skipped = apply_setup(&mut parsed, &home, &vault, exe, false, false);
+        let skipped = apply_setup(&mut parsed, &home, &vault, exe, false, &[]);
         assert!(!home.join(".cursor/mcp.json").exists());
         assert!(skipped
             .iter()
             .any(|l| l.text.contains("Background service: skipped")));
 
-        let first = apply_setup(&mut parsed, &home, &vault, exe, false, true);
+        let first = apply_setup(&mut parsed, &home, &vault, exe, false, &["Cursor"]);
         let config = std::fs::read_to_string(home.join(".cursor/mcp.json")).expect("cursor config");
         assert!(config.contains("aether-vault"));
         assert!(first
             .iter()
             .any(|l| l.text.starts_with("MCP client configured")));
 
-        let second = apply_setup(&mut parsed, &home, &vault, exe, false, true);
+        let second = apply_setup(&mut parsed, &home, &vault, exe, false, &["Cursor"]);
         assert!(second
             .iter()
             .any(|l| l.text == "MCP clients already configured"));
