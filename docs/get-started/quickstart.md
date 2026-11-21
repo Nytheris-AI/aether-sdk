@@ -18,7 +18,7 @@ You do not need Rust.
    `setup` finds your Obsidian vaults, installs the background service, adds `aether-vault` to your MCP clients (Cursor, Claude Desktop, Claude Code, Antigravity), checks that everything works, and prints the next steps.
    It asks before changing anything.
 
-   Prefer Node.js? Skip the installer and run `npx @muninn-org/aether-mcp setup`.
+   Prefer Node.js? Skip the installer and run `npm install -g @muninn-org/aether-mcp`, then `aether-mcp setup`.
    On Windows, use the PowerShell installer in [Install aether-mcp](./install-aether-mcp.md).
 
 2. **Install AMC in Obsidian.**

@@ -11,7 +11,7 @@ Aether gives your AI agents memory from your Obsidian vault.
 ## Start here
 
 1. **[Quickstart](get-started/quickstart.md).** Get an agent recalling your notes in about five minutes.
-2. **[Install aether-mcp](get-started/install-aether-mcp.md).** The installer with guided setup, `npx`, or Docker.
+2. **[Install aether-mcp](get-started/install-aether-mcp.md).** The installer with guided setup, the global npm package, or Docker.
 3. **[Install AMC](get-started/install-amc.md).** Plugin install, connection, and first sync.
 4. **[Connect an AI agent](get-started/connect-an-agent.md).** `stdio` or HTTP, and the three MCP tools.
 

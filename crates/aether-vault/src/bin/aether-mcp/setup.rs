@@ -13,8 +13,8 @@ use serde_json::Value;
 
 use super::ui::{Level, Line, Ui};
 use super::{
-    build_mcp_json_snippet, collect_doctor_report, doctor_lines, install_mcp_clients,
-    known_mcp_client_configs, run_service, CliArgs, ServiceAction,
+    build_mcp_json_snippet, collect_doctor_report, doctor_lines, install_mcp_clients, run_service,
+    CliArgs, ServiceAction,
 };
 
 const PLUGIN_REPO_URL: &str = "https://github.com/muninn-hq/aether-memory";
@@ -70,6 +70,25 @@ pub fn discover_vaults(home: &Path, appdata: Option<&Path>) -> Vec<PathBuf> {
     vaults
 }
 
+/// Subfolders of `dir` offered by the folder browser, sorted by path. Hidden folders are skipped.
+pub fn list_subfolders(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut folders: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            !path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with('.'))
+        })
+        .collect();
+    folders.sort();
+    folders
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum VaultChoice {
     /// The user named a vault, or exactly one was found.
@@ -112,7 +131,7 @@ pub fn apply_setup(
     cwd: &Path,
     exe: &Path,
     install_service: bool,
-    install_clients: bool,
+    clients: &[&str],
 ) -> Vec<Line> {
     let mut lines = Vec::new();
     let vault = parsed.vault_root.clone();
@@ -154,12 +173,19 @@ pub fn apply_setup(
         .as_ref()
         .map(|r| r.configured_clients.iter().filter(|c| !c.2).count())
         .unwrap_or(0);
-    if install_clients && pending > 0 {
+    if clients.is_empty() {
+        lines.push(
+            Line::new(Level::Info, "MCP clients: skipped")
+                .hint("add aether-vault to your client yourself, or run `aether-mcp setup` again"),
+        );
+    } else if pending == 0 {
+        lines.push(Line::new(Level::Ok, "MCP clients already configured"));
+    } else {
         let entry = build_mcp_json_snippet(parsed, vault, cwd, exe)
             .get("mcpServers")
             .and_then(|m| m.get("aether-vault"))
             .cloned();
-        match entry.map(|e| install_mcp_clients(home, &e)) {
+        match entry.map(|e| install_mcp_clients(home, &e, clients)) {
             Some(Ok(paths)) => {
                 for path in paths {
                     lines.push(Line::new(
@@ -171,12 +197,6 @@ pub fn apply_setup(
             Some(Err(err)) => lines.push(Line::new(Level::Fail, format!("MCP clients: {err}"))),
             None => {}
         }
-    } else if known_mcp_client_configs(home)
-        .iter()
-        .any(|(_, dir, file)| dir.is_dir() || file.is_file())
-        && pending == 0
-    {
-        lines.push(Line::new(Level::Ok, "MCP clients already configured"));
     }
 
     if let Ok(report) = collect_doctor_report(vault, Some(home)) {
@@ -191,11 +211,28 @@ fn next_steps() -> String {
     )
 }
 
+/// Lets the user check the MCP clients to configure. Nothing is checked by default, so
+/// leaving every box empty skips the step and the user can add aether-vault by hand.
+fn ask_clients<'a>(detected: &[&'a str]) -> Result<Vec<&'a str>> {
+    let mut select = cliclack::multiselect(
+        "Add aether-vault to which MCP clients? (space to check, enter to confirm)",
+    );
+    for name in detected {
+        select = select.item(*name, *name, "");
+    }
+    select.required(false).interact().map_err(prompt_err)
+}
+
 fn prompt_err(err: std::io::Error) -> AetherError {
     AetherError::InvalidInput(format!("setup was cancelled: {err}"))
 }
 
-fn ask_vault(choice: VaultChoice, assume_yes: bool, found_explicitly: bool) -> Result<PathBuf> {
+fn ask_vault(
+    choice: VaultChoice,
+    assume_yes: bool,
+    found_explicitly: bool,
+    cwd: &Path,
+) -> Result<PathBuf> {
     match choice {
         VaultChoice::Use(path) => {
             if !assume_yes
@@ -205,7 +242,7 @@ fn ask_vault(choice: VaultChoice, assume_yes: bool, found_explicitly: bool) -> R
                     .interact()
                     .map_err(prompt_err)?
             {
-                return ask_path();
+                return choose_from_menu(Vec::new(), cwd);
             }
             Ok(path)
         }
@@ -213,12 +250,7 @@ fn ask_vault(choice: VaultChoice, assume_yes: bool, found_explicitly: bool) -> R
             if assume_yes {
                 return Ok(vaults.into_iter().next().expect("at least two vaults"));
             }
-            let mut select = cliclack::select("Which vault should agents use?");
-            for (idx, path) in vaults.iter().enumerate() {
-                select = select.item(idx, path.display().to_string(), "");
-            }
-            let idx = select.interact().map_err(prompt_err)?;
-            Ok(vaults.into_iter().nth(idx).expect("selected index"))
+            choose_from_menu(vaults, cwd)
         }
         VaultChoice::Ask => {
             if assume_yes {
@@ -226,7 +258,76 @@ fn ask_vault(choice: VaultChoice, assume_yes: bool, found_explicitly: bool) -> R
                     "no Obsidian vault found, pass --vault <path>".into(),
                 ));
             }
-            ask_path()
+            choose_from_menu(Vec::new(), cwd)
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum VaultMenuItem {
+    Found(usize),
+    Current,
+    Browse,
+    Typed,
+}
+
+/// Asks which vault to use: a discovered vault, the current folder, a browsed folder, or a typed path.
+fn choose_from_menu(vaults: Vec<PathBuf>, cwd: &Path) -> Result<PathBuf> {
+    let mut select = cliclack::select("Which vault should agents use?");
+    for (idx, path) in vaults.iter().enumerate() {
+        select = select.item(VaultMenuItem::Found(idx), path.display().to_string(), "");
+    }
+    select = select
+        .item(
+            VaultMenuItem::Current,
+            "Current folder",
+            cwd.display().to_string(),
+        )
+        .item(VaultMenuItem::Browse, "Browse folders", "")
+        .item(VaultMenuItem::Typed, "Type a path", "");
+    match select.interact().map_err(prompt_err)? {
+        VaultMenuItem::Found(idx) => Ok(vaults.into_iter().nth(idx).expect("selected index")),
+        VaultMenuItem::Current => Ok(cwd.to_path_buf()),
+        VaultMenuItem::Browse => browse_for_folder(cwd),
+        VaultMenuItem::Typed => ask_path(),
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum BrowseStep {
+    Use,
+    Up,
+    Enter(usize),
+}
+
+/// Walks the folder tree from `start` until the user picks the current folder.
+fn browse_for_folder(start: &Path) -> Result<PathBuf> {
+    let mut current = start.to_path_buf();
+    loop {
+        let folders = list_subfolders(&current);
+        let mut select = cliclack::select(format!("Browse {}", current.display())).item(
+            BrowseStep::Use,
+            "Use this folder",
+            current.display().to_string(),
+        );
+        if let Some(parent) = current.parent() {
+            select = select.item(BrowseStep::Up, "..", parent.display().to_string());
+        }
+        for (idx, folder) in folders.iter().enumerate() {
+            let name = folder
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            select = select.item(BrowseStep::Enter(idx), name, "");
+        }
+        match select.interact().map_err(prompt_err)? {
+            BrowseStep::Use => return Ok(current),
+            BrowseStep::Up => {
+                if let Some(parent) = current.parent().map(Path::to_path_buf) {
+                    current = parent;
+                }
+            }
+            BrowseStep::Enter(idx) => current = folders[idx].clone(),
         }
     }
 }
@@ -266,7 +367,7 @@ pub fn run_setup(mut parsed: CliArgs) -> Result<()> {
     let explicit = parsed.vault_explicit.then(|| parsed.vault_root.clone());
     let was_explicit = explicit.is_some();
     let choice = choose_vault(explicit, discover_vaults(&home, appdata.as_deref()));
-    let vault = ask_vault(choice, parsed.assume_yes, was_explicit)?;
+    let vault = ask_vault(choice, parsed.assume_yes, was_explicit, &cwd)?;
     if !vault.is_dir() {
         return Err(AetherError::InvalidInput(format!(
             "vault `{}` is not a folder",
@@ -275,25 +376,19 @@ pub fn run_setup(mut parsed: CliArgs) -> Result<()> {
     }
     parsed.vault_root = vault;
 
-    let clients = !parsed.skip_clients && {
-        let detected: Vec<_> = known_mcp_client_configs(&home)
-            .into_iter()
-            .filter(|(_, dir, file)| dir.is_dir() || file.is_file())
-            .map(|(name, _, _)| name)
-            .collect();
-        parsed.assume_yes
-            || detected.is_empty()
-            || cliclack::confirm(format!(
-                "Add aether-vault to your MCP clients ({})?",
-                detected.join(", ")
-            ))
-            .initial_value(true)
-            .interact()
-            .map_err(prompt_err)?
+    let detected = if parsed.skip_clients {
+        Vec::new()
+    } else {
+        super::detected_client_names(&home)
+    };
+    let clients = if parsed.assume_yes || detected.is_empty() {
+        detected
+    } else {
+        ask_clients(&detected)?
     };
 
     let install_service = !parsed.skip_service;
-    let lines = apply_setup(&mut parsed, &home, &cwd, &exe, install_service, clients);
+    let lines = apply_setup(&mut parsed, &home, &cwd, &exe, install_service, &clients);
     ui.print(&lines);
     ui.note("Next steps", &next_steps());
     ui.outro("Setup finished");
@@ -375,6 +470,20 @@ mod tests {
     }
 
     #[test]
+    fn lists_visible_subfolders_sorted_and_skips_files_and_hidden_folders() {
+        let dir = temp_dir("browse");
+        std::fs::create_dir_all(dir.join("zeta")).expect("zeta");
+        std::fs::create_dir_all(dir.join("alpha")).expect("alpha");
+        std::fs::create_dir_all(dir.join(".obsidian")).expect("hidden");
+        std::fs::write(dir.join("note.md"), "x").expect("file");
+        assert_eq!(
+            list_subfolders(&dir),
+            vec![dir.join("alpha"), dir.join("zeta")]
+        );
+        assert!(list_subfolders(&dir.join("missing")).is_empty());
+    }
+
+    #[test]
     fn stdio_session_skips_scanning_only_when_the_service_does_it() {
         assert_eq!(stdio_watch_ms(true), Some(0));
         assert_eq!(stdio_watch_ms(false), None);
@@ -388,20 +497,20 @@ mod tests {
         let mut parsed = setup_args(&vault, &["--yes", "--no-service"]);
         let exe = Path::new("/bin/aether-mcp");
 
-        let skipped = apply_setup(&mut parsed, &home, &vault, exe, false, false);
+        let skipped = apply_setup(&mut parsed, &home, &vault, exe, false, &[]);
         assert!(!home.join(".cursor/mcp.json").exists());
         assert!(skipped
             .iter()
             .any(|l| l.text.contains("Background service: skipped")));
 
-        let first = apply_setup(&mut parsed, &home, &vault, exe, false, true);
+        let first = apply_setup(&mut parsed, &home, &vault, exe, false, &["Cursor"]);
         let config = std::fs::read_to_string(home.join(".cursor/mcp.json")).expect("cursor config");
         assert!(config.contains("aether-vault"));
         assert!(first
             .iter()
             .any(|l| l.text.starts_with("MCP client configured")));
 
-        let second = apply_setup(&mut parsed, &home, &vault, exe, false, true);
+        let second = apply_setup(&mut parsed, &home, &vault, exe, false, &["Cursor"]);
         assert!(second
             .iter()
             .any(|l| l.text == "MCP clients already configured"));

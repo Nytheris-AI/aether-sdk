@@ -1,6 +1,6 @@
 # Releasing the npm package
 
-`@muninn-org/aether-mcp` lets people run `aether-mcp` with `npx`.
+`@muninn-org/aether-mcp` lets people install `aether-mcp` globally with `npm install -g`, or run it once with `npx`.
 The package is a small launcher in `npm/aether-mcp/`. It downloads the matching `aether-mcp` release binary from GitHub Releases, checks its SHA-256 checksum, and runs it.
 
 It is published by CI, and only when the `release` branch is updated.

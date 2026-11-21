@@ -4,6 +4,8 @@ mod cli;
 mod setup;
 #[path = "aether-mcp/ui.rs"]
 mod ui;
+#[path = "aether-mcp/uninstall.rs"]
+mod uninstall;
 
 use std::fs;
 use std::future::Future;
@@ -39,6 +41,7 @@ enum RunMode {
     Init,
     Doctor,
     Setup,
+    Uninstall,
     Service(ServiceAction),
 }
 
@@ -60,6 +63,7 @@ struct CliArgs {
     assume_yes: bool,
     skip_clients: bool,
     skip_service: bool,
+    purge_vault: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +93,7 @@ async fn main() -> Result<()> {
         RunMode::Init => run_init(&parsed),
         RunMode::Doctor => run_doctor(&parsed),
         RunMode::Setup => setup::run_setup(parsed),
+        RunMode::Uninstall => uninstall::run_uninstall(&parsed),
         RunMode::Service(action) => run_service(action, &parsed),
         RunMode::StdioMcp | RunMode::HttpOnly => run_server(parsed).await,
     }
@@ -108,7 +113,8 @@ fn run_init(parsed: &CliArgs) -> Result<()> {
             .get("mcpServers")
             .and_then(|m| m.get("aether-vault"))
         {
-            report.installed_clients = install_mcp_clients(&home, entry)?;
+            report.installed_clients =
+                install_mcp_clients(&home, entry, &detected_client_names(&home))?;
         }
     }
     print_init_report(&report, parsed, &exe)
@@ -571,9 +577,26 @@ fn merge_mcp_server_into_config(
     Ok(rendered)
 }
 
-fn install_mcp_clients(home_dir: &Path, server_entry: &Value) -> Result<Vec<PathBuf>> {
+/// Names of the MCP clients that have a config file or a folder on this machine.
+fn detected_client_names(home_dir: &Path) -> Vec<&'static str> {
+    known_mcp_client_configs(home_dir)
+        .into_iter()
+        .filter(|(_, dir, file)| dir.is_dir() || file.is_file())
+        .map(|(name, _, _)| name)
+        .collect()
+}
+
+/// Adds the server entry to the detected clients whose names are in `selected`.
+fn install_mcp_clients(
+    home_dir: &Path,
+    server_entry: &Value,
+    selected: &[&str],
+) -> Result<Vec<PathBuf>> {
     let mut updated = Vec::new();
-    for (_name, marker_dir, config_path) in known_mcp_client_configs(home_dir) {
+    for (name, marker_dir, config_path) in known_mcp_client_configs(home_dir) {
+        if !selected.contains(&name) {
+            continue;
+        }
         if !marker_dir.is_dir() && !config_path.is_file() {
             continue;
         }
@@ -812,6 +835,17 @@ where
         }) => (true, yes, no_clients, no_service),
         _ => (false, false, false, false),
     };
+    let uninstall_flags = match raw.command {
+        Some(cli::Command::Uninstall { yes, purge_vault }) => Some((yes, purge_vault)),
+        _ => None,
+    };
+    let uninstall = uninstall_flags.is_some();
+    let (uninstall_yes, purge_vault) = uninstall_flags.unwrap_or((false, false));
+    if purge_vault && !vault_explicit {
+        return Err(AetherError::InvalidInput(
+            "`--purge-vault` needs `--vault <path>`, so it is clear which vault to clean".into(),
+        ));
+    }
     let service_action = match raw.command {
         Some(cli::Command::Service { action }) => Some(match action {
             cli::ServiceCmd::Install => ServiceAction::Install,
@@ -837,8 +871,14 @@ where
             "`setup` cannot be combined with `--init` or `--http-only`".into(),
         ));
     }
+    if uninstall && (init || http_only) {
+        return Err(AetherError::InvalidInput(
+            "`uninstall` cannot be combined with `--init` or `--http-only`".into(),
+        ));
+    }
     let mode = match (doctor, service_action, init, http_only) {
         _ if setup => RunMode::Setup,
+        _ if uninstall => RunMode::Uninstall,
         (true, Some(_), _, _) | (true, _, true, _) | (true, _, _, true) => {
             return Err(AetherError::InvalidInput(
                 "`doctor` cannot be combined with `service`, `--init`, or `--http-only`".into(),
@@ -897,9 +937,10 @@ where
         plugin_dir,
         install_clients,
         vault_explicit,
-        assume_yes,
+        assume_yes: assume_yes || uninstall_yes,
         skip_clients,
         skip_service,
+        purge_vault,
     })
 }
 
@@ -1875,8 +1916,9 @@ mod tests {
             "args": ["--vault", "/tmp/v", "--watch-ms", "0"]
         });
 
-        let updated =
-            install_mcp_clients(home.path(), &entry).expect("install_mcp_clients must succeed");
+        let all = ["Cursor", "Claude Code", "Antigravity"];
+        let updated = install_mcp_clients(home.path(), &entry, &all)
+            .expect("install_mcp_clients must succeed");
         assert_eq!(updated.len(), 3);
         assert!(updated.contains(&cursor_dir.join("mcp.json")));
         assert!(updated.contains(&home.path().join(".claude.json")));
@@ -1893,9 +1935,71 @@ mod tests {
         assert_eq!(cursor_json["mcpServers"]["aether-vault"], entry);
 
         // Idempotent second run
-        let second = install_mcp_clients(home.path(), &entry)
+        let second = install_mcp_clients(home.path(), &entry, &all)
             .expect("second install_mcp_clients must succeed");
         assert_eq!(second.len(), 3);
+    }
+
+    #[test]
+    fn install_mcp_clients_writes_only_the_selected_clients() {
+        let home = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(home.path().join(".cursor")).expect("create .cursor");
+        fs::create_dir_all(home.path().join(".claude")).expect("create .claude");
+        let entry = json!({"command": "aether-mcp"});
+
+        let updated =
+            install_mcp_clients(home.path(), &entry, &["Cursor"]).expect("install must succeed");
+        assert_eq!(updated, vec![home.path().join(".cursor").join("mcp.json")]);
+        assert!(!home.path().join(".claude.json").exists());
+
+        let none = install_mcp_clients(home.path(), &entry, &[]).expect("install must succeed");
+        assert!(none.is_empty());
+    }
+
+    #[test]
+    fn detected_client_names_lists_only_clients_with_a_config_or_folder() {
+        let home = tempfile::tempdir().expect("tempdir");
+        fs::create_dir_all(home.path().join(".cursor")).expect("create .cursor");
+        assert_eq!(detected_client_names(home.path()), vec!["Cursor"]);
+    }
+
+    #[test]
+    fn uninstall_parses_alone_and_rejects_init_and_http_only() {
+        let parsed = parse_cli_args(&args(&["aether-mcp", "uninstall"]))
+            .expect("uninstall subcommand must parse");
+        assert_eq!(parsed.mode, RunMode::Uninstall);
+        for extra in [
+            &["--init"][..],
+            &["--http-only", "--http-addr", "127.0.0.1:1"][..],
+        ] {
+            let mut argv = vec!["aether-mcp", "uninstall"];
+            argv.extend_from_slice(extra);
+            assert!(parse_cli_args(&args(&argv)).is_err(), "{extra:?} must fail");
+        }
+    }
+
+    #[test]
+    fn uninstall_flags_parse_and_purge_needs_an_explicit_vault() {
+        let parsed = parse_cli_args(&args(&[
+            "aether-mcp",
+            "uninstall",
+            "--yes",
+            "--purge-vault",
+            "--vault",
+            "/v",
+        ]))
+        .expect("uninstall flags must parse");
+        assert!(parsed.assume_yes && parsed.purge_vault && parsed.vault_explicit);
+        assert!(
+            !parse_cli_args(&args(&["aether-mcp", "uninstall"]))
+                .expect("plain uninstall parses")
+                .purge_vault
+        );
+        assert!(parse_cli_args_with_env(
+            &args(&["aether-mcp", "uninstall", "--purge-vault"]),
+            |_| None
+        )
+        .is_err());
     }
 
     #[test]

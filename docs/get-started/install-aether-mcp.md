@@ -38,18 +38,20 @@ aether-mcp setup
 
 `setup` does the following, and asks before each change:
 
-1. Finds the vaults Obsidian knows about and asks which one to use. You can type a path instead.
+1. Finds the vaults Obsidian knows about and asks which one to use. You can also choose the current folder, browse for a folder, or type a path.
 2. Installs the background service for that vault (`launchd` on macOS, `systemd --user` on Linux, Task Scheduler on Windows) and checks that the server answers.
-3. Adds `aether-vault` to the MCP clients it finds, without touching their other servers.
+3. Shows a checklist of the MCP clients it finds. Nothing is checked by default, so check the clients you want, or leave them all unchecked and add `aether-vault` to your IDE yourself. Checked clients keep their other servers.
 4. Runs the same checks as `aether-mcp doctor` and prints what to do next.
 
 Running it again is safe, and clients that are already configured are left alone.
+
+To remove everything again, run `aether-mcp uninstall`. It stops the background service and removes `aether-vault` from the MCP clients, keeping their other servers. Add `--vault <path>` to also remove that vault's AMC plugin files, and `--purge-vault` to delete its index and `Aether/` folder. Your notes are never deleted. The command asks before it changes anything, or pass `--yes` to skip the question.
 
 | Flag | Effect |
 | --- | --- |
 | `--vault <path>` | Use this vault instead of asking |
 | `--yes` | Accept the defaults without asking. Required when there is no terminal, for example in a script |
-| `--no-clients` | Do not change MCP client configuration |
+| `--no-clients` | Do not change MCP client configuration (the checklist is not shown) |
 | `--no-service` | Do not install the background service |
 
 Set `AETHER_NO_SETUP=1` before running the installer to skip the offer.
@@ -79,17 +81,20 @@ aether-mcp --vault /path/to/vault --watch-ms 2000 --http-addr 127.0.0.1:14771 --
 The server stores its index at `<vault>/.aether/aether.sqlite` and checks the vault for changes every `2000` milliseconds.
 Without `--require-auth`, it accepts connections only from `127.0.0.1` and `::1`.
 
-## Option B: npx (no installer)
+## Option B: npm (Node.js 18 or later)
 
-If you have Node.js 18 or later, run the guided setup without installing anything first:
+Install the npm package globally, which puts `aether-mcp` on your PATH:
 
 ```bash
-npx @muninn-org/aether-mcp setup
+npm install -g @muninn-org/aether-mcp
+aether-mcp setup
 ```
 
 On first use the launcher downloads the matching release binary from GitHub Releases, checks its SHA-256 checksum, and caches it.
 Later runs start immediately, and every argument is passed to `aether-mcp` unchanged.
 It needs `tar` on your PATH, which macOS, Linux, and Windows 10 and later include.
+
+If you do not want a global install, `npx @muninn-org/aether-mcp setup` runs the same launcher without installing it.
 
 An MCP client can also start the server through `npx`:
 
