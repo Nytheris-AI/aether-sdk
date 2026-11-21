@@ -20,7 +20,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "aetherMcpVersion": "0.1.1",
+  "aetherMcpVersion": "0.1.2",
   "scripts": {
     "test": "node --test"
   }
