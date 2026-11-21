@@ -1,5 +1,7 @@
 #[path = "aether-mcp/cli.rs"]
 mod cli;
+#[path = "aether-mcp/setup.rs"]
+mod setup;
 #[path = "aether-mcp/ui.rs"]
 mod ui;
 
@@ -36,6 +38,7 @@ enum RunMode {
     HttpOnly,
     Init,
     Doctor,
+    Setup,
     Service(ServiceAction),
 }
 
@@ -53,6 +56,10 @@ struct CliArgs {
     kv_model: Option<ModelId>,
     plugin_dir: Option<PathBuf>,
     install_clients: bool,
+    vault_explicit: bool,
+    assume_yes: bool,
+    skip_clients: bool,
+    skip_service: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +88,7 @@ async fn main() -> Result<()> {
     match parsed.mode {
         RunMode::Init => run_init(&parsed),
         RunMode::Doctor => run_doctor(&parsed),
+        RunMode::Setup => setup::run_setup(parsed),
         RunMode::Service(action) => run_service(action, &parsed),
         RunMode::StdioMcp | RunMode::HttpOnly => run_server(parsed).await,
     }
@@ -762,6 +770,7 @@ fn parse_cli_args_with_env<F>(args: &[String], env: F) -> Result<CliArgs>
 where
     F: Fn(&str) -> Option<String>,
 {
+    let mut vault_explicit = env("AETHER_VAULT_PATH").is_some();
     let mut vault = env("AETHER_VAULT_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| default_vault_path(&env));
@@ -780,6 +789,7 @@ where
         .map_err(|err| AetherError::InvalidInput(err.to_string()))?;
     if let Some(path) = raw.vault {
         vault = path;
+        vault_explicit = true;
     }
     let db = raw.db;
     if let Some(ms) = raw.watch_ms {
@@ -794,6 +804,14 @@ where
     require_auth |= raw.require_auth;
     let (http_only, init, install_clients) = (raw.http_only, raw.init, raw.install_clients);
     let doctor = matches!(raw.command, Some(cli::Command::Doctor));
+    let (setup, assume_yes, skip_clients, skip_service) = match raw.command {
+        Some(cli::Command::Setup {
+            yes,
+            no_clients,
+            no_service,
+        }) => (true, yes, no_clients, no_service),
+        _ => (false, false, false, false),
+    };
     let service_action = match raw.command {
         Some(cli::Command::Service { action }) => Some(match action {
             cli::ServiceCmd::Install => ServiceAction::Install,
@@ -814,7 +832,13 @@ where
         ),
         None => None,
     };
+    if setup && (init || http_only) {
+        return Err(AetherError::InvalidInput(
+            "`setup` cannot be combined with `--init` or `--http-only`".into(),
+        ));
+    }
     let mode = match (doctor, service_action, init, http_only) {
+        _ if setup => RunMode::Setup,
         (true, Some(_), _, _) | (true, _, true, _) | (true, _, _, true) => {
             return Err(AetherError::InvalidInput(
                 "`doctor` cannot be combined with `service`, `--init`, or `--http-only`".into(),
@@ -872,6 +896,10 @@ where
         kv_model,
         plugin_dir,
         install_clients,
+        vault_explicit,
+        assume_yes,
+        skip_clients,
+        skip_service,
     })
 }
 

@@ -86,6 +86,18 @@ impl Ui {
         }
     }
 
+    pub fn fancy(&self) -> bool {
+        self.fancy
+    }
+
+    pub fn note(&self, title: &str, body: &str) {
+        if self.fancy {
+            let _ = cliclack::note(title, body);
+        } else {
+            println!("{title}:\n{body}");
+        }
+    }
+
     pub fn intro(&self, title: &str) {
         if self.fancy {
             let _ = cliclack::intro(title);

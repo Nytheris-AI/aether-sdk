@@ -77,6 +77,18 @@ pub enum Command {
     },
     /// Check the vault, the server binary, and detected MCP client configs
     Doctor,
+    /// Guided first-run setup: find your vault, install the service, configure MCP clients
+    Setup {
+        /// Accept the defaults instead of asking questions
+        #[arg(long)]
+        yes: bool,
+        /// Do not add aether-vault to MCP client configs
+        #[arg(long)]
+        no_clients: bool,
+        /// Do not install the background service
+        #[arg(long)]
+        no_service: bool,
+    },
     /// Print a shell completion script to stdout
     Completions {
         #[arg(value_enum)]
