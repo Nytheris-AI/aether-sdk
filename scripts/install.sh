@@ -23,8 +23,9 @@ case "${OS}" in
   Linux)
     case "${ARCH}" in
       x86_64|amd64) TARGET="x86_64-unknown-linux-gnu" ;;
+      aarch64|arm64) TARGET="aarch64-unknown-linux-gnu" ;;
       *)
-        echo "Error: unsupported Linux architecture '${ARCH}'. Supported: x86_64." >&2
+        echo "Error: unsupported Linux architecture '${ARCH}'. Supported: x86_64, aarch64." >&2
         exit 1
         ;;
     esac
@@ -63,8 +64,12 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
 echo "Downloading ${BIN_NAME} ${TAG} (${TARGET})..."
-curl -fsSL "${BASE_URL}/${ARCHIVE}" -o "${TMP_DIR}/${ARCHIVE}"
-curl -fsSL "${BASE_URL}/${ARCHIVE}.sha256" -o "${TMP_DIR}/${ARCHIVE}.sha256"
+if ! curl -fsSL "${BASE_URL}/${ARCHIVE}" -o "${TMP_DIR}/${ARCHIVE}" \
+  || ! curl -fsSL "${BASE_URL}/${ARCHIVE}.sha256" -o "${TMP_DIR}/${ARCHIVE}.sha256"; then
+  echo "Error: could not download ${ARCHIVE}." >&2
+  echo "Release ${TAG} may not include a ${TARGET} build. See https://github.com/${REPO}/releases" >&2
+  exit 1
+fi
 
 (
   cd "${TMP_DIR}"
@@ -90,8 +95,34 @@ case ":${PATH}:" in
     echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
     ;;
 esac
+
+# Releases from before `setup` existed do not list it in --help (stdin is closed so an old
+# build that ignores --help exits instead of waiting for input).
+HAS_SETUP=""
+if "${INSTALL_DIR}/${BIN_NAME}" --help </dev/null 2>&1 | grep -q '^  setup'; then
+  HAS_SETUP=1
+fi
+
+# Offer the guided setup when a terminal is available. `curl | sh` has no stdin, so ask and run
+# setup on /dev/tty. Set AETHER_NO_SETUP=1 to skip.
+if [ -n "${HAS_SETUP}" ] && [ -z "${AETHER_NO_SETUP:-}" ] && ( : </dev/tty ) 2>/dev/null; then
+  printf "\nRun the guided setup now? [Y/n] "
+  read -r ANSWER </dev/tty || ANSWER="n"
+  case "${ANSWER}" in
+    n|N|no|NO) ;;
+    *)
+      "${INSTALL_DIR}/${BIN_NAME}" setup </dev/tty
+      exit $?
+      ;;
+  esac
+fi
+
 echo ""
 echo "Next steps:"
+if [ -n "${HAS_SETUP}" ]; then
+  echo "  ${INSTALL_DIR}/${BIN_NAME} setup"
+  echo "  # or install the service yourself:"
+fi
 echo "  ${INSTALL_DIR}/${BIN_NAME} service install --vault /path/to/your/vault"
 echo "  # or run in the foreground:"
 echo "  ${INSTALL_DIR}/${BIN_NAME} --vault /path/to/your/vault --http-addr 127.0.0.1:14771 --http-only"
