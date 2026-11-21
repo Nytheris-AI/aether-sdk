@@ -54,8 +54,29 @@ try {
 
   $InstalledExe = Join-Path $InstallDir $BinName
   Write-Host "Installed aether-mcp $Tag to $InstalledExe"
+  # Releases from before `setup` existed do not list it in --help. An empty stdin stops an old
+  # build that ignores --help from waiting for input, and a local scope keeps stderr text from
+  # becoming a terminating error.
+  $HelpText = & {
+    $ErrorActionPreference = 'Continue'
+    '' | & $InstalledExe --help 2>&1 | Out-String
+  }
+  $HasSetup = $HelpText -match '(?m)^\s+setup\b'
+
+  if ($HasSetup -and -not $env:AETHER_NO_SETUP -and [Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+    $Answer = Read-Host 'Run the guided setup now? [Y/n]'
+    if ($Answer -notmatch '^(n|no)$') {
+      & $InstalledExe setup
+      return
+    }
+  }
+
   Write-Host ''
   Write-Host 'Next steps:'
+  if ($HasSetup) {
+    Write-Host "  $InstalledExe setup"
+    Write-Host '  # or install the service yourself:'
+  }
   Write-Host "  $InstalledExe service install --vault C:\path\to\your\vault"
   Write-Host '  # or run in the foreground:'
   Write-Host "  $InstalledExe --vault C:\path\to\your\vault --http-addr 127.0.0.1:14771 --http-only"
