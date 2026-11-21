@@ -4,6 +4,8 @@ mod cli;
 mod setup;
 #[path = "aether-mcp/ui.rs"]
 mod ui;
+#[path = "aether-mcp/uninstall.rs"]
+mod uninstall;
 
 use std::fs;
 use std::future::Future;
@@ -39,6 +41,7 @@ enum RunMode {
     Init,
     Doctor,
     Setup,
+    Uninstall,
     Service(ServiceAction),
 }
 
@@ -89,6 +92,7 @@ async fn main() -> Result<()> {
         RunMode::Init => run_init(&parsed),
         RunMode::Doctor => run_doctor(&parsed),
         RunMode::Setup => setup::run_setup(parsed),
+        RunMode::Uninstall => uninstall::run_uninstall(&parsed),
         RunMode::Service(action) => run_service(action, &parsed),
         RunMode::StdioMcp | RunMode::HttpOnly => run_server(parsed).await,
     }
@@ -830,6 +834,7 @@ where
         }) => (true, yes, no_clients, no_service),
         _ => (false, false, false, false),
     };
+    let uninstall = matches!(raw.command, Some(cli::Command::Uninstall));
     let service_action = match raw.command {
         Some(cli::Command::Service { action }) => Some(match action {
             cli::ServiceCmd::Install => ServiceAction::Install,
@@ -855,8 +860,14 @@ where
             "`setup` cannot be combined with `--init` or `--http-only`".into(),
         ));
     }
+    if uninstall && (init || http_only) {
+        return Err(AetherError::InvalidInput(
+            "`uninstall` cannot be combined with `--init` or `--http-only`".into(),
+        ));
+    }
     let mode = match (doctor, service_action, init, http_only) {
         _ if setup => RunMode::Setup,
+        _ if uninstall => RunMode::Uninstall,
         (true, Some(_), _, _) | (true, _, true, _) | (true, _, _, true) => {
             return Err(AetherError::InvalidInput(
                 "`doctor` cannot be combined with `service`, `--init`, or `--http-only`".into(),
@@ -1938,6 +1949,21 @@ mod tests {
         let home = tempfile::tempdir().expect("tempdir");
         fs::create_dir_all(home.path().join(".cursor")).expect("create .cursor");
         assert_eq!(detected_client_names(home.path()), vec!["Cursor"]);
+    }
+
+    #[test]
+    fn uninstall_parses_alone_and_rejects_init_and_http_only() {
+        let parsed = parse_cli_args(&args(&["aether-mcp", "uninstall"]))
+            .expect("uninstall subcommand must parse");
+        assert_eq!(parsed.mode, RunMode::Uninstall);
+        for extra in [
+            &["--init"][..],
+            &["--http-only", "--http-addr", "127.0.0.1:1"][..],
+        ] {
+            let mut argv = vec!["aether-mcp", "uninstall"];
+            argv.extend_from_slice(extra);
+            assert!(parse_cli_args(&args(&argv)).is_err(), "{extra:?} must fail");
+        }
     }
 
     #[test]
