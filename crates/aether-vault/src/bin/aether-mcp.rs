@@ -1,5 +1,7 @@
 #[path = "aether-mcp/cli.rs"]
 mod cli;
+#[path = "aether-mcp/ui.rs"]
+mod ui;
 
 use std::fs;
 use std::future::Future;
@@ -628,6 +630,49 @@ fn collect_doctor_report(vault_root: &Path, home_dir: Option<&Path>) -> Result<D
     })
 }
 
+fn doctor_lines(report: &DoctorReport, exe: &Path) -> Vec<ui::Line> {
+    use ui::{Level, Line};
+    let vault = report.vault_root.display();
+    let mut lines = vec![Line::new(
+        Level::Ok,
+        format!("aether-mcp binary: {}", exe.display()),
+    )];
+    lines.push(if report.vault_exists {
+        Line::new(Level::Ok, format!("vault path: {vault} (ok)"))
+    } else {
+        Line::new(Level::Fail, format!("vault path: {vault} (missing)"))
+            .hint("create the folder, or pass --vault <path> pointing at your Obsidian vault")
+    });
+    lines.push(if report.sqlite_exists {
+        Line::new(Level::Ok, "sqlite index: ok (.aether/aether.sqlite)")
+    } else {
+        Line::new(Level::Info, "sqlite index: not initialized yet")
+            .hint("it is created the first time aether-mcp runs on this vault")
+    });
+    if report.configured_clients.is_empty() {
+        lines.push(
+            Line::new(Level::Warn, "mcp clients: none detected").hint(
+                "install Cursor, Claude Desktop, Claude Code, or Antigravity, then run `aether-mcp --init --install-clients`",
+            ),
+        );
+    } else {
+        lines.push(Line::new(Level::Info, "mcp clients:"));
+        for (name, path, configured) in &report.configured_clients {
+            let path = path.display();
+            lines.push(if *configured {
+                Line::new(Level::Ok, format!("{name}: configured ({path})")).nested()
+            } else {
+                Line::new(Level::Warn, format!("{name}: not configured ({path})"))
+                    .nested()
+                    .hint(format!(
+                        "run `aether-mcp --init --install-clients --vault {vault}`"
+                    ))
+            });
+        }
+    }
+    lines
+}
+
 fn run_doctor(parsed: &CliArgs) -> Result<()> {
     let cwd = std::env::current_dir().map_err(|err| AetherError::Permanent {
         connector: "aether-doctor",
@@ -638,36 +683,16 @@ fn run_doctor(parsed: &CliArgs) -> Result<()> {
     let report = collect_doctor_report(&vault, home.as_deref())?;
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("aether-mcp"));
 
-    println!("aether-mcp binary: {}", exe.display());
-    println!(
-        "vault path: {} ({})",
-        report.vault_root.display(),
-        if report.vault_exists { "ok" } else { "missing" }
-    );
-    println!(
-        "sqlite index: {}",
-        if report.sqlite_exists {
-            "ok (.aether/aether.sqlite)"
-        } else {
-            "not initialized yet"
-        }
-    );
-    if report.configured_clients.is_empty() {
-        println!("mcp clients: none detected");
+    let lines = doctor_lines(&report, &exe);
+    let ui = ui::Ui::detect();
+    ui.intro("aether-mcp doctor");
+    ui.print(&lines);
+    let healthy = lines.iter().all(|l| l.level != ui::Level::Fail);
+    ui.outro(if healthy {
+        "No blocking problems found"
     } else {
-        println!("mcp clients:");
-        for (name, path, configured) in &report.configured_clients {
-            println!(
-                "  {name}: {} ({})",
-                if *configured {
-                    "configured"
-                } else {
-                    "not configured"
-                },
-                path.display()
-            );
-        }
-    }
+        "Fix the items marked above, then run `aether-mcp doctor` again"
+    });
 
     if !report.vault_exists {
         return Err(AetherError::InvalidInput(format!(
@@ -1018,10 +1043,10 @@ fn run_service(action: ServiceAction, parsed: &CliArgs) -> Result<()> {
                     "systemctl",
                     &["--user", "enable", "--now", "aether-mcp.service"],
                 )?;
-                println!(
+                ui::Ui::detect().success(&format!(
                     "Installed and started systemd user service: {}",
                     unit_path.display()
-                );
+                ));
                 Ok(())
             }
             ServiceAction::Uninstall => {
@@ -1037,7 +1062,7 @@ fn run_service(action: ServiceAction, parsed: &CliArgs) -> Result<()> {
                         .args(["--user", "daemon-reload"])
                         .output();
                 }
-                println!("Uninstalled aether-mcp systemd user service.");
+                ui::Ui::detect().success("Uninstalled aether-mcp systemd user service.");
                 Ok(())
             }
             ServiceAction::Status => {
@@ -1103,10 +1128,10 @@ fn run_service(action: ServiceAction, parsed: &CliArgs) -> Result<()> {
                     .args(["unload", &plist_str])
                     .output();
                 run_command_checked("launchctl", &["load", "-w", &plist_str])?;
-                println!(
+                ui::Ui::detect().success(&format!(
                     "Installed and loaded launchd agent: {}",
                     plist_path.display()
-                );
+                ));
                 Ok(())
             }
             ServiceAction::Uninstall => {
@@ -1119,7 +1144,7 @@ fn run_service(action: ServiceAction, parsed: &CliArgs) -> Result<()> {
                         message: format!("failed to remove {}: {err}", plist_path.display()),
                     })?;
                 }
-                println!("Uninstalled aether-mcp launchd agent.");
+                ui::Ui::detect().success("Uninstalled aether-mcp launchd agent.");
                 Ok(())
             }
             ServiceAction::Status => {
@@ -1167,7 +1192,8 @@ fn run_service(action: ServiceAction, parsed: &CliArgs) -> Result<()> {
                 let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
                 run_command_checked("schtasks", &arg_refs)?;
                 run_command_checked("schtasks", &["/Run", "/TN", "AetherMcpService"])?;
-                println!("Installed and started Windows scheduled task: AetherMcpService");
+                ui::Ui::detect()
+                    .success("Installed and started Windows scheduled task: AetherMcpService");
                 Ok(())
             }
             ServiceAction::Uninstall => {
@@ -1177,7 +1203,7 @@ fn run_service(action: ServiceAction, parsed: &CliArgs) -> Result<()> {
                 let _ = std::process::Command::new("schtasks")
                     .args(["/Delete", "/F", "/TN", "AetherMcpService"])
                     .output();
-                println!("Uninstalled Windows scheduled task: AetherMcpService");
+                ui::Ui::detect().success("Uninstalled Windows scheduled task: AetherMcpService");
                 Ok(())
             }
             ServiceAction::Status => {
@@ -1910,5 +1936,40 @@ mod tests {
     fn completions_script_mentions_service_subcommand() {
         let script = cli::completions_script(clap_complete::Shell::Bash);
         assert!(script.contains("service"), "got: {script}");
+    }
+
+    #[test]
+    fn doctor_plain_output_matches_the_previous_text() {
+        let report = DoctorReport {
+            vault_root: PathBuf::from("/v"),
+            vault_exists: true,
+            sqlite_exists: true,
+            configured_clients: vec![("Cursor", PathBuf::from("/c/mcp.json"), true)],
+        };
+        let text = ui::render_plain(&doctor_lines(&report, Path::new("/bin/aether-mcp")));
+        assert_eq!(
+            text,
+            "aether-mcp binary: /bin/aether-mcp\nvault path: /v (ok)\nsqlite index: ok (.aether/aether.sqlite)\nmcp clients:\n  Cursor: configured (/c/mcp.json)\n"
+        );
+    }
+
+    #[test]
+    fn doctor_lines_add_fix_hints_for_problems() {
+        let report = DoctorReport {
+            vault_root: PathBuf::from("/v"),
+            vault_exists: false,
+            sqlite_exists: false,
+            configured_clients: vec![("Cursor", PathBuf::from("/c/mcp.json"), false)],
+        };
+        let lines = doctor_lines(&report, Path::new("/bin/aether-mcp"));
+        let vault = &lines[1];
+        assert_eq!(vault.level, ui::Level::Fail);
+        assert!(vault.hint.as_deref().is_some_and(|h| h.contains("--vault")));
+        let client = lines.last().expect("client line");
+        assert_eq!(client.level, ui::Level::Warn);
+        assert!(client
+            .hint
+            .as_deref()
+            .is_some_and(|h| h.contains("--init --install-clients")));
     }
 }
