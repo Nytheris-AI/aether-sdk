@@ -446,7 +446,9 @@ fn home_dir_from_env<F>(env: &F) -> Option<PathBuf>
 where
     F: Fn(&str) -> Option<String>,
 {
-    env("HOME").or_else(|| env("USERPROFILE")).map(PathBuf::from)
+    env("HOME")
+        .or_else(|| env("USERPROFILE"))
+        .map(PathBuf::from)
 }
 
 fn default_vault_path<F>(env: &F) -> PathBuf
@@ -562,14 +564,17 @@ fn install_mcp_clients(home_dir: &Path, server_entry: &Value) -> Result<Vec<Path
             })?;
         }
         let existing = if config_path.is_file() {
-            Some(fs::read_to_string(&config_path).map_err(|err| AetherError::Permanent {
-                connector: "aether-init",
-                message: format!("failed to read `{}`: {err}", config_path.display()),
-            })?)
+            Some(
+                fs::read_to_string(&config_path).map_err(|err| AetherError::Permanent {
+                    connector: "aether-init",
+                    message: format!("failed to read `{}`: {err}", config_path.display()),
+                })?,
+            )
         } else {
             None
         };
-        let rendered = merge_mcp_server_into_config(existing.as_deref(), "aether-vault", server_entry)?;
+        let rendered =
+            merge_mcp_server_into_config(existing.as_deref(), "aether-vault", server_entry)?;
         write_file_atomic(&config_path, rendered.as_bytes())?;
         updated.push(config_path);
     }
@@ -1874,12 +1879,15 @@ mod tests {
             &fs::read_to_string(cursor_dir.join("mcp.json")).expect("read cursor"),
         )
         .expect("parse cursor");
-        assert_eq!(cursor_json["mcpServers"]["existing"]["command"], json!("echo"));
+        assert_eq!(
+            cursor_json["mcpServers"]["existing"]["command"],
+            json!("echo")
+        );
         assert_eq!(cursor_json["mcpServers"]["aether-vault"], entry);
 
         // Idempotent second run
-        let second =
-            install_mcp_clients(home.path(), &entry).expect("second install_mcp_clients must succeed");
+        let second = install_mcp_clients(home.path(), &entry)
+            .expect("second install_mcp_clients must succeed");
         assert_eq!(second.len(), 3);
     }
 
