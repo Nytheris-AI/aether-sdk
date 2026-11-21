@@ -6,15 +6,19 @@ sidebar_position: 1
 
 Get an AI agent to recall your Obsidian notes in about five minutes.
 You need Obsidian Desktop 1.5.0 or later and an MCP client such as Cursor, Claude Desktop, Claude Code, or Antigravity.
-You do not need Rust or Node.js.
+You do not need Rust.
 
-1. **Install `aether-mcp` and start it for your vault.**
+1. **Install `aether-mcp` and run the guided setup.**
 
    ```bash
    curl -fsSL https://raw.githubusercontent.com/muninn-hq/aether-sdk/main/scripts/install.sh | sh
-   aether-mcp service install --vault /path/to/vault
    ```
 
+   The installer offers to run `aether-mcp setup` when it finishes.
+   `setup` finds your Obsidian vaults, installs the background service, adds `aether-vault` to your MCP clients (Cursor, Claude Desktop, Claude Code, Antigravity), checks that everything works, and prints the next steps.
+   It asks before changing anything.
+
+   Prefer Node.js? Skip the installer and run `npx @muninn-org/aether-mcp setup`.
    On Windows, use the PowerShell installer in [Install aether-mcp](./install-aether-mcp.md).
 
 2. **Install AMC in Obsidian.**
@@ -26,19 +30,10 @@ You do not need Rust or Node.js.
    Open **Settings**, then **AMC**.
    The card at the top should say **Connected to aether-mcp**.
 
-4. **Connect your agent.**
-   Add this to your MCP client configuration:
-
-   ```json
-   {
-     "mcpServers": {
-       "aether-vault": {
-         "command": "aether-mcp",
-         "args": ["--vault", "/path/to/vault", "--watch-ms", "0"]
-       }
-     }
-   }
-   ```
+4. **Restart your agent.**
+   `setup` already added the server to your detected MCP clients.
+   Restart the client once so it picks it up.
+   To configure a client by hand, see [Connect an AI agent](./connect-an-agent.md).
 
 5. **Ask your agent about a note.**
    Ask something your vault answers, such as "What did I decide about the database schema?".
