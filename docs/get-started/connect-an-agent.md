@@ -6,6 +6,9 @@ sidebar_position: 4
 
 Any MCP-compatible client can use your vault through `aether-mcp`, either over `stdio` or over HTTP.
 
+If you ran `aether-mcp setup`, your detected clients are already configured and you only need to restart them.
+The rest of this page is for configuring a client by hand.
+
 ## Connect over stdio
 
 Add `aether-mcp` to your client's `mcpServers` configuration.
@@ -26,7 +29,9 @@ Pass `--watch-ms 0` when the background service from [Install aether-mcp](./inst
 Both processes share `<vault>/.aether/aether.sqlite` without running duplicate scans.
 If the server uses `--require-auth`, add `"--api-key"` and your scoped `aek_...` token to `args`.
 
-Run `aether-mcp --init --install-clients --vault /path/to/vault` to have the installer configure detected clients for you.
+To start the server through `npx` instead of an installed binary, use `"command": "npx"` and put `"-y", "@muninn-org/aether-mcp"` before the other arguments.
+
+Run `aether-mcp setup`, or `aether-mcp --init --install-clients --vault /path/to/vault`, to configure detected clients for you.
 
 ## Connect over HTTP or HTTPS
 

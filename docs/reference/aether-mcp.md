@@ -11,6 +11,8 @@ For step-by-step setup, start with [Install aether-mcp](../get-started/install-a
 ## `aether-mcp` CLI flags and environment variables
 
 CLI flags override environment variables when both are set.
+Unknown flags and invalid values, such as a non-numeric `--watch-ms`, are rejected with a usage message and exit code `2`.
+Output is plain text when it is piped, when `NO_COLOR` is set, or when `TERM` is `dumb`.
 
 | CLI flag | Environment variable | Default | Description |
 | --- | --- | --- | --- |
@@ -33,9 +35,14 @@ CLI flags override environment variables when both are set.
 | `aether-mcp service install [--vault <path>] [--http-addr <addr>] [--watch-ms <ms>]` | Registers and starts an auto-starting user service (`launchd` on macOS, `systemd --user` on Linux, Task Scheduler on Windows; defaults `--http-addr` to `127.0.0.1:14771`) |
 | `aether-mcp service status` | Prints the status of the installed user service |
 | `aether-mcp service uninstall` | Stops and removes the user service definition |
+| `aether-mcp setup [--vault <path>] [--yes] [--no-clients] [--no-service]` | Guided first-run setup: finds your Obsidian vaults, installs the background service, adds `aether-vault` to detected MCP clients, checks the result, and prints the next steps. `--yes` accepts the defaults. Without a terminal and without `--yes` it exits with an explanation |
+| `aether-mcp doctor [--vault <path>]` | Checks the vault, the binary, and detected MCP client configs, with a fix hint beside each problem |
+| `aether-mcp completions <bash\|zsh\|fish\|powershell\|elvish>` | Prints a shell completion script to stdout |
+| `aether-mcp --help`, `aether-mcp --version` | Prints usage or the version |
 | `aether-mcp doctor [--vault <path>]` | Checks the vault, the binary, and detected MCP client configs |
 | `aether-mcp completions <bash\|zsh\|fish\|powershell\|elvish>` | Prints a shell completion script to stdout |
 | `aether-mcp --help`, `aether-mcp --version` | Prints usage or the version |
+| `npx @muninn-org/aether-mcp` | Runs the matching release binary through Node.js, downloading and verifying it on first use. See [Install aether-mcp](../get-started/install-aether-mcp.md) |
 | `ghcr.io/muninn-hq/aether-mcp` | Multi-arch (`linux/amd64`, `linux/arm64`) container image with `ENTRYPOINT ["aether-mcp"]` and `/vault` volume |
 
 ## MCP JSON-RPC 2.0 protocol and tools
