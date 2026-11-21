@@ -11,10 +11,10 @@ const config: Config = {
     v4: true,
   },
 
-  url: 'https://nytheris-ai.github.io',
+  url: 'https://muninn-hq.github.io',
   baseUrl: '/aether-sdk/',
 
-  organizationName: 'Nytheris-AI',
+  organizationName: 'muninn-hq',
   projectName: 'aether-sdk',
 
   onBrokenLinks: 'throw',
@@ -38,7 +38,7 @@ const config: Config = {
           path: '../docs',
           routeBasePath: '/docs',
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/Nytheris-AI/aether-sdk/tree/main/',
+          editUrl: 'https://github.com/muninn-hq/aether-sdk/tree/main/',
         },
         blog: false,
         theme: {
@@ -91,7 +91,7 @@ const config: Config = {
           position: 'left',
         },
         {
-          href: 'https://github.com/Nytheris-AI/aether-sdk',
+          href: 'https://github.com/muninn-hq/aether-sdk',
           label: 'GitHub',
           position: 'right',
         },
@@ -151,12 +151,12 @@ const config: Config = {
             },
             {
               label: 'GitHub',
-              href: 'https://github.com/Nytheris-AI/aether-sdk',
+              href: 'https://github.com/muninn-hq/aether-sdk',
             },
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} Nytheris-AI. Built with Docusaurus.`,
+      copyright: `Copyright © ${new Date().getFullYear()} muninn-hq. Built with Docusaurus.`,
     },
     prism: {
       theme: prismThemes.github,

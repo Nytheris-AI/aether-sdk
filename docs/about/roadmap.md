@@ -7,20 +7,20 @@ Architecture decisions live in the [pieces-first SDK design](../architecture/sdk
 
 | Area | Status | Notes |
 |------|--------|-------|
-| `nytheris-aether-core` contracts | Done | Newtypes (`ProjectId`, `MemoryId`, `EntityId`, `UserId`, `SessionId`), `RecordStore` / `VectorStore` / `GraphStore`, `IndexSpec`, shared scoring & filters, `AetherError`. |
-| `nytheris-aether-adapters::in_memory` + `contract-suite` | Done | Thread-safe `InMemoryBackend` with `FaultPoint` injection + reusable `contract::{record_store, record_store_concurrent_idempotency, vector_store, graph_store}`. |
+| `muninn-aether-core` contracts | Done | Newtypes (`ProjectId`, `MemoryId`, `EntityId`, `UserId`, `SessionId`), `RecordStore` / `VectorStore` / `GraphStore`, `IndexSpec`, shared scoring & filters, `AetherError`. |
+| `muninn-aether-adapters::in_memory` + `contract-suite` | Done | Thread-safe `InMemoryBackend` with `FaultPoint` injection + reusable `contract::{record_store, record_store_concurrent_idempotency, vector_store, graph_store}`. |
 | Middleware (`Batcher`, `Timeout`, `Resilient`, `Traced`) | Done | `Batcher` -> `Timeout` -> `Resilient` (exponential backoff + full jitter via `jittered`) -> `Traced`. Applied by default in `MemoryManager::builder`. |
-| `nytheris-aether-cortex` (`Indexer`, `recall`, `ppr`) | Done | Durable `RecordStore`-driven sync engine (`run_pass`, `apply`, opt-in `spawn`), composable recall steps, `PersonalizedPageRank` + `graph_scores`, `RRF` fusion. |
-| `MemoryManager` facade (`nytheris-aether-sdk`) | Done | Optional builder accepting `RecordStore` + optional `.vector(...)`, `.graph(...)`, `.background_indexing(...)`, middleware toggles. |
+| `muninn-aether-cortex` (`Indexer`, `recall`, `ppr`) | Done | Durable `RecordStore`-driven sync engine (`run_pass`, `apply`, opt-in `spawn`), composable recall steps, `PersonalizedPageRank` + `graph_scores`, `RRF` fusion. |
+| `MemoryManager` facade (`muninn-aether-sdk`) | Done | Optional builder accepting `RecordStore` + optional `.vector(...)`, `.graph(...)`, `.background_indexing(...)`, middleware toggles. |
 | Production drivers (`sqlite`, `redis`, `turbopuffer`, `qdrant`, `chroma`, `pgvector`, `neo4j`) | Done | Implemented behind feature flags and verified via contract unit tests + live local Docker verification (`Valkey`, `Qdrant`, `Chroma`, `pgvector`, `Neo4j`) + `SQLite`. |
-| Obsidian vault & MCP server (`nytheris-aether-vault`, `aether-mcp`, `obsidian-aether-plugin`) | Done | `VaultEngine` over SQLite WAL (schema `v3`) + FTS5 + `PersonalizedPageRank` + `CrossEncoderReranker`, `vault_meta` auto-reindexing, `Aether/Compiled/Approved.md` mirror, Daily Note Dream consolidation, per-agent scoped API keys, Git team sync with monotonic lattice conflict resolution, vLLM/SGLang + LMCache KV-tensor warming, authenticated `ControlPlaneServer`, scoped 3-tool `McpServer`, and Obsidian companion plugin. |
+| Obsidian vault & MCP server (`muninn-aether-vault`, `aether-mcp`, `obsidian-aether-plugin`) | Done | `VaultEngine` over SQLite WAL (schema `v3`) + FTS5 + `PersonalizedPageRank` + `CrossEncoderReranker`, `vault_meta` auto-reindexing, `Aether/Compiled/Approved.md` mirror, Daily Note Dream consolidation, per-agent scoped API keys, Git team sync with monotonic lattice conflict resolution, vLLM/SGLang + LMCache KV-tensor warming, authenticated `ControlPlaneServer`, scoped 3-tool `McpServer`, and Obsidian companion plugin. |
 | Observability & Rust CI | Done | End-to-end `tracing` spans + `otel` OTLP preset; GitHub Actions checks `cargo fmt`, `clippy -D warnings`, `cargo test --workspace --all-features`, and docs build. |
 
 ## Completed Milestones
 
 ### Phase 5 - Pieces-First SDK & Consistency Hardening (Completed 2026-11-18)
 
-- Replaced in-process `IngestionBuffer`, `HotContextCache`, `PolicyRouter`, and `QueryPlanner` with `RecordStore` versioned durability (`create`, `get_many`, `cas_update`, `tombstone`, `pending`, `pending_for`, `session_items`, `mark_indexed`) and `nytheris_aether_cortex::{Indexer, recall}`.
+- Replaced in-process `IngestionBuffer`, `HotContextCache`, `PolicyRouter`, and `QueryPlanner` with `RecordStore` versioned durability (`create`, `get_many`, `cas_update`, `tombstone`, `pending`, `pending_for`, `session_items`, `mark_indexed`) and `muninn_aether_cortex::{Indexer, recall}`.
 - Removed `MemoryInbound` in favor of inherent methods on `MemoryManager` assembled solely from public pieces.
 - Enforced `VectorStore::describe` / `IndexSpec` validation at ingest/update/query boundaries and required matching embeddings when updating content.
 - Added identity-carrying `MemoryScope::{Project, User(UserId), Session(SessionId)}` with record-only TTL-bound session storage.
@@ -33,7 +33,7 @@ Architecture decisions live in the [pieces-first SDK design](../architecture/sdk
 
 ### Milestone 1 - Obsidian Vault Daemon & Stdio MCP Server (Completed 2026-11-18)
 
-- Added the fifth workspace crate `nytheris-aether-vault` (`crates/aether-vault`) and the `aether-mcp` stdio binary (`--vault`, `--db`, `--watch-ms`, `AETHER_VAULT_PATH`), documented in [M1 vault and MCP architecture](../architecture/m1-vault-mcp-rationale.md).
+- Added the fifth workspace crate `muninn-aether-vault` (`crates/aether-vault`) and the `aether-mcp` stdio binary (`--vault`, `--db`, `--watch-ms`, `AETHER_VAULT_PATH`), documented in [M1 vault and MCP architecture](../architecture/m1-vault-mcp-rationale.md).
 - Implemented validated vault types (`VaultPath`, `SourcePointer`, `AmuId`, `CandidateId`, `ContentHash`, `ScopeTag`, `TokenBudget`, `VaultTier`, `AmuKind`, `AmuStatus`), `.aetherignore` plus built-in path exclusions, and parse-boundary rejection of `aether_tier: private` notes.
 - Implemented single-file SQLite WAL storage (`vault_files`, `amus`, `amus_fts`, `amu_edges`, `self_write_ledger`, `staged_candidates`), hybrid FTS5 + 256-dim `HashedNgramEmbedder` + `PersonalizedPageRank` RRF recall, deterministic `[AETHER_HOT_PROFILE]` prefix packing (`HOT_PROFILE_MAX_TOKENS = 2000`), and atomic `Aether/Inbox.md` staging and reconciliation.
 - Exposed `McpServer` over newline-delimited JSON-RPC 2.0 (`initialize`, `ping`, `tools/list`, `tools/call`) with `aether_recall`, `aether_stage_memory`, and `aether_inspect_source`.

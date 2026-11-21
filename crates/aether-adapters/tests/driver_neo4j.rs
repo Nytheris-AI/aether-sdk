@@ -10,10 +10,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
 use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat, Utc};
-use nytheris_aether_adapters::contract;
-use nytheris_aether_adapters::middleware::{Resilient, RetryPolicy};
-use nytheris_aether_adapters::storage::neo4j::{Neo4jConfig, Neo4jGraphStore};
-use nytheris_aether_core::{
+use muninn_aether_adapters::contract;
+use muninn_aether_adapters::middleware::{Resilient, RetryPolicy};
+use muninn_aether_adapters::storage::neo4j::{Neo4jConfig, Neo4jGraphStore};
+use muninn_aether_core::{
     AetherError, ConnectorHealth, Entity, EntityId, GraphEdge, GraphStore, MemoryId,
     OutboundConnector, ProjectId, Relation, SecretString, TemporalFilter,
 };

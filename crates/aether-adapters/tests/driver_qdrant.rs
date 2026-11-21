@@ -8,9 +8,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
-use nytheris_aether_adapters::contract;
-use nytheris_aether_adapters::storage::qdrant::{QdrantConfig, QdrantVectorStore};
-use nytheris_aether_core::{
+use muninn_aether_adapters::contract;
+use muninn_aether_adapters::storage::qdrant::{QdrantConfig, QdrantVectorStore};
+use muninn_aether_core::{
     AetherError, ConnectorHealth, DistanceMetric, FilterExpr, FilterValue, MemoryId,
     OutboundConnector, ProjectId, SecretString, VectorRecord, VectorStore,
 };
@@ -879,7 +879,7 @@ async fn qdrant_describe_resolves_across_fresh_clients() {
     let spec = store_b.describe(&ns).await.unwrap();
     assert_eq!(
         spec,
-        Some(nytheris_aether_core::IndexSpec {
+        Some(muninn_aether_core::IndexSpec {
             dimensions: 3,
             metric: DistanceMetric::Euclidean,
         })
@@ -919,7 +919,7 @@ async fn live_qdrant_contract_vector_store() {
     .unwrap();
     assert_eq!(
         fresh.describe(&ns).await.unwrap(),
-        Some(nytheris_aether_core::IndexSpec {
+        Some(muninn_aether_core::IndexSpec {
             dimensions: 3,
             metric: DistanceMetric::Euclidean,
         })

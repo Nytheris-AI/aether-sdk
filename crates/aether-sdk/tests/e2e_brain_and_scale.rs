@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use nytheris_aether_adapters::{InMemoryBackend, Resilient, RetryPolicy, Timeout, Traced};
-use nytheris_aether_core::{
+use muninn_aether_adapters::{InMemoryBackend, Resilient, RetryPolicy, Timeout, Traced};
+use muninn_aether_core::{
     DistanceMetric, MemoryInput, ProjectId, RecallMode, RecallQuery, VectorStore, WriteDurability,
 };
-use nytheris_aether_sdk::MemoryManager;
+use muninn_aether_sdk::MemoryManager;
 use std::time::Duration;
 
 #[tokio::test]

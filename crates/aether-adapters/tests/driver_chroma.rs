@@ -12,9 +12,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use nytheris_aether_adapters::contract;
-use nytheris_aether_adapters::storage::chroma::{ChromaConfig, ChromaVectorStore};
-use nytheris_aether_core::{
+use muninn_aether_adapters::contract;
+use muninn_aether_adapters::storage::chroma::{ChromaConfig, ChromaVectorStore};
+use muninn_aether_core::{
     AetherError, ConnectorHealth, DistanceMetric, FilterExpr, FilterValue, MemoryId,
     OutboundConnector, ProjectId, SecretString, VectorRecord, VectorStore,
 };
@@ -675,7 +675,7 @@ async fn chroma_distance_metrics_filters_and_validation() {
     let fresh = ChromaVectorStore::new(test_config(base_url, None)).unwrap();
     assert_eq!(
         fresh.describe(&ns_edge).await.unwrap(),
-        Some(nytheris_aether_core::IndexSpec {
+        Some(muninn_aether_core::IndexSpec {
             dimensions: 2,
             metric: DistanceMetric::Cosine,
         })
@@ -719,7 +719,7 @@ async fn live_chroma_contract_vector_store() {
     let fresh = ChromaVectorStore::new(cfg).unwrap();
     assert_eq!(
         fresh.describe(&ns).await.unwrap(),
-        Some(nytheris_aether_core::IndexSpec {
+        Some(muninn_aether_core::IndexSpec {
             dimensions: 3,
             metric: DistanceMetric::Euclidean,
         })

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use nytheris_aether_core::{
+use muninn_aether_core::{
     redact_url_userinfo, AetherError, ConnectorCapabilities, ConnectorHealth, ConsistencyMode,
     DistanceMetric, Entity, EntityId, FilterExpr, FilterValue, GraphStore, IndexSpec, MemoryId,
     MemoryInput, MemoryItem, MemoryReceipt, MemoryScope, MemoryTier, MemoryUpdate,
@@ -94,7 +94,7 @@ fn memory_input_validation_and_receipt_states() {
         "Alice prefers Turbopuffer for low-latency vector recall.",
     );
     input.tier = MemoryTier::Semantic;
-    input.scope = MemoryScope::User(nytheris_aether_core::UserId::new("u-1").unwrap());
+    input.scope = MemoryScope::User(muninn_aether_core::UserId::new("u-1").unwrap());
     input.durability = WriteDurability::WaitFlush;
     input.embedding = Some(vec![0.1, 0.2, 0.3]);
     input.entities = vec![Entity {
@@ -322,10 +322,10 @@ fn recall_query_validation() {
 
 #[test]
 fn memory_scope_serde_and_index_key() {
-    assert!(nytheris_aether_core::UserId::new(" ").is_err());
-    assert!(nytheris_aether_core::SessionId::new("").is_err());
+    assert!(muninn_aether_core::UserId::new(" ").is_err());
+    assert!(muninn_aether_core::SessionId::new("").is_err());
 
-    let user_scope = MemoryScope::User(nytheris_aether_core::UserId::new("u1").unwrap());
+    let user_scope = MemoryScope::User(muninn_aether_core::UserId::new("u1").unwrap());
     let user_json = serde_json::to_value(&user_scope).unwrap();
     assert_eq!(user_json, serde_json::json!({"kind": "user", "id": "u1"}));
     assert_eq!(user_scope.index_key().as_deref(), Some("user:u1"));
@@ -334,7 +334,7 @@ fn memory_scope_serde_and_index_key() {
     assert_eq!(proj_json, serde_json::json!({"kind": "project"}));
     assert_eq!(MemoryScope::Project.index_key().as_deref(), Some("project"));
 
-    let sess_scope = MemoryScope::Session(nytheris_aether_core::SessionId::new("s1").unwrap());
+    let sess_scope = MemoryScope::Session(muninn_aether_core::SessionId::new("s1").unwrap());
     assert_eq!(sess_scope.index_key(), None);
 
     let mut q = RecallQuery::new(ProjectId::new("proj-scope").unwrap(), "q");

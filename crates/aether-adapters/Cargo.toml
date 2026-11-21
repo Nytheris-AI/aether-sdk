@@ -1,5 +1,5 @@
 [package]
-name = "nytheris-aether-adapters"
+name = "muninn-aether-adapters"
 description = "Storage connectors (SQLite, Redis, Qdrant, pgvector, Chroma, Turbopuffer, Neo4j), resilience middleware, and contract tests for Aether SDK"
 version.workspace = true
 edition.workspace = true
@@ -7,7 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-documentation = "https://docs.rs/nytheris-aether-adapters"
+documentation = "https://docs.rs/muninn-aether-adapters"
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -24,7 +24,7 @@ chroma = ["dep:reqwest"]
 pgvector = ["dep:sqlx", "dep:pgvector"]
 
 [dependencies]
-nytheris-aether-core = { path = "../aether-core", version = "0.1.0" }
+muninn-aether-core = { path = "../aether-core", version = "0.1.0" }
 async-trait.workspace = true
 chrono.workspace = true
 petgraph.workspace = true
@@ -41,7 +41,7 @@ rusqlite = { version = "0.41", features = ["bundled"], optional = true }
 sqlx = { version = "0.9", default-features = false, features = ["postgres", "runtime-tokio", "tls-rustls", "json", "uuid", "chrono"], optional = true }
 
 [dev-dependencies]
-nytheris-aether-adapters = { path = ".", features = ["contract-suite"] }
+muninn-aether-adapters = { path = ".", features = ["contract-suite"] }
 axum = "0.8"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 

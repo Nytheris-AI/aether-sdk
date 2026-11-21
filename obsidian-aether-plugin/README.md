@@ -12,7 +12,7 @@ You can install the plugin through BRAT, manually from a GitHub release, or with
 
 1. Install and enable the **Obsidian42 BRAT** plugin.
 2. Open the **BRAT** plugin settings and select **Add beta plugin**.
-3. Enter the dedicated plugin repository (`https://github.com/Nytheris-AI/aether-memory` or your mirrored plugin repository with `manifest.json` at its root) and add the plugin from release assets.
+3. Enter the dedicated plugin repository (`https://github.com/muninn-hq/aether-memory` or your mirrored plugin repository with `manifest.json` at its root) and add the plugin from release assets.
 4. Enable **AMC** under **Community plugins**.
 
 ### Manual release installation

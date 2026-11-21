@@ -17,7 +17,7 @@ Read both on the day of submission and check the items they list against [Review
 
 | Requirement | Status |
 | --- | --- |
-| Plugin repository is public with `README.md`, `LICENSE`, and `manifest.json` at the root | Done: `Nytheris-AI/aether-memory`, Apache-2.0 |
+| Plugin repository is public with `README.md`, `LICENSE`, and `manifest.json` at the root | Done: `muninn-hq/aether-memory`, Apache-2.0 |
 | `manifest.json` on the default branch matches the release version | Check: it must equal the release tag |
 | GitHub release tag equals the manifest `version` (bare `x.y.z`) | Done for `0.4.1`; repeat for the release you submit |
 | Release assets `main.js`, `manifest.json`, `styles.css` | Done: also `versions.json` |
@@ -36,8 +36,8 @@ Read both on the day of submission and check the items they list against [Review
 | --- | --- |
 | Plugin id | `aether-memory` |
 | Name | `AMC` |
-| Author | `Nytheris` |
-| Repository | `Nytheris-AI/aether-memory` |
+| Author | `Muninn Labs` |
+| Repository | `muninn-hq/aether-memory` |
 | Description | `Give your AI agents memory from your vault via MCP. Syncs notes to a local aether-mcp server and keeps private notes on disk.` |
 | Minimum Obsidian version | `1.5.0` |
 | Desktop only | Yes |
@@ -62,7 +62,7 @@ Plain HTTP to a non-loopback host is rejected.
 The plugin sends no telemetry, crash reports, or third-party requests.
 
 **External software.**
-The plugin needs the open source `aether-mcp` server (Apache-2.0, `Nytheris-AI/aether-sdk`).
+The plugin needs the open source `aether-mcp` server (Apache-2.0, `muninn-hq/aether-sdk`).
 The settings tab explains this at the top and offers buttons that copy the install, service, and start commands to the clipboard.
 The plugin never runs those commands itself and never spawns a process.
 
@@ -88,14 +88,14 @@ The five fields and their order match the existing entries.
 {
   "id": "aether-memory",
   "name": "AMC",
-  "author": "Nytheris",
+  "author": "Muninn Labs",
   "description": "Give your AI agents memory from your vault via MCP. Syncs notes to a local aether-mcp server and keeps private notes on disk.",
-  "repo": "Nytheris-AI/aether-memory"
+  "repo": "muninn-hq/aether-memory"
 }
 ```
 
 ## After approval
 
 - Announce the first public release in the Obsidian forum showcase and in the `#updates` channel on the Obsidian Discord.
-- Keep releasing from the monorepo tag; the sync workflow publishes the same files to `Nytheris-AI/aether-memory`.
+- Keep releasing from the monorepo tag; the sync workflow publishes the same files to `muninn-hq/aether-memory`.
 - Respond to review feedback by publishing a new release with an incremented version, as the Obsidian docs require.

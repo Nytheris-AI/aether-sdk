@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::{Command, Output};
 
-use nytheris_aether_core::{redact_url_userinfo, AetherError, Result};
+use muninn_aether_core::{redact_url_userinfo, AetherError, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::inbox::{self, APPROVED_MIRROR_REL_PATH, INBOX_REL_PATH};

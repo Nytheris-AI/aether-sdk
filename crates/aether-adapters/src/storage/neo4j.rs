@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
-use nytheris_aether_core::{
+use muninn_aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, Entity, EntityId, GraphEdge, GraphStore,
     MemoryId, OutboundConnector, ProjectId, Relation, Result, SecretString, Subgraph,
     TemporalFilter,

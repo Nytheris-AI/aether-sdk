@@ -79,10 +79,10 @@ export function normalizePluginSettings(raw: unknown): AetherPluginSettings {
 }
 
 export const AETHER_MCP_INSTALL_COMMAND =
-  'curl -fsSL https://raw.githubusercontent.com/Nytheris-AI/aether-sdk/main/scripts/install.sh | sh';
+  'curl -fsSL https://raw.githubusercontent.com/muninn-hq/aether-sdk/main/scripts/install.sh | sh';
 
 export const AETHER_MCP_WINDOWS_INSTALL_COMMAND =
-  'irm https://raw.githubusercontent.com/Nytheris-AI/aether-sdk/main/scripts/install.ps1 | iex';
+  'irm https://raw.githubusercontent.com/muninn-hq/aether-sdk/main/scripts/install.ps1 | iex';
 
 function resolveLocalHttpAddr(endpointUrl: string): string {
   try {

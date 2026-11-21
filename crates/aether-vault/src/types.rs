@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use nytheris_aether_core::{AetherError, MemoryId, ProjectId, Result};
+use muninn_aether_core::{AetherError, MemoryId, ProjectId, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -224,7 +224,7 @@ impl AmuId {
         Ok(Self(MemoryId::from_uuid(uuid)))
     }
 
-    /// Returns the bijective `nytheris_aether_core::MemoryId`.
+    /// Returns the bijective `muninn_aether_core::MemoryId`.
     pub fn to_memory_id(self) -> MemoryId {
         self.0
     }

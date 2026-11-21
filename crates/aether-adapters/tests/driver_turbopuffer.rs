@@ -7,9 +7,9 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use nytheris_aether_adapters::contract;
-use nytheris_aether_adapters::storage::turbopuffer::{TurbopufferConfig, TurbopufferVectorStore};
-use nytheris_aether_core::{
+use muninn_aether_adapters::contract;
+use muninn_aether_adapters::storage::turbopuffer::{TurbopufferConfig, TurbopufferVectorStore};
+use muninn_aether_core::{
     AetherError, ConnectorHealth, DistanceMetric, FilterExpr, FilterValue, MemoryId,
     OutboundConnector, ProjectId, SecretString, VectorRecord, VectorStore,
 };

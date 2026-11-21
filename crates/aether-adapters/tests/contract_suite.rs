@@ -4,12 +4,12 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use nytheris_aether_adapters::contract;
-use nytheris_aether_adapters::middleware::{
+use muninn_aether_adapters::contract;
+use muninn_aether_adapters::middleware::{
     jittered, Batcher, Resilient, RetryPolicy, Timeout, Traced,
 };
-use nytheris_aether_adapters::{FaultPoint, InMemoryBackend};
-use nytheris_aether_core::{
+use muninn_aether_adapters::{FaultPoint, InMemoryBackend};
+use muninn_aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, Entity, EntityId,
     FilterExpr, GraphStore, IndexSpec, MemoryId, OutboundConnector, ProjectId, Relation, Result,
     TemporalFilter, VectorMatch, VectorRecord, VectorStore,

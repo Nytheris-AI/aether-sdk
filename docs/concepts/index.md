@@ -6,7 +6,7 @@ Aether separates storage durability and graph or vector retrieval from model inf
 
 Embedding models, entity extractors, and LLM routers change frequently and often run behind application-specific rate limits, privacy boundaries, or custom batching loops. When a memory framework hides model calls inside `remember` or `recall`, your application loses control over token cost, prompt formatting, and retry placement.
 
-Aether stays model-free across the four SDK crates (`nytheris-aether-core`, `nytheris-aether-cortex`, `nytheris-aether-adapters`, and `nytheris-aether-sdk`). Your code calls its own embedder or extractor, then hands Aether plain structs (`MemoryInput`, `Entity`, `Relation`, `RecallQuery`). Even inside `nytheris-aether-vault`, local embeddings default to zero-network `HashedNgramEmbedder` behind a swappable `Embedder` trait rather than bundling an LLM client.
+Aether stays model-free across the four SDK crates (`muninn-aether-core`, `muninn-aether-cortex`, `muninn-aether-adapters`, and `muninn-aether-sdk`). Your code calls its own embedder or extractor, then hands Aether plain structs (`MemoryInput`, `Entity`, `Relation`, `RecallQuery`). Even inside `muninn-aether-vault`, local embeddings default to zero-network `HashedNgramEmbedder` behind a swappable `Embedder` trait rather than bundling an LLM client.
 
 ## Why pieces-first beats a sealed gateway
 
@@ -16,7 +16,7 @@ Aether builds from small public pieces upward:
 
 1. **Arguments instead of shared context.** Every function takes explicit store trait references and plain data values (`&dyn VectorStore`, `&ProjectId`, `Vec<Candidate>`).
 2. **No hidden background work.** Nothing spawns timers or background tasks unless you call `Indexer::spawn`, pass `.background_indexing(...)` to `MemoryManager::builder`, or set `watch_interval` on `VaultConfig`.
-3. **No private facade powers.** `MemoryManager` depends on `nytheris-aether-cortex` and `nytheris-aether-adapters` through the same public API any caller sees.
+3. **No private facade powers.** `MemoryManager` depends on `muninn-aether-cortex` and `muninn-aether-adapters` through the same public API any caller sees.
 
 The trade-off is a wider public API, which Aether keeps manageable by passing ordinary value types (`MemoryItem`, `Candidate`, `Subgraph`) between every stage.
 
@@ -26,20 +26,20 @@ Each crate has one clear boundary and depends only downward.
 
 ```mermaid
 flowchart TD
-    SDK["nytheris-aether-sdk (MemoryManager facade and otel)"] --> CORTEX["nytheris-aether-cortex (Indexer, PPR, recall steps)"]
-    SDK --> ADAPTERS["nytheris-aether-adapters (drivers, middleware, contract suite)"]
-    SDK --> CORE["nytheris-aether-core (traits, IDs, filters, metrics)"]
-    VAULT["nytheris-aether-vault (VaultEngine, aether-mcp, HTTP, Git, KV)"] --> CORTEX
+    SDK["muninn-aether-sdk (MemoryManager facade and otel)"] --> CORTEX["muninn-aether-cortex (Indexer, PPR, recall steps)"]
+    SDK --> ADAPTERS["muninn-aether-adapters (drivers, middleware, contract suite)"]
+    SDK --> CORE["muninn-aether-core (traits, IDs, filters, metrics)"]
+    VAULT["muninn-aether-vault (VaultEngine, aether-mcp, HTTP, Git, KV)"] --> CORTEX
     VAULT --> CORE
     CORTEX --> CORE
     ADAPTERS --> CORE
 ```
 
-- `nytheris-aether-core` holds zero I/O. It defines validated IDs, `DistanceMetric`, `FilterExpr`, DTOs, `AetherError`, and the `OutboundConnector`, `RecordStore`, `VectorStore`, and `GraphStore` traits.
-- `nytheris-aether-cortex` implements `Indexer`, `PersonalizedPageRank`, `graph_scores`, and `recall::*` functions against core traits.
-- `nytheris-aether-adapters` implements `InMemoryBackend`, `Batcher`, `Timeout`, `Resilient`, `Traced`, the `contract` test suite, and feature-gated drivers (`sqlite`, `redis`, `qdrant`, `pgvector`, `chroma`, `turbopuffer`, `neo4j`).
-- `nytheris-aether-sdk` composes `MemoryManager` and optional OpenTelemetry initialization (`otel`).
-- `nytheris-aether-vault` embeds `nytheris-aether-core` and `nytheris-aether-cortex` on top of a single-file SQLite WAL schema to compile Obsidian vaults, serve MCP and HTTP endpoints, sync Git team vaults, and warm GPU KV caches.
+- `muninn-aether-core` holds zero I/O. It defines validated IDs, `DistanceMetric`, `FilterExpr`, DTOs, `AetherError`, and the `OutboundConnector`, `RecordStore`, `VectorStore`, and `GraphStore` traits.
+- `muninn-aether-cortex` implements `Indexer`, `PersonalizedPageRank`, `graph_scores`, and `recall::*` functions against core traits.
+- `muninn-aether-adapters` implements `InMemoryBackend`, `Batcher`, `Timeout`, `Resilient`, `Traced`, the `contract` test suite, and feature-gated drivers (`sqlite`, `redis`, `qdrant`, `pgvector`, `chroma`, `turbopuffer`, `neo4j`).
+- `muninn-aether-sdk` composes `MemoryManager` and optional OpenTelemetry initialization (`otel`).
+- `muninn-aether-vault` embeds `muninn-aether-core` and `muninn-aether-cortex` on top of a single-file SQLite WAL schema to compile Obsidian vaults, serve MCP and HTTP endpoints, sync Git team vaults, and warm GPU KV caches.
 
 ## SDK write, sync, and recall pipeline
 
@@ -61,7 +61,7 @@ flowchart LR
 
 ## Obsidian vault compiler pipeline
 
-`nytheris-aether-vault` adapts the same pattern to local Markdown files, replacing remote vector and graph services with a unified SQLite WAL database while keeping verbatim note text on disk.
+`muninn-aether-vault` adapts the same pattern to local Markdown files, replacing remote vector and graph services with a unified SQLite WAL database while keeping verbatim note text on disk.
 
 ```mermaid
 flowchart TD

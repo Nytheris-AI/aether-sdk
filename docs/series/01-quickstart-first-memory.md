@@ -16,11 +16,11 @@ Project Aether splits memory infrastructure across five workspace crates under `
 
 | Crate | Package name | Responsibility |
 | --- | --- | --- |
-| `crates/aether-core` | `nytheris-aether-core` | Domain types, validated IDs, scoring, filters, and storage traits |
-| `crates/aether-cortex` | `nytheris-aether-cortex` | `Indexer` sync engine, `PersonalizedPageRank`, and `recall` steps |
-| `crates/aether-adapters` | `nytheris-aether-adapters` | `InMemoryBackend`, middleware wrappers, contract tests, and 7 drivers |
-| `crates/aether-sdk` | `nytheris-aether-sdk` | Optional `MemoryManager` facade and `otel` telemetry preset |
-| `crates/aether-vault` | `nytheris-aether-vault` | Obsidian vault compiler, team HTTP and Git gateway, KV warmer, and `aether-mcp` |
+| `crates/aether-core` | `muninn-aether-core` | Domain types, validated IDs, scoring, filters, and storage traits |
+| `crates/aether-cortex` | `muninn-aether-cortex` | `Indexer` sync engine, `PersonalizedPageRank`, and `recall` steps |
+| `crates/aether-adapters` | `muninn-aether-adapters` | `InMemoryBackend`, middleware wrappers, contract tests, and 7 drivers |
+| `crates/aether-sdk` | `muninn-aether-sdk` | Optional `MemoryManager` facade and `otel` telemetry preset |
+| `crates/aether-vault` | `muninn-aether-vault` | Obsidian vault compiler, team HTTP and Git gateway, KV warmer, and `aether-mcp` |
 
 Aether is model-free. It does not call LLMs, split documents into chunks, generate embeddings, or extract entities. Your application computes vectors and extracts entities in its own pipeline, then passes plain Rust structs to Aether.
 
@@ -30,8 +30,8 @@ Create a new binary crate, or add these dependencies to an existing `Cargo.toml`
 
 ```toml
 [dependencies]
-nytheris-aether-core = "0.1.0"
-nytheris-aether-adapters = "0.1.0"
+muninn-aether-core = "0.1.0"
+muninn-aether-adapters = "0.1.0"
 serde_json = "1.0"
 tokio = { version = "1.40", features = ["macros", "rt-multi-thread"] }
 ```
@@ -40,10 +40,10 @@ If you build from a local checkout of `aether-sdk`, point `path` at `crates/aeth
 
 ## Step 2: Run the workspace Level 1 example
 
-The workspace ships a runnable vector example in [`level_1_connector.rs`](https://github.com/Nytheris-AI/aether-sdk/blob/main/crates/aether-sdk/examples/level_1_connector.rs). Run it from the repository root:
+The workspace ships a runnable vector example in [`level_1_connector.rs`](https://github.com/muninn-hq/aether-sdk/blob/main/crates/aether-sdk/examples/level_1_connector.rs). Run it from the repository root:
 
 ```bash
-cargo run -p nytheris-aether-sdk --example level_1_connector
+cargo run -p muninn-aether-sdk --example level_1_connector
 ```
 
 You see one line showing the matched vector count and generated `MemoryId`:
@@ -61,14 +61,14 @@ A vector hit only gives you an ID, a similarity score, and filterable metadata. 
 Replace `src/main.rs` with the following code to store a `MemoryItem` in `RecordStore`, index its vector in `VectorStore`, and resolve the matched record back:
 
 ```rust
-use nytheris_aether_adapters::InMemoryBackend;
-use nytheris_aether_core::{
+use muninn_aether_adapters::InMemoryBackend;
+use muninn_aether_core::{
     DistanceMetric, MemoryInput, MemoryItem, ProjectId, RecordStore, VectorRecord, VectorStore,
 };
 use serde_json::json;
 
 #[tokio::main]
-async fn main() -> nytheris_aether_core::Result<()> {
+async fn main() -> muninn_aether_core::Result<()> {
     let backend = InMemoryBackend::new();
     let ns = ProjectId::new("level1-demo")?;
 

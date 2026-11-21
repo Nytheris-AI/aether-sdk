@@ -7,15 +7,15 @@ use std::time::Duration;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use common::{build_fault_injectable_manager, embed_text, EMBED_DIM};
-use nytheris_aether_adapters::{FaultPoint, InMemoryBackend, RetryPolicy};
-use nytheris_aether_core::{
+use muninn_aether_adapters::{FaultPoint, InMemoryBackend, RetryPolicy};
+use muninn_aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome, DistanceMetric, Entity,
     EntityId, FilterExpr, GraphStore, IndexSpec, MemoryId, MemoryInput, MemoryItem, MemoryUpdate,
     OutboundConnector, PendingRecord, ProjectId, RecallMode, RecallQuery, ReceiptState,
     RecordStore, Relation, Result, SessionId, Subgraph, TemporalFilter, VectorMatch, VectorRecord,
     VectorStore, WriteDurability,
 };
-use nytheris_aether_sdk::MemoryManager;
+use muninn_aether_sdk::MemoryManager;
 use serde_json::json;
 
 #[derive(Clone, Copy)]

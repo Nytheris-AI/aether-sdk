@@ -2,12 +2,12 @@
 //!
 //! ```
 //! use std::sync::Arc;
-//! use nytheris_aether_adapters::InMemoryBackend;
-//! use nytheris_aether_core::{DistanceMetric, MemoryInput, ProjectId, RecallQuery, VectorStore, WriteDurability};
-//! use nytheris_aether_sdk::MemoryManager;
+//! use muninn_aether_adapters::InMemoryBackend;
+//! use muninn_aether_core::{DistanceMetric, MemoryInput, ProjectId, RecallQuery, VectorStore, WriteDurability};
+//! use muninn_aether_sdk::MemoryManager;
 //!
 //! # #[tokio::main]
-//! # async fn main() -> nytheris_aether_core::Result<()> {
+//! # async fn main() -> muninn_aether_core::Result<()> {
 //! let backend = Arc::new(InMemoryBackend::new());
 //! let project = ProjectId::new("doctest")?;
 //! backend.initialize(&project, 2, DistanceMetric::Cosine).await?;
@@ -33,21 +33,21 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::Utc;
-use nytheris_aether_adapters::{Batcher, Resilient, RetryPolicy, Timeout, Traced};
-use nytheris_aether_core::{
+use muninn_aether_adapters::{Batcher, Resilient, RetryPolicy, Timeout, Traced};
+use muninn_aether_core::{
     AetherError, ConsistencyMode, CreateOutcome, DistanceMetric, EntityId, FilterExpr, GraphStore,
     MemoryId, MemoryInput, MemoryItem, MemoryReceipt, MemoryScope, MemoryUpdate, PendingRecord,
     ProjectId, RecallHit, RecallMode, RecallQuery, RecallResult, ReceiptState, RecordStore, Result,
     Subgraph, VectorStore, WriteDurability,
 };
-use nytheris_aether_cortex::recall::{self, Candidate, RRF_K};
-use nytheris_aether_cortex::{index_metadata, Indexer, PersonalizedPageRank};
+use muninn_aether_cortex::recall::{self, Candidate, RRF_K};
+use muninn_aether_cortex::{index_metadata, Indexer, PersonalizedPageRank};
 use tokio::task::JoinHandle;
 use tracing::Instrument;
 
-pub use nytheris_aether_adapters as adapters;
-pub use nytheris_aether_core as core;
-pub use nytheris_aether_cortex as cortex;
+pub use muninn_aether_adapters as adapters;
+pub use muninn_aether_core as core;
+pub use muninn_aether_cortex as cortex;
 
 #[cfg(feature = "otel")]
 pub mod telemetry;

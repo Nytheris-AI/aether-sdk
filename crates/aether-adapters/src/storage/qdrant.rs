@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::RwLock;
 
 use async_trait::async_trait;
-use nytheris_aether_core::{
+use muninn_aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, DistanceMetric, FilterExpr, FilterValue,
     IndexSpec, MemoryId, OutboundConnector, ProjectId, Result, SecretString, VectorMatch,
     VectorRecord, VectorStore,

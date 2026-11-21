@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{Duration as ChronoDuration, Utc};
-use nytheris_aether_core::{
+use muninn_aether_core::{
     AetherError, CreateOutcome, DistanceMetric, Entity, EntityId, FilterExpr, FilterValue,
     GraphStore, IndexSpec, MemoryId, MemoryInput, MemoryItem, MemoryReceipt, MemoryScope,
     PendingRecord, ProjectId, ReceiptState, RecordStore, Relation, SessionId, TemporalFilter,

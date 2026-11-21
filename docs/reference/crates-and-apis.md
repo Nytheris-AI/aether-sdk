@@ -6,15 +6,15 @@ This reference lists the workspace crates, validated newtypes, trait contracts, 
 
 | Crate directory | Package name | Role |
 | --- | --- | --- |
-| `crates/aether-core` | `nytheris-aether-core` | Domain DTOs, validated IDs, scoring, filters, `AetherError`, and storage traits |
-| `crates/aether-cortex` | `nytheris-aether-cortex` | `Indexer` sync engine, `PersonalizedPageRank`, `graph_scores`, and `recall` functions |
-| `crates/aether-adapters` | `nytheris-aether-adapters` | `InMemoryBackend`, middleware wrappers, `contract` suite, and 7 backend drivers |
-| `crates/aether-sdk` | `nytheris-aether-sdk` | `MemoryManager` facade, `MemoryManagerBuilder`, and `telemetry` (`otel` feature) |
-| `crates/aether-vault` | `nytheris-aether-vault` | `VaultEngine`, `ControlPlaneServer`, `McpServer`, KV adapters, and `aether-mcp` binary |
+| `crates/aether-core` | `muninn-aether-core` | Domain DTOs, validated IDs, scoring, filters, `AetherError`, and storage traits |
+| `crates/aether-cortex` | `muninn-aether-cortex` | `Indexer` sync engine, `PersonalizedPageRank`, `graph_scores`, and `recall` functions |
+| `crates/aether-adapters` | `muninn-aether-adapters` | `InMemoryBackend`, middleware wrappers, `contract` suite, and 7 backend drivers |
+| `crates/aether-sdk` | `muninn-aether-sdk` | `MemoryManager` facade, `MemoryManagerBuilder`, and `telemetry` (`otel` feature) |
+| `crates/aether-vault` | `muninn-aether-vault` | `VaultEngine`, `ControlPlaneServer`, `McpServer`, KV adapters, and `aether-mcp` binary |
 
 ## Validated newtypes
 
-### Core SDK (`nytheris-aether-core`)
+### Core SDK (`muninn-aether-core`)
 
 | Type | Inner representation | Validation rule | Primary constructor |
 | --- | --- | --- | --- |
@@ -25,7 +25,7 @@ This reference lists the workspace crates, validated newtypes, trait contracts, 
 | `SessionId` | `String` | Non-empty after trim | `SessionId::new(id)` |
 | `SecretString` | `String` | `Debug` and `Display` print `[REDACTED]` | `SecretString::new(secret)` |
 
-### Obsidian Vault & Team Auth (`nytheris-aether-vault`)
+### Obsidian Vault & Team Auth (`muninn-aether-vault`)
 
 | Type | Format and constraints | Primary constructor |
 | --- | --- | --- |
@@ -42,7 +42,7 @@ This reference lists the workspace crates, validated newtypes, trait contracts, 
 | `ModelId` | Non-empty trimmed string without control characters | `ModelId::new(raw)` |
 | `KvBlockHash` | 64-hex SHA-256 KV block identifier | `KvBlockHash::genesis()`, `paged_chained(...)`, `cache_blend(...)`, `parse(raw)` |
 
-## Core storage traits (`nytheris-aether-core`)
+## Core storage traits (`muninn-aether-core`)
 
 `Arc<T>` implements `OutboundConnector`, `RecordStore`, `VectorStore`, and `GraphStore` for any `T` implementing the corresponding trait.
 
@@ -90,7 +90,7 @@ pub trait OutboundConnector: Send + Sync {
 | `retract_memory_facts` | `(ns, source_memory_id, invalidated_at) -> Result<()>` | Stamps `invalid_at` on all edges belonging to `source_memory_id` |
 | `neighborhood` | `(ns, seeds, hops, per_node_limit, temporal) -> Result<Subgraph>` | Bounded multi-hop traversal respecting `TemporalFilter { as_of, active_only }` |
 
-## Vault extension traits (`nytheris-aether-vault`)
+## Vault extension traits (`muninn-aether-vault`)
 
 | Trait | Methods | Built-in implementations |
 | --- | --- | --- |
@@ -100,20 +100,20 @@ pub trait OutboundConnector: Send + Sync {
 
 ## Orchestration APIs (`MemoryManager`, `Indexer`, `recall`, `VaultEngine`)
 
-### `MemoryManager` and `MemoryManagerBuilder` (`nytheris-aether-sdk`)
+### `MemoryManager` and `MemoryManagerBuilder` (`muninn-aether-sdk`)
 
 `MemoryManager::builder(record_store)` starts a builder with defaults `connector_tracing = true`, `session_ttl = Some(3600s)`, `timeout = Some(10s)`, `retry = Some(RetryPolicy::default())`, and `background_indexing = None`.
 
 - **Builder methods.** `vector`, `graph`, `background_indexing`, `with_connector_tracing`, `with_session_ttl`, `with_timeout`, `with_retry`, `build`.
 - **Manager methods.** `remember(MemoryInput) -> Result<MemoryReceipt>`, `recall(RecallQuery) -> Result<RecallResult>`, `update(&ProjectId, MemoryId, MemoryUpdate) -> Result<MemoryReceipt>`, `forget(&ProjectId, MemoryId) -> Result<()>`, `flush() -> Result<()>`, `shutdown() -> Result<()>`.
 
-### `nytheris-aether-cortex` (`Indexer`, `PersonalizedPageRank`, `recall`)
+### `muninn-aether-cortex` (`Indexer`, `PersonalizedPageRank`, `recall`)
 
 - **`Indexer`.** `new(record)`, `with_vector(vector)`, `with_graph(graph)`, `notify()`, `apply(&PendingRecord) -> Result<()>`, `run_pass() -> Result<PassReport>`, `spawn(&Arc<Self>, interval) -> JoinHandle<()>`.
 - **`PersonalizedPageRank` and helpers.** `PersonalizedPageRank { damping: 0.85, iterations: 20 }`, `rank(&Subgraph, &[EntityId])`, `graph_scores(&Subgraph, &[(EntityId, f32)])`, `index_metadata(&MemoryItem)`.
 - **`recall` module (`RRF_K = 60.0`).** `scope_filter`, `vector_search`, `unindexed`, `session`, `graph_search`, `merge`, `rrf`, `in_scopes`.
 
-### `VaultEngine` (`nytheris-aether-vault`)
+### `VaultEngine` (`muninn-aether-vault`)
 
 | Group | Public methods |
 | --- | --- |
@@ -125,7 +125,7 @@ pub trait OutboundConnector: Send + Sync {
 
 ## Errors (`AetherError` and `AuthError`)
 
-### `AetherError` (`nytheris-aether-core`)
+### `AetherError` (`muninn-aether-core`)
 
 | Variant | Retryable (`is_retryable`) | Meaning |
 | --- | --- | --- |
@@ -137,7 +137,7 @@ pub trait OutboundConnector: Send + Sync {
 | `Permanent { connector, message }` | `false` | Unrecoverable backend error or wrapped `AuthError` (`connector = "vault-auth"`) |
 | `Serialization(serde_json::Error)` | `false` | JSON encoding or decoding error |
 
-### `AuthError` (`nytheris-aether-vault`)
+### `AuthError` (`muninn-aether-vault`)
 
 `AuthError` maps to HTTP `401 Unauthorized` or `403 Forbidden` in `ControlPlaneServer` and converts into `AetherError::Permanent { connector: "vault-auth", .. }` in Rust callers.
 

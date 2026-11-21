@@ -85,7 +85,7 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Build aether-mcp
-        run: cargo build --release -p nytheris-aether-vault --bin aether-mcp --target ${{ matrix.target }}
+        run: cargo build --release -p muninn-aether-vault --bin aether-mcp --target ${{ matrix.target }}
 
       - name: Package Unix archive and checksum
         if: matrix.archive == 'tar.gz'

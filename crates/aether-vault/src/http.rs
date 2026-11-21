@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
-use nytheris_aether_core::{AetherError, Result};
+use muninn_aether_core::{AetherError, Result};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Value};

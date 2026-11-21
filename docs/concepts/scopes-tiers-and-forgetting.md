@@ -28,7 +28,7 @@ Instead, `MemoryScope::Session(SessionId)` returns `None` from `index_key()`. `I
 
 `MemoryTier` has four variants (`Episodic`, `Semantic` as default, `Procedural`, and `Profile`). In the core SDK, `MemoryTier` carries no hidden eviction or routing rules of its own. `index_metadata` writes it to vector metadata as `_aether_tier` so your queries can filter by tier using `FilterExpr::Eq` or `FilterExpr::In` without changing schema.
 
-In `nytheris-aether-vault`, by contrast, `VaultTier` (`Hot`, `Warm`, `Cold`) directly drives context placement because `Hot` entries assemble into the static `[AETHER_HOT_PROFILE]` prefix block while `Warm` and `Cold` entries compete dynamically for the remaining token budget.
+In `muninn-aether-vault`, by contrast, `VaultTier` (`Hot`, `Warm`, `Cold`) directly drives context placement because `Hot` entries assemble into the static `[AETHER_HOT_PROFILE]` prefix block while `Warm` and `Cold` entries compete dynamically for the remaining token budget.
 
 ## Temporal validity and point-in-time queries
 
@@ -39,7 +39,7 @@ Graph facts change over time without erasing history. Every `Relation` and `Grap
 - `active_only: true` (default) excludes edges where `invalid_at.is_some()`.
 - `as_of: Some(ts)` selects edges where `valid_at <= ts` and `invalid_at` is either `None` or strictly greater than `ts`.
 
-In `nytheris-aether-vault`, AMUs also carry `valid_from` and `superseded_by: Option<AmuId>` alongside `AmuStatus` (`Active`, `Superseded`, `Archived`). Approving an Inbox entry that specifies `supersedes_amu_id` marks the older AMU as `Superseded` and stamps its `superseded_by` column in the same SQLite transaction.
+In `muninn-aether-vault`, AMUs also carry `valid_from` and `superseded_by: Option<AmuId>` alongside `AmuStatus` (`Active`, `Superseded`, `Archived`). Approving an Inbox entry that specifies `supersedes_amu_id` marks the older AMU as `Superseded` and stamps its `superseded_by` column in the same SQLite transaction.
 
 ## The `update` re-embedding invariant
 

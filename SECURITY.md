@@ -4,7 +4,7 @@
 
 If you discover a security vulnerability in **Aether SDK**, please **do not** open a public GitHub issue.
 
-Instead, report it privately via [GitHub Security Advisories](https://github.com/Nytheris-AI/aether-sdk/security/advisories/new) or contact the maintainers directly.
+Instead, report it privately via [GitHub Security Advisories](https://github.com/muninn-hq/aether-sdk/security/advisories/new) or contact the maintainers directly.
 
 Please include:
 - A description of the vulnerability and its potential impact.

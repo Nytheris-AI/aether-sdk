@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use chrono::Utc;
-use nytheris_aether_core::{
+use muninn_aether_core::{
     AetherError, ConnectorCapabilities, ConnectorHealth, CreateOutcome, MemoryId, MemoryItem,
     MemoryReceipt, MemoryScope, OutboundConnector, PendingRecord, ProjectId, ReceiptState,
     RecordStore, Result, SessionId,

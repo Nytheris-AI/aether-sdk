@@ -3,15 +3,15 @@
 use std::sync::Arc;
 
 use chrono::Utc;
-use nytheris_aether_adapters::InMemoryBackend;
-use nytheris_aether_core::{
+use muninn_aether_adapters::InMemoryBackend;
+use muninn_aether_core::{
     DistanceMetric, Entity, EntityId, MemoryInput, MemoryUpdate, ProjectId, RecallMode,
     RecallQuery, Relation, VectorStore, WriteDurability,
 };
-use nytheris_aether_sdk::MemoryManager;
+use muninn_aether_sdk::MemoryManager;
 
 #[tokio::main]
-async fn main() -> nytheris_aether_core::Result<()> {
+async fn main() -> muninn_aether_core::Result<()> {
     let backend = Arc::new(InMemoryBackend::new());
     let ns = ProjectId::new("level5-demo")?;
     backend.initialize(&ns, 2, DistanceMetric::Cosine).await?;

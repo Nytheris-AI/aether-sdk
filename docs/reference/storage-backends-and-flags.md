@@ -4,7 +4,7 @@ This reference covers Cargo feature flags, connector configuration structs, `Con
 
 ## Cargo feature matrix
 
-### `nytheris-aether-adapters` (`crates/aether-adapters/Cargo.toml`)
+### `muninn-aether-adapters` (`crates/aether-adapters/Cargo.toml`)
 
 Default features are empty (`default = []`). `InMemoryBackend` and middleware wrappers (`Batcher`, `Timeout`, `Resilient`, `Traced`) compile with no feature flags.
 
@@ -19,12 +19,12 @@ Default features are empty (`default = []`). `InMemoryBackend` and middleware wr
 | `neo4j` | `storage::neo4j::{Neo4jConfig, Neo4jGraphStore}` | `reqwest` (`json`, `rustls`) | `driver_neo4j` |
 | `contract-suite` | `contract::{record_store, record_store_concurrent_idempotency, vector_store, graph_store}` | None | Used by all `driver_*` tests |
 
-### `nytheris-aether-sdk` (`crates/aether-sdk/Cargo.toml`)
+### `muninn-aether-sdk` (`crates/aether-sdk/Cargo.toml`)
 
 | Feature | Enables | Dependencies |
 | --- | --- | --- |
 | `otel` | `telemetry::{init_otel, LogFormat, OtelConfig, TelemetryGuard}` and `otel_demo` example | `opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp`, `opentelemetry-appender-tracing`, `tracing-opentelemetry`, `tracing-subscriber` |
-| `live-docker` | Enables `sqlite`, `redis`, `qdrant`, `chroma`, `pgvector`, `neo4j` for `tests/live_docker.rs` | `nytheris-aether-adapters` driver features |
+| `live-docker` | Enables `sqlite`, `redis`, `qdrant`, `chroma`, `pgvector`, `neo4j` for `tests/live_docker.rs` | `muninn-aether-adapters` driver features |
 
 ## Backend configurations and constructors
 
