@@ -67,7 +67,7 @@ Start with a raw connector or adopt the full facade. Every higher level is built
 | **`muninn-aether-cortex`** | Composable [`Indexer`](crates/aether-cortex/src/indexer.rs) sync engine, [`PersonalizedPageRank`](crates/aether-cortex/src/ppr.rs) + `graph_scores`, and [`recall`](crates/aether-cortex/src/recall.rs) retrieval & RRF primitives. |
 | **`muninn-aether-adapters`** | `InMemoryBackend` (`in_memory` with `FaultPoint` injection), middleware decorators, reusable [`contract`](crates/aether-adapters/src/contract.rs) test suite (`contract-suite`), and 7 backend drivers. |
 | **`muninn-aether-sdk`** | Public `MemoryManager` / `MemoryManagerBuilder` composition root, runnable examples, and optional OpenTelemetry OTLP preset (`otel`). |
-| **`muninn-aether-vault`** | Obsidian-native vault daemon (`VaultEngine`), SQLite WAL (schema `v3`) + FTS5 + `PersonalizedPageRank` + `CrossEncoderReranker` recall, `DenseSubwordEmbedder` / `LocalGpuEmbedder`, `.aetherhot` / `.aetherignore` path rules, `dream_watermarks` consolidation, `Aether/Inbox.md` -> `Aether/Compiled/Approved.md` mirror, per-agent scoped API keys, Git team sync with monotonic lattice reconciliation, vLLM/SGLang + LMCache KV-tensor warming, authenticated `ControlPlaneServer` (with `GET /v1/openapi.json`), and `aether-mcp` (`--init`, `--http-only`, scoped `stdio` MCP). |
+| **`muninn-aether-vault`** | Obsidian-native vault daemon (`VaultEngine`), SQLite WAL (schema `v3`) + FTS5 + `PersonalizedPageRank` + `CrossEncoderReranker` recall, `DenseSubwordEmbedder` / `LocalGpuEmbedder`, `.aetherhot` / `.aetherignore` path rules, `dream_watermarks` consolidation, `Aether/Inbox.md` -> `Aether/Compiled/Approved.md` mirror, per-agent scoped API keys, Git team sync with monotonic lattice reconciliation, vLLM/SGLang + LMCache KV-tensor warming, authenticated `ControlPlaneServer` (with `GET /v1/openapi.json`), and `aether-mcp` (`--init`, `--install-clients`, `doctor`, `--http-only`, scoped `stdio` MCP). |
 
 ---
 
@@ -161,12 +161,17 @@ async fn main() -> muninn_aether_core::Result<()> {
 
 ### 3. Run the Obsidian Vault MCP Server (`aether-mcp`)
 
-Point `aether-mcp` at a local or shared Git-backed Obsidian vault to serve newline-delimited JSON-RPC 2.0 over `stdin` and `stdout` with `aether_recall`, `aether_stage_memory`, and `aether_inspect_source`. Use `--init` to install [`obsidian-aether-plugin/`](obsidian-aether-plugin/) and generate your `mcp.json` snippet, `--http-only` to run `ControlPlaneServer` standalone without keeping `stdin` open, `--require-auth` for bearer authentication, and `GET /v1/openapi.json` to import into Custom GPT Actions or Open WebUI.
+Point `aether-mcp` at a local or shared Git-backed Obsidian vault (defaults to `~/.aether/vault` when `--vault` is omitted) to serve newline-delimited JSON-RPC 2.0 over `stdin` and `stdout` with `aether_recall`, `aether_stage_memory`, and `aether_inspect_source`. Use `--init` to install [`obsidian-aether-plugin/`](obsidian-aether-plugin/) and generate your `mcp.json` snippet, `--install-clients` to auto-configure detected Cursor, Claude Desktop, Claude Code, and Antigravity clients, `doctor` to verify the setup, `--http-only` to run `ControlPlaneServer` standalone without keeping `stdin` open, `--require-auth` for bearer authentication, and `GET /v1/openapi.json` to import into Custom GPT Actions or Open WebUI.
 
 ```bash
-# 1. Install the Obsidian companion plugin and print a ready-to-paste mcp.json snippet
+# Quickest local install (macOS / Linux) + auto-configure MCP clients
+curl -fsSL https://raw.githubusercontent.com/muninn-hq/aether-sdk/main/scripts/install.sh | sh
+aether-mcp --init --install-clients --vault /path/to/obsidian-vault
+aether-mcp doctor --vault /path/to/obsidian-vault
+
+# 1. Or build & run from source: install plugin and print mcp.json snippet
 cargo run -p muninn-aether-vault --bin aether-mcp -- \
-  --init --vault /path/to/obsidian-vault --http-addr 127.0.0.1:14771
+  --init --install-clients --vault /path/to/obsidian-vault --http-addr 127.0.0.1:14771
 
 # 2. Standalone HTTP daemon for Obsidian (stays running until Ctrl-C / SIGTERM)
 cargo run -p muninn-aether-vault --bin aether-mcp -- \
