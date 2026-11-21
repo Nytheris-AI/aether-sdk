@@ -6,6 +6,8 @@ sidebar_position: 5
 
 # Part 5: Team Git Sync, Scoped Auth & GPU KV Warming
 
+**Setting up a team without writing Rust?** Follow [Share a vault with a team](../guides/team-and-remote-setup.md). This part covers the same steps with the Rust API.
+
 In this tutorial, you harden an Obsidian vault for multi-agent teams. You start `ControlPlaneServer::bind_with_auth`, issue per-agent `ScopedApiKey` credentials, synchronize a shared Git repository with `VaultEngine::git_sync`, connect `obsidian-aether-plugin`, and warm vLLM or SGLang KV caches.
 
 **Before you begin.** Complete [Part 4: Obsidian Vault Compiler & MCP Server](./04-obsidian-vault-and-mcp.md). Initialize your vault directory as a Git repository with a remote named `origin` if you want to run `git_sync` end to end.
@@ -127,4 +129,4 @@ If the vLLM or LMCache server is unreachable and `offline_fallback` is `true` (t
 ## Where to go next
 
 - Read [Concepts Overview: Model-Free & Pieces-First](../concepts/index.md) to learn how `RecordStore` consistency, `PersonalizedPageRank`, and KV block eviction work internally.
-- Bookmark [Crates, Traits & API Reference](../reference/crates-and-apis.md) and [aether-mcp CLI, MCP Tools, HTTP API & Frontmatter](../reference/aether-mcp-and-http-api.md) for daily development lookup.
+- Bookmark [Crates, Traits & API Reference](../sdk/crates-and-apis.md), the [aether-mcp CLI and MCP tools](../reference/aether-mcp.md), and the [HTTP API](../reference/http-api.md) for daily development lookup.

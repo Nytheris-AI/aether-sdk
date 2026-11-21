@@ -1,69 +1,57 @@
-# Aether SDK Documentation
+# Aether documentation
 
-**Aether SDK** (`muninn-aether-*`) is a model-free Rust memory SDK and Obsidian vault compiler. It unifies record durability, vector search, temporal knowledge graphs, and prefix-cache-friendly MCP serving without hiding control flow inside a framework.
+Aether gives your AI agents memory from your Obsidian vault.
+**AMC** (Aether Memory Companion) is the Obsidian plugin.
+**`aether-mcp`** is the local server that indexes your notes and serves them to any MCP-compatible agent, such as Cursor, Claude Desktop, Claude Code, or Antigravity.
+
+- Your notes sync automatically.
+- Notes marked `aether_tier: private` stay on your disk.
+- Facts an agent proposes wait in an inbox until you approve them.
 
 ## Start here
 
-Pick the track that matches what you want to do:
-
-- **Use Aether with Obsidian and an AI agent.** Follow the [Obsidian Setup Guide](guides/obsidian-setup.md) to install `aether-mcp`, register the background service, add **AMC** (Aether Memory Companion) in Obsidian, and connect Claude Desktop, Cursor, or Antigravity.
-- **Embed Aether in a Rust application.** Start with [Part 1: Quickstart & Your First Memory](series/01-quickstart-first-memory.md) to store and query records and vectors with `InMemoryBackend`.
-
-## Choose your path
+1. **[Quickstart](get-started/quickstart.md).** Get an agent recalling your notes in about five minutes.
+2. **[Install aether-mcp](get-started/install-aether-mcp.md).** Installer, background service, or Docker.
+3. **[Install AMC](get-started/install-amc.md).** Plugin install, connection, and first sync.
+4. **[Connect an AI agent](get-started/connect-an-agent.md).** `stdio` or HTTP, and the three MCP tools.
 
 ```mermaid
 flowchart LR
-    OBS["Obsidian + AI Agent"] --> SETUP["Obsidian Setup Guide"]
-    START["Rust SDK Quickstart"] --> S1["Learning Series (Parts 1 to 5)"]
-    BUILD["Building an integration"] --> REF["Developer Reference"]
-    DESIGN["How internals work"] --> CON["Concepts"]
-    TASK["Goal-oriented recipes"] --> GUIDES["How-To Guides"]
-    WHY["Design history and ADRs"] --> ARCH["Architecture and ADRs"]
+    V["Obsidian vault"] <--> A["AMC plugin"]
+    A <--> S["aether-mcp"]
+    S <--> G["AI agent (MCP)"]
 ```
 
-## Learning Series
+## Guides
 
-Follow the five sequential tutorials from your first in-memory query to multi-agent Git vaults and GPU KV-tensor warming.
+- **[AMC walkthrough](guides/amc-walkthrough.md).** Screenshots and a demo recorded from a real vault.
+- **[Organize and protect your notes](guides/organize-and-protect-notes.md).** Tiers, private notes, `.aetherignore`, and `.aetherhot`.
+- **[Review what your agent wants to remember](guides/review-agent-memories.md).** The inbox and Dream pass.
+- **[Share a vault with a team](guides/team-and-remote-setup.md).** Authenticated gateway, scoped keys, and Git sync.
+- **[Troubleshooting](guides/troubleshooting.md).** Connection, authentication, and sync problems.
 
-1. **[Part 1: Quickstart & Your First Memory](series/01-quickstart-first-memory.md).** Workspace layout, model-free boundary, and storing your first record and vector with `InMemoryBackend`.
-2. **[Part 2: Mastering the Five Composable Levels](series/02-five-composable-levels.md).** Step-by-step progression across connectors, middleware, hybrid recall, `Indexer`, and `MemoryManager`.
-3. **[Part 3: Production Storage Backends](series/03-production-storage-backends.md).** Running SQLite, Valkey, Qdrant, pgvector, Chroma, Turbopuffer, and Neo4j with `./scripts/dev-infra.sh`.
-4. **[Part 4: Obsidian Vault Compiler & MCP Server](series/04-obsidian-vault-and-mcp.md).** Compiling Markdown notes, `Aether/Inbox.md` approvals, Dream consolidation, and `aether-mcp` over `stdio`.
-5. **[Part 5: Team Git Sync, Scoped Auth & GPU KV Warming](series/05-team-git-auth-and-kv-warming.md).** Per-agent `ScopedApiKey` credentials, Git lattice sync, HTTPS Obsidian plugin setup, and vLLM and LMCache warming.
+## Reference
 
-## Concepts
+- **[aether-mcp CLI and MCP tools](reference/aether-mcp.md).** Flags, environment variables, subcommands, and tool schemas.
+- **[HTTP API](reference/http-api.md).** All 19 control-plane endpoints and their roles.
+- **[Vault files and frontmatter](reference/vault-files.md).** Frontmatter keys, `.aetherignore`, and `.aetherhot`.
+- **[AMC plugin settings and commands](reference/amc-plugin.md).** Settings, commands, and status bar states.
 
-Read deep explanations of Aether's guarantees, scoring math, and cache layout.
+## Build with the Rust SDK
 
-- **[Concepts Overview: Model-Free & Pieces-First](concepts/index.md).** Architectural thesis, crate dependency graph, and SDK vs vault data flows.
-- **[System of Record, Derived Indexes & Consistency](concepts/storage-and-consistency.md).** Versioned `RecordStore` truth, tombstones, `Indexer`, and `ReadYourWrites` vs `Eventual`.
-- **[Scopes, Tiers & Temporal Forgetting](concepts/scopes-tiers-and-forgetting.md).** `Project`, `User`, and record-only `Session` isolation, update invariants, and `source_memory_id` retraction.
-- **[Hybrid Recall, Personalized PageRank & RRF](concepts/hybrid-recall-and-ppr.md).** `DistanceMetric::score`, `FilterExpr`, `PersonalizedPageRank`, `recall::rrf`, `authority_weight`, and `CrossEncoderReranker`.
-- **[Obsidian AMUs, Prefix Caching & KV-Tensor Warming](concepts/vault-amu-and-kv-cache.md).** `AmuId` derivation, `private` isolation, `[AETHER_HOT_PROFILE]`, PagedAttention and CacheBlend hashing, and eviction.
+Aether is also a model-free Rust SDK (`muninn-aether-*`) for record durability, vector search, temporal knowledge graphs, and prefix-cache-friendly MCP serving.
 
-## How-To Guides
+- **Learning series.** Five tutorials from [your first memory](series/01-quickstart-first-memory.md) to [team Git sync and KV warming](series/05-team-git-auth-and-kv-warming.md).
+- **[Usage guide](sdk/usage.md)** and **[memory model](sdk/memory.md).** Snippets across all five SDK levels.
+- **[Crates, traits and APIs](sdk/crates-and-apis.md)**, **[storage backends and flags](sdk/storage-backends-and-flags.md)**, and **[observability](sdk/observability.md).**
 
-- **[Obsidian Setup Guide](guides/obsidian-setup.md).** Install `aether-mcp`, register the background service, enable `aether-memory` in Obsidian, and connect an AI agent.
-- **[Usage Guide](guides/usage.md).** Condensed snippets across all five SDK levels and `muninn-aether-vault`.
-- **[Memory Model & Consistency](guides/memory.md).** Quick overview of SDK scopes, durability modes, and vault memory units.
-- **[Observability & OpenTelemetry](guides/observability.md).** Tracing span hierarchy and the one-line `otel` OTLP gRPC setup.
+## Concepts and architecture
 
-## Developer Reference
+- **[Concepts overview](concepts/index.md).** The model-free, pieces-first design, scopes and tiers, hybrid recall, and KV-cache layout.
+- **[Architecture and ADRs](architecture/index.md).** Design records for the SDK, connectors, hardening, and the vault server.
 
-- **[Crates, Traits & API Reference](reference/crates-and-apis.md).** Validated newtypes, storage traits, `MemoryManager`, `VaultEngine`, and error variants.
-- **[Storage Backends, Feature Flags & Configuration](reference/storage-backends-and-flags.md).** Cargo feature flags, connector configs, `ConnectorCapabilities`, and Docker ports.
-- **[aether-mcp CLI, MCP Tools, HTTP API & Frontmatter](reference/aether-mcp-and-http-api.md).** CLI flags, JSON-RPC schemas, all 16 HTTP endpoints, frontmatter keys, and Obsidian commands.
+## Project
 
-## Architecture & ADRs
-
-- **[Architecture Overview](architecture/index.md).** Five-level architecture summary across the five workspace crates.
-- **[Connectors Architecture](architecture/connectors.md).** Outbound driver traits, middleware composition, and the shared contract test suite.
-- **[Pieces-First SDK Design](architecture/sdk-design.md).** Design record for building from small public pieces up to `MemoryManager`.
-- **[Phase 5 Hardening Design](architecture/hardening-design.md).** Hardening rationale for durable `RecordStore` state and derived indexes.
-- **[M1 Vault & MCP Architecture](architecture/m1-vault-mcp-rationale.md).** Architectural decision record for `muninn-aether-vault` and Milestones 1 to 3.
-- **[Change Overview](architecture/change-overview.md).** Record of the pieces-first and hardening transition.
-
-## Development & Roadmap
-
-- **[Development Guidelines](development/guidelines.md).** Workspace rules, verification commands, and contract testing gates.
-- **[Roadmap](about/roadmap.md).** Completed milestones across SDK, storage drivers, vault compiler, and team sync.
+- **[Roadmap](about/roadmap.md)**
+- **[Development guidelines](development/guidelines.md)**
+- **[Submit AMC to the Obsidian directory](development/obsidian-directory-submission.md)**

@@ -115,7 +115,7 @@ let vectors = PgVectorStore::connect(PgVectorConfig {
 }).await?;
 ```
 
-For Chroma v2 or Turbopuffer v1, construct `ChromaVectorStore::new(ChromaConfig::default())` or `TurbopufferVectorStore::new(TurbopufferConfig { base_url, api_key, namespace_prefix })`. See [Storage Backends, Feature Flags & Configuration](../reference/storage-backends-and-flags.md) for every field.
+For Chroma v2 or Turbopuffer v1, construct `ChromaVectorStore::new(ChromaConfig::default())` or `TurbopufferVectorStore::new(TurbopufferConfig { base_url, api_key, namespace_prefix })`. See [Storage Backends, Feature Flags & Configuration](../sdk/storage-backends-and-flags.md) for every field.
 
 ### Graph store (Neo4j Query API v2)
 
