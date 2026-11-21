@@ -1437,7 +1437,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-aether-adapters"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "axum",
@@ -1459,7 +1459,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-aether-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1471,7 +1471,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-aether-cortex"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1487,7 +1487,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-aether-sdk"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1509,7 +1509,7 @@ dependencies = [
 
 [[package]]
 name = "muninn-aether-vault"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "chrono",
  "clap",
