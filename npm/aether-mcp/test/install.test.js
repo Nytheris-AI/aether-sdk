@@ -91,7 +91,8 @@ test('explains a missing release asset', async () => {
 
 test('launcher forwards arguments and exit codes and keeps stdout clean', {skip}, async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aether-npm-'));
-  makeRelease(path.join(tmp, 'srv'), linux);
+  // The launcher asks for this machine's own build, so the fixture must provide it.
+  makeRelease(path.join(tmp, 'srv'), targetFor(process.platform, process.arch));
   const {server, base} = await serve(path.join(tmp, 'srv'));
   try {
     const env = {
