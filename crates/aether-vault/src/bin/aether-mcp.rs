@@ -69,6 +69,12 @@ struct InitReport {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    // clap prints help, version, and usage errors itself and sets the exit code.
+    let raw = cli::RawCli::try_parse_from(&args).unwrap_or_else(|err| err.exit());
+    if let Some(cli::Command::Completions { shell }) = raw.command {
+        print!("{}", cli::completions_script(shell));
+        return Ok(());
+    }
     let parsed = parse_cli_args(&args)?;
     match parsed.mode {
         RunMode::Init => run_init(&parsed),
@@ -1898,5 +1904,11 @@ mod tests {
             .err()
             .expect("service + --http-only must fail");
         assert!(matches!(err, AetherError::InvalidInput(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn completions_script_mentions_service_subcommand() {
+        let script = cli::completions_script(clap_complete::Shell::Bash);
+        assert!(script.contains("service"), "got: {script}");
     }
 }
