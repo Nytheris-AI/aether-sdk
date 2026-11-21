@@ -63,6 +63,7 @@ struct CliArgs {
     assume_yes: bool,
     skip_clients: bool,
     skip_service: bool,
+    purge_vault: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -834,7 +835,17 @@ where
         }) => (true, yes, no_clients, no_service),
         _ => (false, false, false, false),
     };
-    let uninstall = matches!(raw.command, Some(cli::Command::Uninstall));
+    let uninstall_flags = match raw.command {
+        Some(cli::Command::Uninstall { yes, purge_vault }) => Some((yes, purge_vault)),
+        _ => None,
+    };
+    let uninstall = uninstall_flags.is_some();
+    let (uninstall_yes, purge_vault) = uninstall_flags.unwrap_or((false, false));
+    if purge_vault && !vault_explicit {
+        return Err(AetherError::InvalidInput(
+            "`--purge-vault` needs `--vault <path>`, so it is clear which vault to clean".into(),
+        ));
+    }
     let service_action = match raw.command {
         Some(cli::Command::Service { action }) => Some(match action {
             cli::ServiceCmd::Install => ServiceAction::Install,
@@ -926,9 +937,10 @@ where
         plugin_dir,
         install_clients,
         vault_explicit,
-        assume_yes,
+        assume_yes: assume_yes || uninstall_yes,
         skip_clients,
         skip_service,
+        purge_vault,
     })
 }
 
@@ -1964,6 +1976,30 @@ mod tests {
             argv.extend_from_slice(extra);
             assert!(parse_cli_args(&args(&argv)).is_err(), "{extra:?} must fail");
         }
+    }
+
+    #[test]
+    fn uninstall_flags_parse_and_purge_needs_an_explicit_vault() {
+        let parsed = parse_cli_args(&args(&[
+            "aether-mcp",
+            "uninstall",
+            "--yes",
+            "--purge-vault",
+            "--vault",
+            "/v",
+        ]))
+        .expect("uninstall flags must parse");
+        assert!(parsed.assume_yes && parsed.purge_vault && parsed.vault_explicit);
+        assert!(
+            !parse_cli_args(&args(&["aether-mcp", "uninstall"]))
+                .expect("plain uninstall parses")
+                .purge_vault
+        );
+        assert!(parse_cli_args_with_env(
+            &args(&["aether-mcp", "uninstall", "--purge-vault"]),
+            |_| None
+        )
+        .is_err());
     }
 
     #[test]

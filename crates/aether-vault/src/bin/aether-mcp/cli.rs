@@ -89,8 +89,15 @@ pub enum Command {
         #[arg(long)]
         no_service: bool,
     },
-    /// Remove aether-vault from the MCP client configs it was added to
-    Uninstall,
+    /// Remove aether-mcp from this computer: the background service and the MCP client entries
+    Uninstall {
+        /// Accept the defaults and skip the confirmation question
+        #[arg(long)]
+        yes: bool,
+        /// With --vault, also delete the vault's index (.aether/) and Aether/ folder. Notes are kept
+        #[arg(long)]
+        purge_vault: bool,
+    },
     /// Print a shell completion script to stdout
     Completions {
         #[arg(value_enum)]
