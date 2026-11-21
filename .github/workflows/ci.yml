@@ -98,6 +98,23 @@ jobs:
         working-directory: obsidian-aether-plugin
         run: npm run verify:release
 
+  npm-package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Test the npm launcher
+        working-directory: npm/aether-mcp
+        run: npm test
+
   secrets:
     runs-on: ubuntu-latest
     steps:
