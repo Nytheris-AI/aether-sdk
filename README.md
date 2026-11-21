@@ -16,7 +16,7 @@ Unify authoritative record storage, derived vector indexes, and temporal knowled
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-38BDF8.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.89%2B-F97316.svg?logo=rust)](Cargo.toml)
 
-[Website](https://muninn-hq.github.io/aether-sdk/) · [Documentation](https://muninn-hq.github.io/aether-sdk/docs) · [Architecture](docs/architecture/index.md) · [Usage Guide](docs/guides/usage.md) · [Storage Providers](#storage-providers) · [Quickstart](#quickstart)
+[Website](https://muninn-hq.github.io/aether-sdk/) · [Documentation](https://muninn-hq.github.io/aether-sdk/docs) · [Architecture](docs/architecture/index.md) · [Get started](docs/get-started/quickstart.md) · [Rust usage guide](docs/sdk/usage.md) · [Storage Providers](#storage-providers) · [Quickstart](#quickstart)
 
 </div>
 
@@ -190,7 +190,7 @@ cargo run -p muninn-aether-vault --bin aether-mcp -- \
   --kv-model llama-3.1-8b
 ```
 
-See the [Vault & MCP Architecture](docs/architecture/m1-vault-mcp-rationale.md), [Memory Model](docs/guides/memory.md), and [Usage Guide](docs/guides/usage.md) for frontmatter tiers, `.aetherhot`, `.aetherignore`, `Aether/Inbox.md` approvals, Git team sync, scoped API keys, KV-cache warming, OpenAPI discovery, and the Obsidian companion plugin.
+See the [Vault & MCP Architecture](docs/architecture/m1-vault-mcp-rationale.md), [Memory Model](docs/sdk/memory.md), and [Usage Guide](docs/sdk/usage.md) for frontmatter tiers, `.aetherhot`, `.aetherignore`, `Aether/Inbox.md` approvals, Git team sync, scoped API keys, KV-cache warming, OpenAPI discovery, and the Obsidian companion plugin.
 
 ### 4. Run Live Docker Verification (Optional)
 
@@ -223,6 +223,6 @@ cd website && npm run build
 ## Documentation & License
 
 - **Documentation Portal**: [`docs/index.md`](docs/index.md) · [`website/`](https://muninn-hq.github.io/aether-sdk/)
-- **Observability & OpenTelemetry**: [`docs/guides/observability.md`](docs/guides/observability.md)
+- **Observability & OpenTelemetry**: [`docs/sdk/observability.md`](docs/sdk/observability.md)
 - **Engineering Rules & Guidelines**: [`AGENTS.md`](AGENTS.md) · [`docs/development/guidelines.md`](docs/development/guidelines.md) · [`CONTRIBUTING.md`](CONTRIBUTING.md)
 - **License**: Apache 2.0 ([`LICENSE`](LICENSE))
