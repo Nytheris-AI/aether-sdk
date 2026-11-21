@@ -1,3 +1,6 @@
+#[path = "aether-mcp/cli.rs"]
+mod cli;
+
 use std::fs;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -5,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use clap::Parser;
 use muninn_aether_core::{AetherError, Result};
 use muninn_aether_vault::{
     AgentId, ApiKeySecret, ControlPlaneServer, KvCacheAdapter, McpServer, ModelId, VaultConfig,
@@ -730,13 +734,9 @@ where
     let mut vault = env("AETHER_VAULT_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| default_vault_path(&env));
-    let mut db = None;
     let mut watch_ms: u64 = 2000;
     let mut watch_ms_explicit: Option<u64> = None;
     let mut http_addr_raw = env("AETHER_HTTP_ADDR");
-    let mut http_only = false;
-    let mut init = false;
-    let mut install_clients = false;
     let mut require_auth = env("AETHER_REQUIRE_AUTH")
         .is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"));
     let mut bootstrap_raw = env("AETHER_BOOTSTRAP_ADMIN_KEY");
@@ -745,85 +745,32 @@ where
     let mut kv_model_raw = env("AETHER_KV_MODEL");
     let plugin_dir = env("AETHER_PLUGIN_DIR").map(PathBuf::from);
 
-    let mut service_action: Option<ServiceAction> = None;
-    let mut doctor = false;
-    let mut idx = 1usize;
-    if args.get(1).map(String::as_str) == Some("service") {
-        service_action = Some(match args.get(2).map(String::as_str) {
-            Some("install") => ServiceAction::Install,
-            Some("uninstall") => ServiceAction::Uninstall,
-            Some("status") => ServiceAction::Status,
-            _ => {
-                return Err(AetherError::InvalidInput(
-                    "usage: aether-mcp service <install|uninstall|status> [--vault <dir>] [--http-addr <addr>] [--watch-ms <ms>]"
-                        .into(),
-                ));
-            }
-        });
-        idx = 3;
-    } else if args.get(1).map(String::as_str) == Some("doctor") {
-        doctor = true;
-        idx = 2;
+    let raw = cli::RawCli::try_parse_from(args)
+        .map_err(|err| AetherError::InvalidInput(err.to_string()))?;
+    if let Some(path) = raw.vault {
+        vault = path;
     }
-
-    while idx < args.len() {
-        match args[idx].as_str() {
-            "--vault" if idx + 1 < args.len() => {
-                vault = PathBuf::from(&args[idx + 1]);
-                idx += 2;
-            }
-            "--db" if idx + 1 < args.len() => {
-                db = Some(PathBuf::from(&args[idx + 1]));
-                idx += 2;
-            }
-            "--watch-ms" if idx + 1 < args.len() => {
-                if let Ok(parsed_ms) = args[idx + 1].parse::<u64>() {
-                    watch_ms = parsed_ms;
-                    watch_ms_explicit = Some(parsed_ms);
-                } else {
-                    watch_ms = 2000;
-                }
-                idx += 2;
-            }
-            "--http-addr" if idx + 1 < args.len() => {
-                http_addr_raw = Some(args[idx + 1].clone());
-                idx += 2;
-            }
-            "--http-only" => {
-                http_only = true;
-                idx += 1;
-            }
-            "--init" => {
-                init = true;
-                idx += 1;
-            }
-            "--install-clients" => {
-                install_clients = true;
-                idx += 1;
-            }
-            "--require-auth" => {
-                require_auth = true;
-                idx += 1;
-            }
-            "--bootstrap-admin-key" if idx + 1 < args.len() => {
-                bootstrap_raw = Some(args[idx + 1].clone());
-                idx += 2;
-            }
-            "--api-key" if idx + 1 < args.len() => {
-                api_key_raw = Some(args[idx + 1].clone());
-                idx += 2;
-            }
-            "--kv-endpoint" if idx + 1 < args.len() => {
-                kv_endpoint = Some(args[idx + 1].clone());
-                idx += 2;
-            }
-            "--kv-model" if idx + 1 < args.len() => {
-                kv_model_raw = Some(args[idx + 1].clone());
-                idx += 2;
-            }
-            _ => idx += 1,
-        }
+    let db = raw.db;
+    if let Some(ms) = raw.watch_ms {
+        watch_ms = ms;
+        watch_ms_explicit = Some(ms);
     }
+    http_addr_raw = raw.http_addr.or(http_addr_raw);
+    bootstrap_raw = raw.bootstrap_admin_key.or(bootstrap_raw);
+    api_key_raw = raw.api_key.or(api_key_raw);
+    kv_endpoint = raw.kv_endpoint.or(kv_endpoint);
+    kv_model_raw = raw.kv_model.or(kv_model_raw);
+    require_auth |= raw.require_auth;
+    let (http_only, init, install_clients) = (raw.http_only, raw.init, raw.install_clients);
+    let doctor = matches!(raw.command, Some(cli::Command::Doctor));
+    let service_action = match raw.command {
+        Some(cli::Command::Service { action }) => Some(match action {
+            cli::ServiceCmd::Install => ServiceAction::Install,
+            cli::ServiceCmd::Uninstall => ServiceAction::Uninstall,
+            cli::ServiceCmd::Status => ServiceAction::Status,
+        }),
+        _ => None,
+    };
 
     let http_addr = match http_addr_raw {
         Some(raw) => Some(raw.parse::<SocketAddr>().map_err(|err| {
@@ -1906,5 +1853,50 @@ mod tests {
         let missing = collect_doctor_report(&vault.path().join("nonexistent"), Some(home.path()))
             .expect("doctor report on missing vault should still collect status");
         assert!(!missing.vault_exists);
+    }
+
+    #[test]
+    fn help_flag_returns_usage_text() {
+        let err = parse_cli_args(&args(&["aether-mcp", "--help"]))
+            .err()
+            .expect("--help must not start the server");
+        assert!(err.to_string().contains("Usage"), "got: {err}");
+    }
+
+    #[test]
+    fn unknown_flag_returns_invalid_input() {
+        let err = parse_cli_args(&args(&["aether-mcp", "--bogus"]))
+            .err()
+            .expect("unknown flag must fail");
+        assert!(matches!(err, AetherError::InvalidInput(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn non_numeric_watch_ms_returns_invalid_input() {
+        let err = parse_cli_args(&args(&["aether-mcp", "--watch-ms", "abc"]))
+            .err()
+            .expect("non-numeric --watch-ms must fail");
+        assert!(matches!(err, AetherError::InvalidInput(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn flag_overrides_env_for_http_addr() {
+        let parsed = parse_cli_args_with_env(
+            &args(&["aether-mcp", "--http-addr", "127.0.0.1:1"]),
+            |name| (name == "AETHER_HTTP_ADDR").then(|| "127.0.0.1:2".to_string()),
+        )
+        .expect("flag and env together must parse");
+        assert_eq!(parsed.http_addr, Some("127.0.0.1:1".parse().expect("addr")));
+    }
+
+    #[test]
+    fn options_work_after_a_subcommand_and_doctor_rejects_init() {
+        let parsed = parse_cli_args(&args(&["aether-mcp", "doctor", "--vault", "/tmp/v"]))
+            .expect("doctor with --vault must parse");
+        assert_eq!(parsed.mode, RunMode::Doctor);
+        let err = parse_cli_args(&args(&["aether-mcp", "service", "install", "--http-only"]))
+            .err()
+            .expect("service + --http-only must fail");
+        assert!(matches!(err, AetherError::InvalidInput(_)), "got {err:?}");
     }
 }
