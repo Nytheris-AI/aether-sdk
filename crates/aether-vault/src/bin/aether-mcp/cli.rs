@@ -20,7 +20,7 @@ pub struct RawCli {
     #[arg(long, global = true, value_name = "PATH")]
     pub vault: Option<PathBuf>,
 
-    /// SQLite index database path [default: <vault>/.aether/aether.sqlite]
+    /// SQLite index database path [default: `<vault>/.aether/aether.sqlite`]
     #[arg(long, global = true, value_name = "PATH")]
     pub db: Option<PathBuf>,
 
