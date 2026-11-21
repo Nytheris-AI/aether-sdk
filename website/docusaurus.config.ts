@@ -30,6 +30,24 @@ const config: Config = {
 
   themes: ['@docusaurus/theme-mermaid'],
 
+  plugins: [
+    [
+      '@docusaurus/plugin-client-redirects',
+      {
+        redirects: [
+          {from: '/docs/guides/obsidian-setup', to: '/docs/get-started/quickstart'},
+          {from: '/docs/guides/obsidian-walkthrough', to: '/docs/guides/amc-walkthrough'},
+          {from: '/docs/guides/usage', to: '/docs/sdk/usage'},
+          {from: '/docs/guides/memory', to: '/docs/sdk/memory'},
+          {from: '/docs/guides/observability', to: '/docs/sdk/observability'},
+          {from: '/docs/reference/crates-and-apis', to: '/docs/sdk/crates-and-apis'},
+          {from: '/docs/reference/storage-backends-and-flags', to: '/docs/sdk/storage-backends-and-flags'},
+          {from: '/docs/reference/aether-mcp-and-http-api', to: '/docs/reference/aether-mcp'},
+        ],
+      },
+    ],
+  ],
+
   presets: [
     [
       'classic',
