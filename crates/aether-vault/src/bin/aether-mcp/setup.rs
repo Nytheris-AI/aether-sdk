@@ -70,6 +70,25 @@ pub fn discover_vaults(home: &Path, appdata: Option<&Path>) -> Vec<PathBuf> {
     vaults
 }
 
+/// Subfolders of `dir` offered by the folder browser, sorted by path. Hidden folders are skipped.
+pub fn list_subfolders(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut folders: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            !path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with('.'))
+        })
+        .collect();
+    folders.sort();
+    folders
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum VaultChoice {
     /// The user named a vault, or exactly one was found.
@@ -195,7 +214,12 @@ fn prompt_err(err: std::io::Error) -> AetherError {
     AetherError::InvalidInput(format!("setup was cancelled: {err}"))
 }
 
-fn ask_vault(choice: VaultChoice, assume_yes: bool, found_explicitly: bool) -> Result<PathBuf> {
+fn ask_vault(
+    choice: VaultChoice,
+    assume_yes: bool,
+    found_explicitly: bool,
+    cwd: &Path,
+) -> Result<PathBuf> {
     match choice {
         VaultChoice::Use(path) => {
             if !assume_yes
@@ -205,7 +229,7 @@ fn ask_vault(choice: VaultChoice, assume_yes: bool, found_explicitly: bool) -> R
                     .interact()
                     .map_err(prompt_err)?
             {
-                return ask_path();
+                return choose_from_menu(Vec::new(), cwd);
             }
             Ok(path)
         }
@@ -213,12 +237,7 @@ fn ask_vault(choice: VaultChoice, assume_yes: bool, found_explicitly: bool) -> R
             if assume_yes {
                 return Ok(vaults.into_iter().next().expect("at least two vaults"));
             }
-            let mut select = cliclack::select("Which vault should agents use?");
-            for (idx, path) in vaults.iter().enumerate() {
-                select = select.item(idx, path.display().to_string(), "");
-            }
-            let idx = select.interact().map_err(prompt_err)?;
-            Ok(vaults.into_iter().nth(idx).expect("selected index"))
+            choose_from_menu(vaults, cwd)
         }
         VaultChoice::Ask => {
             if assume_yes {
@@ -226,7 +245,76 @@ fn ask_vault(choice: VaultChoice, assume_yes: bool, found_explicitly: bool) -> R
                     "no Obsidian vault found, pass --vault <path>".into(),
                 ));
             }
-            ask_path()
+            choose_from_menu(Vec::new(), cwd)
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum VaultMenuItem {
+    Found(usize),
+    Current,
+    Browse,
+    Typed,
+}
+
+/// Asks which vault to use: a discovered vault, the current folder, a browsed folder, or a typed path.
+fn choose_from_menu(vaults: Vec<PathBuf>, cwd: &Path) -> Result<PathBuf> {
+    let mut select = cliclack::select("Which vault should agents use?");
+    for (idx, path) in vaults.iter().enumerate() {
+        select = select.item(VaultMenuItem::Found(idx), path.display().to_string(), "");
+    }
+    select = select
+        .item(
+            VaultMenuItem::Current,
+            "Current folder",
+            cwd.display().to_string(),
+        )
+        .item(VaultMenuItem::Browse, "Browse folders", "")
+        .item(VaultMenuItem::Typed, "Type a path", "");
+    match select.interact().map_err(prompt_err)? {
+        VaultMenuItem::Found(idx) => Ok(vaults.into_iter().nth(idx).expect("selected index")),
+        VaultMenuItem::Current => Ok(cwd.to_path_buf()),
+        VaultMenuItem::Browse => browse_for_folder(cwd),
+        VaultMenuItem::Typed => ask_path(),
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum BrowseStep {
+    Use,
+    Up,
+    Enter(usize),
+}
+
+/// Walks the folder tree from `start` until the user picks the current folder.
+fn browse_for_folder(start: &Path) -> Result<PathBuf> {
+    let mut current = start.to_path_buf();
+    loop {
+        let folders = list_subfolders(&current);
+        let mut select = cliclack::select(format!("Browse {}", current.display())).item(
+            BrowseStep::Use,
+            "Use this folder",
+            current.display().to_string(),
+        );
+        if let Some(parent) = current.parent() {
+            select = select.item(BrowseStep::Up, "..", parent.display().to_string());
+        }
+        for (idx, folder) in folders.iter().enumerate() {
+            let name = folder
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            select = select.item(BrowseStep::Enter(idx), name, "");
+        }
+        match select.interact().map_err(prompt_err)? {
+            BrowseStep::Use => return Ok(current),
+            BrowseStep::Up => {
+                if let Some(parent) = current.parent().map(Path::to_path_buf) {
+                    current = parent;
+                }
+            }
+            BrowseStep::Enter(idx) => current = folders[idx].clone(),
         }
     }
 }
@@ -266,7 +354,7 @@ pub fn run_setup(mut parsed: CliArgs) -> Result<()> {
     let explicit = parsed.vault_explicit.then(|| parsed.vault_root.clone());
     let was_explicit = explicit.is_some();
     let choice = choose_vault(explicit, discover_vaults(&home, appdata.as_deref()));
-    let vault = ask_vault(choice, parsed.assume_yes, was_explicit)?;
+    let vault = ask_vault(choice, parsed.assume_yes, was_explicit, &cwd)?;
     if !vault.is_dir() {
         return Err(AetherError::InvalidInput(format!(
             "vault `{}` is not a folder",
@@ -372,6 +460,20 @@ mod tests {
         .err()
         .expect("setup + --init must fail");
         assert!(matches!(err, AetherError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn lists_visible_subfolders_sorted_and_skips_files_and_hidden_folders() {
+        let dir = temp_dir("browse");
+        std::fs::create_dir_all(dir.join("zeta")).expect("zeta");
+        std::fs::create_dir_all(dir.join("alpha")).expect("alpha");
+        std::fs::create_dir_all(dir.join(".obsidian")).expect("hidden");
+        std::fs::write(dir.join("note.md"), "x").expect("file");
+        assert_eq!(
+            list_subfolders(&dir),
+            vec![dir.join("alpha"), dir.join("zeta")]
+        );
+        assert!(list_subfolders(&dir.join("missing")).is_empty());
     }
 
     #[test]
