@@ -1,0 +1,27 @@
+{
+  "name": "@muninn-hq/aether-mcp",
+  "version": "0.1.0",
+  "description": "Run aether-mcp, the local memory server for Obsidian and AI agents, with npx. Downloads and verifies the matching release binary on first use.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/muninn-hq/aether-sdk.git",
+    "directory": "npm/aether-mcp"
+  },
+  "homepage": "https://muninn-hq.github.io/aether-sdk/docs/get-started/quickstart",
+  "keywords": ["mcp", "obsidian", "ai-agents", "memory", "aether"],
+  "bin": {
+    "aether-mcp": "bin/aether-mcp.js"
+  },
+  "files": ["bin", "lib", "README.md"],
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "aetherMcpVersion": "0.1.1",
+  "scripts": {
+    "test": "node --test"
+  }
+}
