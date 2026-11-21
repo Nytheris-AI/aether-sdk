@@ -1,6 +1,6 @@
 name: Publish npm package
 
-# Publishes @muninn-hq/aether-mcp only when the `release` branch is updated, never on a push to
+# Publishes @muninn-org/aether-mcp only when the `release` branch is updated, never on a push to
 # main. To release, fast-forward `release` to the commit you want published:
 #   git push origin <commit>:release
 # Pushes that do not change the package version publish nothing.

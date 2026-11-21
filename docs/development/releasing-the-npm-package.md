@@ -1,6 +1,6 @@
 # Releasing the npm package
 
-`@muninn-hq/aether-mcp` lets people run `aether-mcp` with `npx`.
+`@muninn-org/aether-mcp` lets people run `aether-mcp` with `npx`.
 The package is a small launcher in `npm/aether-mcp/`. It downloads the matching `aether-mcp` release binary from GitHub Releases, checks its SHA-256 checksum, and runs it.
 
 It is published by CI, and only when the `release` branch is updated.
@@ -23,8 +23,8 @@ If the release is missing a build, the workflow fails before publishing.
 
 ## One-time setup
 
-- Create the `muninn-hq` organization on npm and make sure the publishing account can publish to it.
-- Create an npm access token that can publish `@muninn-hq/aether-mcp` and save it as the repository secret `NPM_TOKEN`.
+- The package is published under the `muninn-org` organization on npm, so its name is `@muninn-org/aether-mcp`. The publishing account must be a member that can publish to it.
+- Create an npm access token that can publish `@muninn-org/aether-mcp` and save it as the repository secret `NPM_TOKEN`. If the npm account requires a one-time code to publish, the token must be allowed to bypass that, or the publish step fails in CI.
 - Optional: add required reviewers to the `npm` environment in the repository settings, so each publish needs an approval.
 - Optional: protect the `release` branch so only maintainers can push to it.
 

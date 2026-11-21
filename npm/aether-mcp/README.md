@@ -1,9 +1,9 @@
-# @muninn-hq/aether-mcp
+# @muninn-org/aether-mcp
 
 Run [aether-mcp](https://github.com/muninn-hq/aether-sdk), the local memory server for Obsidian and AI agents, without installing Rust or a separate binary.
 
 ```bash
-npx @muninn-hq/aether-mcp setup
+npx @muninn-org/aether-mcp setup
 ```
 
 On first use the launcher downloads the matching `aether-mcp` release for your machine from GitHub Releases, checks its SHA-256 checksum, and caches it. Later runs start immediately.
@@ -16,7 +16,7 @@ Use it as an MCP server in a client configuration:
   "mcpServers": {
     "aether-vault": {
       "command": "npx",
-      "args": ["-y", "@muninn-hq/aether-mcp", "--vault", "/path/to/vault", "--watch-ms", "0"]
+      "args": ["-y", "@muninn-org/aether-mcp", "--vault", "/path/to/vault", "--watch-ms", "0"]
     }
   }
 }
