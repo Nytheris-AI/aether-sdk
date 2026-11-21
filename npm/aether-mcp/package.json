@@ -1,5 +1,5 @@
 {
-  "name": "@muninn-hq/aether-mcp",
+  "name": "@muninn-org/aether-mcp",
   "version": "0.1.0",
   "description": "Run aether-mcp, the local memory server for Obsidian and AI agents, with npx. Downloads and verifies the matching release binary on first use.",
   "license": "Apache-2.0",
