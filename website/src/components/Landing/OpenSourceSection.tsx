@@ -106,8 +106,8 @@ export function OpenSourceSection(): ReactNode {
                 className="btn-action btn-primary">
                 Open GitHub Repository ↗
               </a>
-              <Link to="/docs/guides/usage" className="btn-action btn-ghost">
-                Usage Guide ↗
+              <Link to="/docs/get-started/quickstart" className="btn-action btn-ghost">
+                Quickstart ↗
               </Link>
               <span className="mono-tag">MUNINN-HQ / AETHER-SDK</span>
             </div>

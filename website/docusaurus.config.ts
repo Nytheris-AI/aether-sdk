@@ -66,23 +66,23 @@ const config: Config = {
           label: 'Docs',
         },
         {
-          to: '/docs/series/01-quickstart-first-memory',
-          label: 'Series',
+          to: '/docs/get-started/quickstart',
+          label: 'Get started',
           position: 'left',
         },
         {
-          to: '/docs/concepts',
-          label: 'Concepts',
-          position: 'left',
-        },
-        {
-          to: '/docs/guides/usage',
+          to: '/docs/guides/amc-walkthrough',
           label: 'Guides',
           position: 'left',
         },
         {
-          to: '/docs/reference/crates-and-apis',
+          to: '/docs/reference/aether-mcp',
           label: 'Reference',
+          position: 'left',
+        },
+        {
+          to: '/docs/sdk/usage',
+          label: 'Rust SDK',
           position: 'left',
         },
         {
@@ -101,12 +101,25 @@ const config: Config = {
       style: 'dark',
       links: [
         {
-          title: 'Learn',
+          title: 'Use AMC and aether-mcp',
           items: [
             {
-              label: 'Docs Home',
-              to: '/docs',
+              label: 'Quickstart',
+              to: '/docs/get-started/quickstart',
             },
+            {
+              label: 'Guides',
+              to: '/docs/guides/amc-walkthrough',
+            },
+            {
+              label: 'Reference',
+              to: '/docs/reference/aether-mcp',
+            },
+          ],
+        },
+        {
+          title: 'Build with Rust',
+          items: [
             {
               label: 'Learning Series',
               to: '/docs/series/01-quickstart-first-memory',
@@ -115,18 +128,9 @@ const config: Config = {
               label: 'Concepts',
               to: '/docs/concepts',
             },
-          ],
-        },
-        {
-          title: 'Build',
-          items: [
             {
-              label: 'How-To Guides',
-              to: '/docs/guides/usage',
-            },
-            {
-              label: 'Developer Reference',
-              to: '/docs/reference/crates-and-apis',
+              label: 'Rust SDK guides',
+              to: '/docs/sdk/usage',
             },
             {
               label: 'Architecture & ADRs',

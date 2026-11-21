@@ -1,10 +1,14 @@
-# Obsidian and AI agent walkthrough
+---
+sidebar_position: 1
+---
+
+# AMC walkthrough: Obsidian and an AI agent
 
 See AMC (Aether Memory Companion) working in a real Obsidian Desktop vault.
 Every screenshot and clip on this page was recorded from Obsidian 1.15.1 talking to a real `aether-mcp` server.
 The capture is scripted, so it can be regenerated when the UI changes (`node scripts/capture_obsidian_guide.mjs <out_dir>`).
 
-For install commands and every setting, read [Set up Obsidian and an AI agent with Aether](./obsidian-setup.md).
+For install commands and every setting, start with the [Quickstart](../get-started/quickstart.md).
 
 ## Watch the full demo: Obsidian and Cursor together
 
@@ -92,5 +96,5 @@ Start the server again and run the sync command to return to `Aether: Synced`.
 
 ## Next steps
 
-- Connect an MCP client such as Claude Desktop in [Step 5 of the setup guide](./obsidian-setup.md).
-- Share a vault with a team in [Team Git, auth, and KV warming](../series/05-team-git-auth-and-kv-warming.md).
+- Connect an MCP client such as Claude Desktop in [Connect an AI agent](../get-started/connect-an-agent.md).
+- Share a vault with a team in [Share a vault with a team](./team-and-remote-setup.md).

@@ -6,6 +6,8 @@ sidebar_position: 4
 
 # Part 4: Obsidian Vault Compiler & MCP Server
 
+**Just want to use AMC and `aether-mcp`?** Skip this tutorial and follow the [Quickstart](../get-started/quickstart.md). This part walks through the same server from the Rust side.
+
 In this tutorial, you build and run the `aether-mcp` vault server, install the **AMC** (Aether Memory Companion) plugin inside Obsidian, connect an AI agent over MCP, and approve agent-proposed facts back into your vault.
 
 **Before you begin.** Complete [Part 1: Quickstart & Your First Memory](./01-quickstart-first-memory.md). Create a scratch Obsidian vault directory such as `/tmp/demo-vault`, or use an existing local vault folder.
