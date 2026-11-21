@@ -4,7 +4,7 @@
 //! settings in those files stay as they are.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use muninn_aether_core::{AetherError, Result};
 use serde_json::{Map, Value};
@@ -43,9 +43,13 @@ pub fn run_uninstall(parsed: &CliArgs) -> Result<()> {
     lines.extend(remove_client_entries()?);
     lines.extend(remove_vault_files(parsed));
     ui.print(&lines);
+    let program = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("aether-mcp"));
     ui.note(
         "Still to do",
-        "Remove the AMC plugin in Obsidian, and remove it from BRAT too if you installed it there.",
+        &format!(
+            "Remove the AMC plugin in Obsidian, and remove it from BRAT too if you installed it there.\n{}",
+            program_removal_hint(&program)
+        ),
     );
     ui.outro("Uninstall finished");
     Ok(())
@@ -134,6 +138,22 @@ fn remove_vault_files(parsed: &CliArgs) -> Vec<Line> {
     lines
 }
 
+/// How to remove the program itself. npm and the installer put it in different places, and
+/// the npm launcher keeps its download in a cache that `npm uninstall -g` does not clear.
+fn program_removal_hint(exe: &Path) -> String {
+    let cache_root = exe
+        .ancestors()
+        .skip(1)
+        .find(|dir| dir.file_name().is_some_and(|name| name == "aether-mcp"));
+    match cache_root {
+        Some(root) => format!(
+            "If you installed with npm, run `npm uninstall -g @muninn-org/aether-mcp`, then delete the download cache: {}",
+            root.display()
+        ),
+        None => format!("Delete the program: {}", exe.display()),
+    }
+}
+
 /// Deletes the AMC plugin folder from the vault. Returns whether anything was removed.
 pub fn remove_vault_plugin(vault: &Path) -> std::io::Result<bool> {
     remove_dir_if_exists(
@@ -205,6 +225,19 @@ mod tests {
         std::fs::write(root.join(".aether").join("aether.sqlite"), "x").expect("index");
         std::fs::create_dir_all(root.join("Aether")).expect("aether dir");
         TempVault(root)
+    }
+
+    #[test]
+    fn program_hint_names_the_cache_for_npm_copies_and_the_file_otherwise() {
+        let npm_copy = Path::new("/home/u/.cache/aether-mcp/0.1.2/x86_64/aether-mcp");
+        let hint = program_removal_hint(npm_copy);
+        assert!(hint.contains("npm uninstall -g @muninn-org/aether-mcp"));
+        assert!(hint.contains("/home/u/.cache/aether-mcp"));
+
+        let installer_copy = Path::new("/home/u/.local/bin/aether-mcp");
+        let hint = program_removal_hint(installer_copy);
+        assert!(hint.contains("/home/u/.local/bin/aether-mcp"));
+        assert!(!hint.contains("npm"));
     }
 
     #[test]
