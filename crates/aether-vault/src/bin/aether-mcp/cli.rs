@@ -5,7 +5,8 @@
 
 use std::path::PathBuf;
 
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{ArgAction, CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -76,6 +77,11 @@ pub enum Command {
     },
     /// Check the vault, the server binary, and detected MCP client configs
     Doctor,
+    /// Print a shell completion script to stdout
+    Completions {
+        #[arg(value_enum)]
+        shell: Shell,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Subcommand)]
@@ -86,4 +92,11 @@ pub enum ServiceCmd {
     Uninstall,
     /// Show the service status
     Status,
+}
+
+/// Renders the completion script for `shell`.
+pub fn completions_script(shell: Shell) -> String {
+    let mut out = Vec::new();
+    clap_complete::generate(shell, &mut RawCli::command(), "aether-mcp", &mut out);
+    String::from_utf8_lossy(&out).into_owned()
 }
