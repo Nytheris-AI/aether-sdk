@@ -88,6 +88,7 @@ const sidebars: SidebarsConfig = {
         'about/roadmap',
         'development/guidelines',
         'development/obsidian-directory-submission',
+        'development/releasing-the-npm-package',
       ],
     },
   ],
